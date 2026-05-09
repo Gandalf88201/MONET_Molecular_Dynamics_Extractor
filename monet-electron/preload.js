@@ -2,10 +2,17 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('monet', {
-  selectFile:      ()                => ipcRenderer.invoke('select-file'),
-  selectOutputDir: ()                => ipcRenderer.invoke('select-output-dir'),
-  analyzeFile:     filePath          => ipcRenderer.invoke('analyze-file', filePath),
-  readFrame:       (fp, idx, atoms)  => ipcRenderer.invoke('read-frame', fp, idx, atoms),
-  processTrajectory: opts            => ipcRenderer.invoke('process-trajectory', opts),
-  onProgress:      cb                => ipcRenderer.on('progress', (_, data) => cb(data))
+  // ── core trajectory ops ──────────────────────────────────────────────────
+  selectFile:        ()               => ipcRenderer.invoke('select-file'),
+  selectOutputDir:   ()               => ipcRenderer.invoke('select-output-dir'),
+  analyzeFile:       fp               => ipcRenderer.invoke('analyze-file', fp),
+  readFrame:         (fp, idx, atoms) => ipcRenderer.invoke('read-frame', fp, idx, atoms),
+  processTrajectory: opts             => ipcRenderer.invoke('process-trajectory', opts),
+  onProgress:        cb               => ipcRenderer.on('progress', (_, d) => cb(d)),
+
+  // ── ASE Python bridge ────────────────────────────────────────────────────
+  aseCheck:          ()               => ipcRenderer.invoke('ase-check'),
+  aseRun:            cmd              => ipcRenderer.invoke('ase-run', cmd),
+  aseSelectOutput:   name             => ipcRenderer.invoke('ase-select-output', name),
+  onAseProgress:     cb               => ipcRenderer.on('ase-progress', (_, d) => cb(d)),
 })

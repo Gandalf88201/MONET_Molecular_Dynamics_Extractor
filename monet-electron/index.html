@@ -15,7 +15,13 @@
     <span class="logo-m">M</span><span class="logo-rest">ONET</span>
   </div>
   <div class="titlebar-sub">Molecular Dynamics Extractor &nbsp;·&nbsp; v 1.0.5</div>
-  <div class="titlebar-author">Dr. T. Francese &nbsp;·&nbsp; Univ. of Chicago</div>
+  <div class="titlebar-right">
+    <div class="ase-badge" id="ase-badge" title="ASE (Atomic Simulation Environment) status">
+      <span class="ase-dot" id="ase-dot"></span>
+      <span id="ase-badge-text">ASE …</span>
+    </div>
+    <div class="titlebar-author">Dr. T. Francese &nbsp;·&nbsp; Univ. of Chicago</div>
+  </div>
 </header>
 
 <!-- ===== MAIN LAYOUT ===== -->
@@ -167,21 +173,173 @@
       <div class="result-tree" id="result-tree"></div>
       <div class="step-nav-row">
         <button class="btn btn-back btn-ghost" id="back-6">New Run</button>
+        <button class="btn btn-next" id="open-ase-btn"
+                title="Open ASE Analysis panel">ASE Analysis →</button>
       </div>
     </section>
 
   </aside>
 
-  <!-- RIGHT: 3D Viewer -->
+  <!-- RIGHT: viewer + ASE panel -->
   <main class="viewer-area">
-    <div class="viewer-header">
-      <span id="viewer-title">3D Molecular Viewer</span>
-      <span class="viewer-hint">Drag to rotate · Scroll to zoom · Click atom to select</span>
+
+    <!-- Tab bar -->
+    <div class="viewer-tabbar">
+      <button class="vtab active" data-vtab="view3d">3D View</button>
+      <button class="vtab" data-vtab="ase" id="vtab-ase">
+        ASE Analysis
+        <span class="ase-tab-badge" id="ase-tab-badge">✓</span>
+      </button>
     </div>
-    <canvas id="mol-canvas"></canvas>
-    <div class="viewer-overlay" id="viewer-overlay">
-      <div class="overlay-msg">Load a trajectory file to begin</div>
+
+    <!-- ── 3D Viewer tab ── -->
+    <div class="vtab-content active" id="vtab-content-view3d">
+      <div class="viewer-header">
+        <span id="viewer-title">3D Molecular Viewer</span>
+        <span class="viewer-hint">Drag to rotate · Scroll to zoom · Click atom to select</span>
+      </div>
+      <canvas id="mol-canvas"></canvas>
+      <div class="viewer-overlay" id="viewer-overlay">
+        <div class="overlay-msg">Load a trajectory file to begin</div>
+      </div>
     </div>
+
+    <!-- ── ASE Analysis tab ── -->
+    <div class="vtab-content" id="vtab-content-ase">
+
+      <!-- ASE sub-tabs -->
+      <div class="ase-subtabbar">
+        <button class="ase-stab active" data-stab="rmsd">RMSD</button>
+        <button class="ase-stab" data-stab="pdd">Pair Distances</button>
+        <button class="ase-stab" data-stab="bonds">Bond Lengths</button>
+        <button class="ase-stab" data-stab="angles">Bond Angles</button>
+        <button class="ase-stab" data-stab="convert">Convert</button>
+      </div>
+
+      <!-- RMSD sub-panel -->
+      <div class="ase-subpanel active" id="ase-sub-rmsd">
+        <div class="ase-ctrl-row">
+          <label class="field-label">Frame step (1 = every frame)</label>
+          <input class="field-input field-input-sm" type="number" id="rmsd-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-rmsd">Compute RMSD</button>
+        </div>
+        <div class="ase-prog-row hidden" id="rmsd-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="rmsd-prog-fill"></div></div>
+          <span id="rmsd-prog-label">—</span>
+        </div>
+        <canvas class="chart-canvas" id="chart-rmsd"></canvas>
+        <div class="chart-placeholder" id="chart-rmsd-ph">
+          Run RMSD to see the time evolution vs. frame 0
+        </div>
+      </div>
+
+      <!-- Pair-distance distribution sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-pdd">
+        <div class="ase-ctrl-row">
+          <label class="field-label">R<sub>max</sub> (Å)</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-rmax" value="8" step="0.5" min="1" />
+          <label class="field-label">Bins</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-bins" value="80" min="10" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-step" value="5" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-pdd">Compute</button>
+        </div>
+        <div class="ase-ctrl-row">
+          <label class="field-label">Filter elements (blank = all)</label>
+          <input class="field-input" type="text" id="pdd-elements"
+                 placeholder="e.g.  C N  (space-separated)" />
+        </div>
+        <div class="ase-prog-row hidden" id="pdd-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="pdd-prog-fill"></div></div>
+          <span id="pdd-prog-label">—</span>
+        </div>
+        <canvas class="chart-canvas" id="chart-pdd"></canvas>
+        <div class="chart-placeholder" id="chart-pdd-ph">
+          Pair-distance distribution across all sampled frames
+        </div>
+      </div>
+
+      <!-- Bond lengths sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-bonds">
+        <div class="ase-ctrl-row">
+          <label class="field-label">Atom pairs (0-indexed, space-sep, e.g. 0 5  2 8)</label>
+          <input class="field-input" type="text" id="bonds-pairs"
+                 placeholder="0 5  2 8  1 3" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="bonds-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-bonds">Compute</button>
+        </div>
+        <div class="ase-prog-row hidden" id="bonds-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="bonds-prog-fill"></div></div>
+          <span id="bonds-prog-label">—</span>
+        </div>
+        <canvas class="chart-canvas" id="chart-bonds"></canvas>
+        <div class="chart-placeholder" id="chart-bonds-ph">
+          Bond-length evolution over the extracted trajectory
+        </div>
+      </div>
+
+      <!-- Bond angles sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-angles">
+        <div class="ase-ctrl-row">
+          <label class="field-label">Atom triplets (0-indexed, e.g. 0 1 2  3 4 5)</label>
+          <input class="field-input" type="text" id="angles-triplets"
+                 placeholder="0 1 2  3 4 5" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="angles-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-angles">Compute</button>
+        </div>
+        <div class="ase-prog-row hidden" id="angles-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="angles-prog-fill"></div></div>
+          <span id="angles-prog-label">—</span>
+        </div>
+        <canvas class="chart-canvas" id="chart-angles"></canvas>
+        <div class="chart-placeholder" id="chart-angles-ph">
+          Bond-angle evolution over the extracted trajectory
+        </div>
+      </div>
+
+      <!-- Format conversion sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-convert">
+        <p class="panel-desc" style="padding:.6rem 0">
+          ASE supports 100+ file formats. Convert your trajectory or individual
+          structures to VASP POSCAR, CIF, extXYZ, Quantum ESPRESSO, LAMMPS …
+        </p>
+        <label class="field-label">Input file</label>
+        <div class="dir-row">
+          <div class="dir-path" id="conv-input-path">—</div>
+          <button class="btn btn-sm" id="btn-conv-input">Browse …</button>
+        </div>
+        <label class="field-label" style="margin-top:.8rem">Output format</label>
+        <select class="field-input" id="conv-format">
+          <option value="">Auto-detect from extension</option>
+          <option value="vasp">VASP POSCAR</option>
+          <option value="cif">CIF</option>
+          <option value="extxyz">Extended XYZ</option>
+          <option value="espresso-in">Quantum ESPRESSO input</option>
+          <option value="lammps-data">LAMMPS data</option>
+          <option value="aims">FHI-aims</option>
+          <option value="turbomole">Turbomole</option>
+          <option value="gaussian">Gaussian</option>
+          <option value="dftb">DFTB+</option>
+          <option value="json">ASE JSON</option>
+        </select>
+        <label class="field-label" style="margin-top:.8rem">Output file</label>
+        <div class="dir-row">
+          <div class="dir-path" id="conv-output-path">—</div>
+          <button class="btn btn-sm" id="btn-conv-output">Save as …</button>
+        </div>
+        <div style="margin-top:1rem">
+          <button class="btn btn-accent" id="btn-run-conv" disabled>Convert</button>
+        </div>
+        <div class="ase-prog-row hidden" id="conv-prog-row" style="margin-top:.8rem">
+          <div class="progress-bar"><div class="progress-fill" id="conv-prog-fill"></div></div>
+          <span id="conv-prog-label">—</span>
+        </div>
+        <div id="conv-result" class="info-box hidden" style="margin-top:.8rem"></div>
+      </div>
+
+    </div><!-- #vtab-content-ase -->
   </main>
 
 </div><!-- .layout -->

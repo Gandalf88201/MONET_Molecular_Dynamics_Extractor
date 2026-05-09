@@ -1,8 +1,9 @@
 'use strict'
 const { app, BrowserWindow, ipcMain, dialog } = require('electron')
-const path   = require('path')
-const fs     = require('fs')
+const path    = require('path')
+const fs      = require('fs')
 const readline = require('readline')
+const { spawn, execFile } = require('child_process')
 
 let mainWindow
 
@@ -324,4 +325,103 @@ ${posContent}
 `
   fs.writeFileSync(path.join(confDir, 'sing.dat'), header(1, 'scf_singlet', 's0.chk'))
   fs.writeFileSync(path.join(confDir, 'trip.dat'), header(3, 'scf_triplet', 't0.chk'))
+}
+
+// ===========================================================================
+// ASE Python bridge
+// ===========================================================================
+
+const ASE_BRIDGE = path.join(__dirname, 'ase_bridge.py')
+
+// Detect which python binary is available
+function detectPython () {
+  return new Promise(resolve => {
+    const candidates = ['python3', 'python']
+    let i = 0
+    const next = () => {
+      if (i >= candidates.length) { resolve(null); return }
+      const bin = candidates[i++]
+      execFile(bin, ['--version'], { timeout: 4000 }, err => {
+        if (err) next()
+        else resolve(bin)
+      })
+    }
+    next()
+  })
+}
+
+let _pythonBin = null   // cached after first detection
+
+ipcMain.handle('ase-check', async () => {
+  try {
+    const bin = await detectPython()
+    if (!bin) return { ok: false, error: 'Python not found on PATH' }
+    _pythonBin = bin
+
+    return await runAseBridge({ action: 'check' }, () => {})
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('ase-run', async (event, command) => {
+  try {
+    if (!_pythonBin) _pythonBin = await detectPython()
+    if (!_pythonBin) return { ok: false, error: 'Python not found on PATH' }
+    return await runAseBridge(command, msg => event.sender.send('ase-progress', msg))
+  } catch (e) {
+    return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('ase-select-output', async (_, defaultName) => {
+  const r = await dialog.showSaveDialog(mainWindow, {
+    title: 'Save converted file',
+    defaultPath: defaultName,
+    filters: [
+      { name: 'XYZ',   extensions: ['xyz']  },
+      { name: 'POSCAR', extensions: ['vasp', 'poscar'] },
+      { name: 'CIF',   extensions: ['cif']  },
+      { name: 'JSON',  extensions: ['json'] },
+      { name: 'All',   extensions: ['*']    }
+    ]
+  })
+  return r.canceled ? null : r.filePath
+})
+
+function runAseBridge (command, onProgress) {
+  return new Promise((resolve, reject) => {
+    const py = spawn(_pythonBin, [ASE_BRIDGE])
+    let buf = ''
+
+    py.stdout.on('data', chunk => {
+      buf += chunk.toString()
+      const lines = buf.split('\n')
+      buf = lines.pop()                        // keep partial last line
+      for (const line of lines) {
+        if (!line.trim()) continue
+        let msg
+        try { msg = JSON.parse(line) } catch { continue }
+        if (msg.type === 'progress') onProgress(msg)
+        else if (msg.type === 'result') resolve(msg)
+        else if (msg.type === 'error')  resolve(msg)
+      }
+    })
+
+    py.stderr.on('data', d => console.error('[ASE stderr]', d.toString().trim()))
+    py.on('error', e  => resolve({ ok: false, error: e.message }))
+    py.on('close', code => {
+      // flush any remaining buffer
+      if (buf.trim()) {
+        try {
+          const msg = JSON.parse(buf)
+          if (msg.type === 'result' || msg.type === 'error') { resolve(msg); return }
+        } catch {}
+      }
+      if (code !== 0) resolve({ ok: false, error: `Python exited with code ${code}` })
+    })
+
+    py.stdin.write(JSON.stringify(command) + '\n')
+    py.stdin.end()
+  })
 }

@@ -632,10 +632,457 @@ $('back-6').addEventListener('click', () => {
 })
 
 // =============================================================================
+// ── Viewer tab switching ─────────────────────────────────────────────────────
+// =============================================================================
+
+$$('.vtab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.vtab
+    $$('.vtab').forEach(b => b.classList.remove('active'))
+    $$('.vtab-content').forEach(c => c.classList.remove('active'))
+    btn.classList.add('active')
+    $(`vtab-content-${id}`).classList.add('active')
+    if (id === 'view3d') resizeCanvas()
+  })
+})
+
+$('open-ase-btn').addEventListener('click', () => {
+  $$('.vtab').forEach(b => b.classList.remove('active'))
+  $$('.vtab-content').forEach(c => c.classList.remove('active'))
+  $('vtab-ase').classList.add('active')
+  $('vtab-content-ase').classList.add('active')
+})
+
+// ASE sub-tab switching
+$$('.ase-stab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const id = btn.dataset.stab
+    $$('.ase-stab').forEach(b => b.classList.remove('active'))
+    $$('.ase-subpanel').forEach(p => p.classList.remove('active'))
+    btn.classList.add('active')
+    $(`ase-sub-${id}`).classList.add('active')
+  })
+})
+
+// =============================================================================
+// ── LineChart — canvas-based scientific line chart ───────────────────────────
+// =============================================================================
+
+const CHART_PALETTE = [
+  '#4d9de0', '#e94560', '#00c87a', '#ffd700',
+  '#c77dff', '#ff9f1c', '#2ec4b6', '#ff6b6b'
+]
+
+class LineChart {
+  constructor (canvasId, placeholderId) {
+    this.canvas = $(canvasId)
+    this.ph     = placeholderId ? $(placeholderId) : null
+    this.ctx    = this.canvas.getContext('2d')
+    this.data   = null
+  }
+
+  setData ({ title, xLabel, yLabel, labels, datasets }) {
+    this.data = { title, xLabel, yLabel, labels, datasets }
+    if (this.ph) this.ph.classList.add('hidden')
+    this.canvas.classList.remove('hidden')
+    this._render()
+  }
+
+  clear () {
+    this.data = null
+    if (this.ph) this.ph.classList.remove('hidden')
+    this.canvas.classList.add('hidden')
+  }
+
+  _render () {
+    const { canvas, ctx, data } = this
+    if (!data) return
+
+    const W = canvas.clientWidth  || 600
+    const H = canvas.clientHeight || 320
+    canvas.width  = W
+    canvas.height = H
+
+    const PAD = { top: 36, right: 24, bottom: 52, left: 64 }
+    const pw  = W - PAD.left - PAD.right
+    const ph  = H - PAD.top  - PAD.bottom
+
+    // Background
+    ctx.fillStyle = '#0d0d1a'
+    ctx.fillRect(0, 0, W, H)
+
+    const { labels, datasets, title, xLabel, yLabel } = data
+    if (!datasets.length || !labels.length) return
+
+    const allY  = datasets.flatMap(d => d.data.filter(Number.isFinite))
+    const minY  = Math.min(...allY)
+    const maxY  = Math.max(...allY)
+    const rangeY = (maxY - minY) || 1
+    const N     = labels.length
+
+    const xS = i => PAD.left + (i / Math.max(N - 1, 1)) * pw
+    const yS = v => PAD.top  + ph - ((v - minY) / rangeY) * ph
+
+    // Grid
+    const NY_TICKS = 5
+    ctx.lineWidth   = 1
+    ctx.strokeStyle = '#1e1e3a'
+    ctx.fillStyle   = '#55557a'
+    ctx.font        = '10px monospace'
+    for (let i = 0; i <= NY_TICKS; i++) {
+      const v = minY + (i / NY_TICKS) * rangeY
+      const y = yS(v)
+      ctx.beginPath(); ctx.moveTo(PAD.left, y); ctx.lineTo(W - PAD.right, y); ctx.stroke()
+      ctx.textAlign = 'right'
+      ctx.fillText(v.toFixed(3), PAD.left - 6, y + 4)
+    }
+    const NX_TICKS = Math.min(8, N)
+    for (let i = 0; i <= NX_TICKS; i++) {
+      const idx = Math.round(i * (N - 1) / NX_TICKS)
+      const x   = xS(idx)
+      ctx.beginPath(); ctx.moveTo(x, PAD.top); ctx.lineTo(x, PAD.top + ph); ctx.stroke()
+      ctx.textAlign = 'center'
+      ctx.fillText(labels[idx], x, PAD.top + ph + 16)
+    }
+
+    // Axes
+    ctx.strokeStyle = '#3a3a60'
+    ctx.lineWidth   = 1.5
+    ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top); ctx.lineTo(PAD.left, PAD.top + ph); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(PAD.left, PAD.top + ph); ctx.lineTo(W - PAD.right, PAD.top + ph); ctx.stroke()
+
+    // Axis labels
+    ctx.fillStyle = '#7a7a9e'; ctx.font = '11px monospace'; ctx.textAlign = 'center'
+    ctx.fillText(xLabel, PAD.left + pw / 2, H - 6)
+    ctx.save()
+    ctx.translate(14, PAD.top + ph / 2)
+    ctx.rotate(-Math.PI / 2)
+    ctx.fillText(yLabel, 0, 0)
+    ctx.restore()
+
+    // Title
+    ctx.fillStyle = '#dde0ef'; ctx.font = 'bold 12px monospace'; ctx.textAlign = 'center'
+    ctx.fillText(title, PAD.left + pw / 2, 20)
+
+    // Series
+    datasets.forEach((ds, di) => {
+      const color = ds.color || CHART_PALETTE[di % CHART_PALETTE.length]
+      ctx.strokeStyle = color
+      ctx.lineWidth   = 1.8
+      ctx.beginPath()
+      let moved = false
+      for (let i = 0; i < ds.data.length; i++) {
+        if (!Number.isFinite(ds.data[i])) continue
+        const x = xS(i), y = yS(ds.data[i])
+        if (!moved) { ctx.moveTo(x, y); moved = true }
+        else          ctx.lineTo(x, y)
+      }
+      ctx.stroke()
+    })
+
+    // Legend
+    let lx = PAD.left + 6
+    datasets.forEach((ds, di) => {
+      const color = ds.color || CHART_PALETTE[di % CHART_PALETTE.length]
+      ctx.fillStyle = color
+      ctx.fillRect(lx, PAD.top + 8, 18, 3)
+      ctx.fillStyle = '#c0c0d8'; ctx.font = '9px monospace'; ctx.textAlign = 'left'
+      ctx.fillText(ds.label, lx + 22, PAD.top + 13)
+      lx += Math.max(80, ds.label.length * 6.5 + 30)
+    })
+  }
+}
+
+// =============================================================================
+// ── ASE panel state + helpers ────────────────────────────────────────────────
+// =============================================================================
+
+const aseState = {
+  available:   false,
+  version:     null,
+  convInput:   null,
+  convOutput:  null
+}
+
+const charts = {
+  rmsd:   new LineChart('chart-rmsd',   'chart-rmsd-ph'),
+  pdd:    new LineChart('chart-pdd',    'chart-pdd-ph'),
+  bonds:  new LineChart('chart-bonds',  'chart-bonds-ph'),
+  angles: new LineChart('chart-angles', 'chart-angles-ph'),
+}
+
+// Wire up ASE progress listener (once)
+window.monet.onAseProgress(msg => {
+  setStatus(msg.message)
+})
+
+function setAseProgress (fillId, labelId, rowId, pct, msg) {
+  const row = $(rowId)
+  row.classList.remove('hidden')
+  $(fillId).style.width  = (pct ?? 0) + '%'
+  $(labelId).textContent = msg || ''
+}
+
+function hideAseProgress (rowId) {
+  $(rowId).classList.add('hidden')
+}
+
+function extractedTrajPath () {
+  if (!state.outputDir) return null
+  return `${state.outputDir}/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz`
+}
+
+// =============================================================================
+// ── ASE: Python status check ─────────────────────────────────────────────────
+// =============================================================================
+
+async function checkAseStatus () {
+  $('ase-badge-text').textContent = 'ASE …'
+  $('ase-dot').className          = 'ase-dot dot-checking'
+
+  const r = await window.monet.aseCheck()
+  if (r && r.ok) {
+    aseState.available       = true
+    aseState.version         = r.ase_version
+    $('ase-dot').className   = 'ase-dot dot-ok'
+    $('ase-badge-text').textContent = `ASE ${r.ase_version}`
+    $('ase-tab-badge').style.display = 'inline'
+  } else {
+    aseState.available       = false
+    $('ase-dot').className   = 'ase-dot dot-err'
+    $('ase-badge-text').textContent = 'ASE not found'
+    $('vtab-ase').title      = 'ASE not installed — run: pip install ase'
+    $('ase-tab-badge').style.display = 'none'
+  }
+}
+
+// =============================================================================
+// ── ASE: RMSD ────────────────────────────────────────────────────────────────
+// =============================================================================
+
+$('btn-run-rmsd').addEventListener('click', async () => {
+  const traj = extractedTrajPath()
+  if (!traj) return setStatus('Run processing first (Step 5) to generate extracted trajectory.')
+
+  const step = parseInt($('rmsd-step').value, 10) || 1
+  $('btn-run-rmsd').disabled = true
+  setAseProgress('rmsd-prog-fill', 'rmsd-prog-label', 'rmsd-prog-row', 0, 'Starting …')
+
+  // relay progress
+  const unsub = window.monet.onAseProgress(msg => {
+    setAseProgress('rmsd-prog-fill', 'rmsd-prog-label', 'rmsd-prog-row',
+                   msg.percent ?? 0, msg.message)
+  })
+
+  const r = await window.monet.aseRun({ action: 'rmsd', filename: traj, frame_step: step })
+  $('btn-run-rmsd').disabled = false
+
+  if (!r.ok) { setStatus('RMSD error: ' + (r.message || r.error)); return }
+
+  hideAseProgress('rmsd-prog-row')
+  const labels = r.frame_indices.map(String)
+  charts.rmsd.setData({
+    title:    'RMSD vs Frame 0',
+    xLabel:   'Frame',
+    yLabel:   'RMSD (Å)',
+    labels,
+    datasets: [{ label: 'RMSD', data: r.rmsd, color: '#4d9de0' }]
+  })
+  setStatus(`RMSD computed over ${r.rmsd.length} frames`)
+})
+
+// =============================================================================
+// ── ASE: Pair-distance distribution ─────────────────────────────────────────
+// =============================================================================
+
+$('btn-run-pdd').addEventListener('click', async () => {
+  const traj = extractedTrajPath()
+  if (!traj) return setStatus('Run processing first to generate extracted trajectory.')
+
+  const rmax  = parseFloat($('pdd-rmax').value)  || 8
+  const nbins = parseInt($('pdd-bins').value, 10) || 80
+  const step  = parseInt($('pdd-step').value, 10) || 5
+  const elRaw = $('pdd-elements').value.trim()
+  const elems = elRaw ? elRaw.split(/\s+/) : null
+
+  $('btn-run-pdd').disabled = true
+  setAseProgress('pdd-prog-fill', 'pdd-prog-label', 'pdd-prog-row', 0, 'Starting …')
+
+  window.monet.onAseProgress(msg => {
+    setAseProgress('pdd-prog-fill', 'pdd-prog-label', 'pdd-prog-row',
+                   msg.percent ?? 0, msg.message)
+  })
+
+  const r = await window.monet.aseRun({
+    action: 'pdd', filename: traj,
+    rmax, nbins, frame_step: step, elements: elems
+  })
+  $('btn-run-pdd').disabled = false
+
+  if (!r.ok) { setStatus('PDD error: ' + (r.message || r.error)); return }
+
+  hideAseProgress('pdd-prog-row')
+  const label = elems ? elems.join('–') : 'all pairs'
+  charts.pdd.setData({
+    title:    'Pair-Distance Distribution',
+    xLabel:   'Distance (Å)',
+    yLabel:   'Count',
+    labels:   r.r.map(v => v.toFixed(2)),
+    datasets: [{ label: label, data: r.counts, color: '#00c87a' }]
+  })
+  setStatus(`PDD over ${r.n_frames} frames`)
+})
+
+// =============================================================================
+// ── ASE: Bond lengths ─────────────────────────────────────────────────────────
+// =============================================================================
+
+$('btn-run-bonds').addEventListener('click', async () => {
+  const traj = extractedTrajPath()
+  if (!traj) return setStatus('Run processing first.')
+
+  const raw   = $('bonds-pairs').value.trim()
+  const nums  = raw.split(/\s+/).map(Number).filter(Number.isInteger)
+  if (nums.length < 2 || nums.length % 2 !== 0)
+    return setStatus('Enter atom pairs as pairs of integers (0-indexed), e.g. "0 5  2 8".')
+
+  const pairs = []
+  for (let i = 0; i < nums.length; i += 2) pairs.push([nums[i], nums[i+1]])
+  const step  = parseInt($('bonds-step').value, 10) || 1
+
+  $('btn-run-bonds').disabled = true
+  setAseProgress('bonds-prog-fill', 'bonds-prog-label', 'bonds-prog-row', 0, 'Starting …')
+
+  window.monet.onAseProgress(msg => {
+    setAseProgress('bonds-prog-fill', 'bonds-prog-label', 'bonds-prog-row',
+                   msg.percent ?? 0, msg.message)
+  })
+
+  const r = await window.monet.aseRun({ action: 'bonds', filename: traj, pairs, frame_step: step })
+  $('btn-run-bonds').disabled = false
+
+  if (!r.ok) { setStatus('Bond error: ' + (r.message || r.error)); return }
+
+  hideAseProgress('bonds-prog-row')
+  const labels = r.frame_indices.map(String)
+  const datasets = Object.entries(r.series).map(([key, data], i) => ({
+    label: `atoms ${key}`, data, color: CHART_PALETTE[i % CHART_PALETTE.length]
+  }))
+  charts.bonds.setData({
+    title: 'Bond Lengths vs Frame', xLabel: 'Frame', yLabel: 'Distance (Å)',
+    labels, datasets
+  })
+  setStatus('Bond lengths computed')
+})
+
+// =============================================================================
+// ── ASE: Bond angles ─────────────────────────────────────────────────────────
+// =============================================================================
+
+$('btn-run-angles').addEventListener('click', async () => {
+  const traj = extractedTrajPath()
+  if (!traj) return setStatus('Run processing first.')
+
+  const raw  = $('angles-triplets').value.trim()
+  const nums = raw.split(/\s+/).map(Number).filter(Number.isInteger)
+  if (nums.length < 3 || nums.length % 3 !== 0)
+    return setStatus('Enter triplets of integers (0-indexed), e.g. "0 1 2  3 4 5".')
+
+  const triplets = []
+  for (let i = 0; i < nums.length; i += 3) triplets.push([nums[i], nums[i+1], nums[i+2]])
+  const step = parseInt($('angles-step').value, 10) || 1
+
+  $('btn-run-angles').disabled = true
+  setAseProgress('angles-prog-fill', 'angles-prog-label', 'angles-prog-row', 0, 'Starting …')
+
+  window.monet.onAseProgress(msg => {
+    setAseProgress('angles-prog-fill', 'angles-prog-label', 'angles-prog-row',
+                   msg.percent ?? 0, msg.message)
+  })
+
+  const r = await window.monet.aseRun({ action: 'angles', filename: traj, triplets, frame_step: step })
+  $('btn-run-angles').disabled = false
+
+  if (!r.ok) { setStatus('Angles error: ' + (r.message || r.error)); return }
+
+  hideAseProgress('angles-prog-row')
+  const labels   = r.frame_indices.map(String)
+  const datasets = Object.entries(r.series).map(([key, data], i) => ({
+    label: `atoms ${key}`, data, color: CHART_PALETTE[i % CHART_PALETTE.length]
+  }))
+  charts.angles.setData({
+    title: 'Bond Angles vs Frame', xLabel: 'Frame', yLabel: 'Angle (°)',
+    labels, datasets
+  })
+  setStatus('Bond angles computed')
+})
+
+// =============================================================================
+// ── ASE: Format conversion ────────────────────────────────────────────────────
+// =============================================================================
+
+$('btn-conv-input').addEventListener('click', async () => {
+  const fp = await window.monet.selectFile()
+  if (!fp) return
+  aseState.convInput = fp
+  $('conv-input-path').textContent = fp
+  updateConvBtn()
+})
+
+$('btn-conv-output').addEventListener('click', async () => {
+  const fmt  = $('conv-format').value
+  const ext  = fmt === 'vasp' ? 'POSCAR' : fmt ? fmt : 'out.xyz'
+  const defName = aseState.convInput
+    ? aseState.convInput.replace(/\.[^.]+$/, '') + '_converted.' + ext
+    : 'converted.' + ext
+  const fp = await window.monet.aseSelectOutput(defName)
+  if (!fp) return
+  aseState.convOutput = fp
+  $('conv-output-path').textContent = fp
+  updateConvBtn()
+})
+
+function updateConvBtn () {
+  $('btn-run-conv').disabled = !(aseState.convInput && aseState.convOutput)
+}
+
+$('btn-run-conv').addEventListener('click', async () => {
+  const fmt = $('conv-format').value || undefined
+  $('btn-run-conv').disabled = true
+  setAseProgress('conv-prog-fill', 'conv-prog-label', 'conv-prog-row', 0, 'Converting …')
+
+  window.monet.onAseProgress(msg => {
+    setAseProgress('conv-prog-fill', 'conv-prog-label', 'conv-prog-row',
+                   msg.percent ?? 0, msg.message)
+  })
+
+  const r = await window.monet.aseRun({
+    action: 'convert',
+    input:  aseState.convInput,
+    output: aseState.convOutput,
+    format: fmt
+  })
+  $('btn-run-conv').disabled = false
+
+  if (!r.ok) {
+    setStatus('Conversion error: ' + (r.message || r.error))
+    $('conv-result').textContent = '✗ ' + (r.message || r.error)
+    $('conv-result').classList.remove('hidden')
+    return
+  }
+
+  hideAseProgress('conv-prog-row')
+  $('conv-result').textContent = `✓ ${r.n_frames} frames written to ${r.output}`
+  $('conv-result').classList.remove('hidden')
+  setStatus(`Converted: ${r.output}`)
+})
+
+// =============================================================================
 // ── Init ─────────────────────────────────────────────────────────────────────
 // =============================================================================
 
 window.addEventListener('load', () => {
   resizeCanvas()
   updateSampledCount()
+  checkAseStatus()
 })
