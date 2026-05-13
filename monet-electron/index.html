@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'" />
+  <title>MONET — Molecular Dynamics Extractor</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- ===== TITLE BAR ===== -->
+<header class="titlebar">
+  <div class="titlebar-logo">
+    <span class="logo-m">M</span><span class="logo-rest">ONET</span>
+  </div>
+  <div class="titlebar-sub">Molecular Dynamics Extractor &nbsp;·&nbsp; v 1.0.5</div>
+  <div class="titlebar-right">
+    <div class="ase-badge" id="ase-badge" title="ASE (Atomic Simulation Environment) status">
+      <span class="ase-dot" id="ase-dot"></span>
+      <span id="ase-badge-text">ASE …</span>
+    </div>
+    <div class="titlebar-author">Dr. T. Francese &nbsp;·&nbsp; Univ. of Chicago</div>
+  </div>
+</header>
+
+<!-- ===== MAIN LAYOUT ===== -->
+<div class="layout">
+
+  <!-- LEFT: workflow panel -->
+  <aside class="sidebar">
+    <nav class="steps-nav">
+      <div class="step-item active" data-step="1" id="nav-1">
+        <span class="step-num">01</span>
+        <span class="step-label">File Input</span>
+      </div>
+      <div class="step-item" data-step="2" id="nav-2">
+        <span class="step-num">02</span>
+        <span class="step-label">Analysis &amp; Sampling</span>
+      </div>
+      <div class="step-item" data-step="3" id="nav-3">
+        <span class="step-num">03</span>
+        <span class="step-label">Atom Selection</span>
+      </div>
+      <div class="step-item" data-step="4" id="nav-4">
+        <span class="step-num">04</span>
+        <span class="step-label">Options</span>
+      </div>
+      <div class="step-item" data-step="5" id="nav-5">
+        <span class="step-num">05</span>
+        <span class="step-label">Processing</span>
+      </div>
+      <div class="step-item" data-step="6" id="nav-6">
+        <span class="step-num">06</span>
+        <span class="step-label">Results</span>
+      </div>
+    </nav>
+
+    <!-- ── STEP 1: File Input ── -->
+    <section class="step-panel active" id="panel-1">
+      <h2 class="panel-title">Select Trajectory File</h2>
+      <p class="panel-desc">Load an <code>.xyz</code> file produced by CPMD or CP2K.</p>
+      <button class="btn btn-primary" id="btn-browse">Browse …</button>
+      <div id="file-display" class="file-info hidden">
+        <div class="file-path" id="file-path-text"></div>
+      </div>
+      <div class="step-nav-row">
+        <span></span>
+        <button class="btn btn-next" id="next-1" disabled>Next →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 2: Analysis & Sampling ── -->
+    <section class="step-panel" id="panel-2">
+      <h2 class="panel-title">Analysis &amp; Sampling</h2>
+      <div class="info-grid" id="file-stats">
+        <div class="info-item"><span class="info-label">Format</span><span class="info-value" id="stat-format">—</span></div>
+        <div class="info-item"><span class="info-label">Configurations</span><span class="info-value" id="stat-configs">—</span></div>
+        <div class="info-item"><span class="info-label">Atoms / frame</span><span class="info-value" id="stat-atoms">—</span></div>
+      </div>
+      <label class="field-label" for="inp-freq">Sampling frequency (every N-th frame)</label>
+      <input class="field-input" type="number" id="inp-freq" min="1" value="10" />
+      <div class="derived-info">
+        Sampled configurations: <strong id="sampled-count">—</strong>
+      </div>
+      <div class="step-nav-row">
+        <button class="btn btn-back" id="back-2">← Back</button>
+        <button class="btn btn-next" id="next-2">Next →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 3: Atom Selection ── -->
+    <section class="step-panel" id="panel-3">
+      <h2 class="panel-title">Atom Selection</h2>
+      <p class="panel-desc">
+        Click atoms in the 3D viewer <em>or</em> type IDs below.
+        Selected atoms are highlighted in gold.
+      </p>
+      <div class="atom-input-row">
+        <input class="field-input" type="text" id="inp-atom-ids"
+               placeholder="e.g. 1 5 12 23 44" />
+        <button class="btn btn-sm" id="btn-apply-ids">Apply</button>
+      </div>
+      <div class="selection-info">
+        Selected: <strong id="sel-count">0</strong> atoms
+        <button class="btn btn-sm btn-ghost" id="btn-clear-sel">Clear</button>
+      </div>
+      <div id="atom-table-wrapper">
+        <table class="atom-table" id="atom-table">
+          <thead><tr><th>ID</th><th>El</th><th>x</th><th>y</th><th>z</th><th>✓</th></tr></thead>
+          <tbody id="atom-table-body"></tbody>
+        </table>
+      </div>
+      <div class="step-nav-row">
+        <button class="btn btn-back" id="back-3">← Back</button>
+        <button class="btn btn-next" id="next-3" disabled>Next →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 4: Options ── -->
+    <section class="step-panel" id="panel-4">
+      <h2 class="panel-title">Processing Options</h2>
+
+      <label class="toggle-row">
+        <input type="checkbox" id="opt-average" checked />
+        <span class="toggle-label">Compute average structure<br>
+          <small>Generates <code>GEO-AVERAGE.xyz</code></small></span>
+      </label>
+
+      <label class="toggle-row">
+        <input type="checkbox" id="opt-gaussian" checked />
+        <span class="toggle-label">Generate Gaussian09 inputs<br>
+          <small>Creates <code>sing.dat</code> &amp; <code>trip.dat</code> per configuration</small></span>
+      </label>
+
+      <div class="gaussian-details" id="gaussian-details">
+        <div class="info-box">
+          <strong>Singlet</strong> · UB3LYP/6-31+G(d,p) · 6 procs · 4 GB · charge 0 · mult 1<br>
+          <strong>Triplet</strong> · UB3LYP/6-31+G(d,p) · 6 procs · 4 GB · charge 0 · mult 3
+        </div>
+      </div>
+
+      <label class="field-label" style="margin-top:1.2rem">Output directory</label>
+      <div class="dir-row">
+        <div class="dir-path" id="output-dir-text">Not selected</div>
+        <button class="btn btn-sm" id="btn-output-dir">Browse …</button>
+      </div>
+
+      <div class="step-nav-row">
+        <button class="btn btn-back" id="back-4">← Back</button>
+        <button class="btn btn-next" id="next-4" disabled>Run →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 5: Processing ── -->
+    <section class="step-panel" id="panel-5">
+      <h2 class="panel-title">Processing</h2>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="prog-fill"></div></div>
+        <div class="progress-label" id="prog-label">Starting …</div>
+      </div>
+      <div class="log-box" id="log-box"></div>
+      <div class="step-nav-row">
+        <span></span>
+        <button class="btn btn-next hidden" id="next-5">Results →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 6: Results ── -->
+    <section class="step-panel" id="panel-6">
+      <h2 class="panel-title">Complete!</h2>
+      <div class="result-summary" id="result-summary"></div>
+      <div class="result-tree" id="result-tree"></div>
+      <div class="step-nav-row">
+        <button class="btn btn-back btn-ghost" id="back-6">New Run</button>
+        <button class="btn btn-next" id="open-ase-btn"
+                title="Open ASE Analysis panel">ASE Analysis →</button>
+      </div>
+    </section>
+
+  </aside>
+
+  <!-- RIGHT: viewer + ASE panel -->
+  <main class="viewer-area">
+
+    <!-- Tab bar -->
+    <div class="viewer-tabbar">
+      <button class="vtab active" data-vtab="view3d">3D View</button>
+      <button class="vtab" data-vtab="ase" id="vtab-ase">
+        ASE Analysis
+        <span class="ase-tab-badge" id="ase-tab-badge">✓</span>
+      </button>
+    </div>
+
+    <!-- ── 3D Viewer tab ── -->
+    <div class="vtab-content active" id="vtab-content-view3d">
+      <div class="viewer-header">
+        <span id="viewer-title">3D Molecular Viewer</span>
+        <span class="viewer-hint">Drag to rotate · Scroll to zoom · Click atom to select</span>
+      </div>
+      <canvas id="mol-canvas"></canvas>
+      <div class="viewer-overlay" id="viewer-overlay">
+        <div class="overlay-msg">Load a trajectory file to begin</div>
+      </div>
+    </div>
+
+    <!-- ── ASE Analysis tab ── -->
+    <div class="vtab-content" id="vtab-content-ase">
+
+      <!-- ASE sub-tabs -->
+      <div class="ase-subtabbar">
+        <button class="ase-stab active" data-stab="rmsd">RMSD</button>
+        <button class="ase-stab" data-stab="pdd">Pair Distances</button>
+        <button class="ase-stab" data-stab="bonds">Bond Lengths</button>
+        <button class="ase-stab" data-stab="angles">Bond Angles</button>
+        <button class="ase-stab" data-stab="convert">Convert</button>
+      </div>
+
+      <!-- RMSD sub-panel -->
+      <div class="ase-subpanel active" id="ase-sub-rmsd">
+        <div class="ase-ctrl-row">
+          <label class="field-label">Frame step (1 = every frame)</label>
+          <input class="field-input field-input-sm" type="number" id="rmsd-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-rmsd">Compute RMSD</button>
+        </div>
+        <div class="ase-prog-row hidden" id="rmsd-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="rmsd-prog-fill"></div></div>
+          <span id="rmsd-prog-label">—</span>
+        </div>
+        <canvas class="chart-canvas" id="chart-rmsd"></canvas>
+        <div class="chart-placeholder" id="chart-rmsd-ph">
+          Run RMSD to see the time evolution vs. frame 0
+        </div>
+      </div>
+
+      <!-- Pair-distance distribution sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-pdd">
+        <div class="ase-ctrl-row">
+          <label class="field-label">R<sub>max</sub> (Å)</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-rmax" value="8" step="0.5" min="1" />
+          <label class="field-label">Bins</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-bins" value="80" min="10" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-step" value="5" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-pdd">Compute</button>
+        </div>
+        <div class="ase-ctrl-row">
+          <label class="field-label">Filter elements (blank = all)</label>
+          <input class="field-input" type="text" id="pdd-elements"
+                 placeholder="e.g.  C N  (space-separated)" />
+        </div>
+        <div class="ase-prog-row hidden" id="pdd-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="pdd-prog-fill"></div></div>
+          <span id="pdd-prog-label">—</span>
+        </div>
+        <canvas class="chart-canvas" id="chart-pdd"></canvas>
+        <div class="chart-placeholder" id="chart-pdd-ph">
+          Pair-distance distribution across all sampled frames
+        </div>
+      </div>
+
+      <!-- Bond lengths sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-bonds">
+        <div class="ase-ctrl-row">
+          <label class="field-label">Atom pairs (0-indexed, space-sep, e.g. 0 5  2 8)</label>
+          <input class="field-input" type="text" id="bonds-pairs"
+                 placeholder="0 5  2 8  1 3" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="bonds-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-bonds">Compute</button>
+        </div>
+        <div class="ase-prog-row hidden" id="bonds-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="bonds-prog-fill"></div></div>
+          <span id="bonds-prog-label">—</span>
+        </div>
+        <canvas class="chart-canvas" id="chart-bonds"></canvas>
+        <div class="chart-placeholder" id="chart-bonds-ph">
+          Bond-length evolution over the extracted trajectory
+        </div>
+      </div>
+
+      <!-- Bond angles sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-angles">
+        <div class="ase-ctrl-row">
+          <label class="field-label">Atom triplets (0-indexed, e.g. 0 1 2  3 4 5)</label>
+          <input class="field-input" type="text" id="angles-triplets"
+                 placeholder="0 1 2  3 4 5" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="angles-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-angles">Compute</button>
+        </div>
+        <div class="ase-prog-row hidden" id="angles-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="angles-prog-fill"></div></div>
+          <span id="angles-prog-label">—</span>
+        </div>
+        <canvas class="chart-canvas" id="chart-angles"></canvas>
+        <div class="chart-placeholder" id="chart-angles-ph">
+          Bond-angle evolution over the extracted trajectory
+        </div>
+      </div>
+
+      <!-- Format conversion sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-convert">
+        <p class="panel-desc" style="padding:.6rem 0">
+          ASE supports 100+ file formats. Convert your trajectory or individual
+          structures to VASP POSCAR, CIF, extXYZ, Quantum ESPRESSO, LAMMPS …
+        </p>
+        <label class="field-label">Input file</label>
+        <div class="dir-row">
+          <div class="dir-path" id="conv-input-path">—</div>
+          <button class="btn btn-sm" id="btn-conv-input">Browse …</button>
+        </div>
+        <label class="field-label" style="margin-top:.8rem">Output format</label>
+        <select class="field-input" id="conv-format">
+          <option value="">Auto-detect from extension</option>
+          <option value="vasp">VASP POSCAR</option>
+          <option value="cif">CIF</option>
+          <option value="extxyz">Extended XYZ</option>
+          <option value="espresso-in">Quantum ESPRESSO input</option>
+          <option value="lammps-data">LAMMPS data</option>
+          <option value="aims">FHI-aims</option>
+          <option value="turbomole">Turbomole</option>
+          <option value="gaussian">Gaussian</option>
+          <option value="dftb">DFTB+</option>
+          <option value="json">ASE JSON</option>
+        </select>
+        <label class="field-label" style="margin-top:.8rem">Output file</label>
+        <div class="dir-row">
+          <div class="dir-path" id="conv-output-path">—</div>
+          <button class="btn btn-sm" id="btn-conv-output">Save as …</button>
+        </div>
+        <div style="margin-top:1rem">
+          <button class="btn btn-accent" id="btn-run-conv" disabled>Convert</button>
+        </div>
+        <div class="ase-prog-row hidden" id="conv-prog-row" style="margin-top:.8rem">
+          <div class="progress-bar"><div class="progress-fill" id="conv-prog-fill"></div></div>
+          <span id="conv-prog-label">—</span>
+        </div>
+        <div id="conv-result" class="info-box hidden" style="margin-top:.8rem"></div>
+      </div>
+
+    </div><!-- #vtab-content-ase -->
+  </main>
+
+</div><!-- .layout -->
+
+<!-- ===== STATUS BAR ===== -->
+<footer class="statusbar">
+  <span id="status-msg">Ready</span>
+</footer>
+
+<script src="renderer.js"></script>
+</body>
+</html>
