@@ -1143,12 +1143,22 @@ $('ase-select-molecule').addEventListener('click', async () => {
   finally { aseState.busy = false; updateAseControls() }
 })
 
+const ACF_WIDTH = { bond: 2, angle: 3, dihedral: 4 }
 const selectionTargets = {
   rmsd: { input: 'rmsd-atoms', minimum: 1 },
   pdd: { input: 'pdd-atoms', minimum: 2 },
   bonds: { input: 'bonds-pairs', width: 2 },
   angles: { input: 'angles-triplets', width: 3 },
-  dihedrals: { input: 'dihedrals-quads', width: 4 }
+  dihedrals: { input: 'dihedrals-quads', width: 4 },
+  rmsdmatrix: { input: 'rmsdmatrix-atoms', minimum: 1 },
+  rdf: { input: 'rdf-atoms', minimum: 1 },
+  msd: { input: 'msd-atoms', minimum: 1 },
+  vdos: { input: 'vdos-atoms', minimum: 1 },
+  acf: {
+    input: 'acf-groups',
+    get width () { return ACF_WIDTH[$('acf-quantity').value] },
+    get minimum () { return 1 }
+  }
 }
 function updateSelectionTarget () {
   const target = selectionTargets[$('ase-selection-target').value]
@@ -1182,7 +1192,15 @@ const charts = {
   bonds:  new MonetLineChart('chart-bonds',  'chart-bonds-ph'),
   angles: new MonetLineChart('chart-angles', 'chart-angles-ph'),
   dihedrals: new MonetLineChart('chart-dihedrals', 'chart-dihedrals-ph'),
+  rmsdmatrix: new MonetHeatmapChart('chart-rmsdmatrix', 'chart-rmsdmatrix-ph'),
+  rdf: new MonetLineChart('chart-rdf', 'chart-rdf-ph'),
+  msd: new MonetLineChart('chart-msd', 'chart-msd-ph'),
+  vdos: new MonetLineChart('chart-vdos', 'chart-vdos-ph'),
+  acf: new MonetLineChart('chart-acf', 'chart-acf-ph'),
+  acfdist: new MonetLineChart('chart-acfdist', 'chart-acfdist-ph'),
 }
+const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf']
+const lastResults = {}
 
 // Wire up ASE progress listener (once)
 window.monet.onAseProgress(msg => {
@@ -1197,7 +1215,7 @@ function setAseProgress (fillId, labelId, rowId, pct, msg) {
 }
 
 function hideAseProgress (rowId) {
-  $(rowId).classList.add('hidden')
+  $(rowId)?.classList.add('hidden')
 }
 
 function extractedTrajPath () {
@@ -1256,9 +1274,10 @@ function updateAnalysisSource () {
 }
 
 function updateAseControls () {
-  for (const kind of ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals']) {
+  for (const kind of RUN_KINDS) {
     $(`btn-run-${kind}`).disabled = !aseState.available || aseState.busy
   }
+  $('btn-unwrap').disabled = !aseState.available || aseState.busy || !extractedTrajPath()
   updateConvBtn()
   updatePlotControls()
   for (const id of ['cell-apply', 'cell-reset', 'cell-read', 'btn-ase-recheck']) $(id).disabled = aseState.busy
@@ -1292,6 +1311,7 @@ function updatePlotControls () {
   for (const [kind, chart] of Object.entries(charts)) {
     $(`clear-${kind}`).disabled = !chart.data && aseState.activeKind !== kind
     $(`download-${kind}`).disabled = !chart.data
+    $(`csv-${kind}`).disabled = !chart.data
   }
   $('btn-clear-analyses').disabled = !Object.values(charts).some(chart => chart.data) && !charts[aseState.activeKind]
 }
@@ -1299,8 +1319,11 @@ function updatePlotControls () {
 function clearAnalysis (kind, report = true) {
   analysisRevision[kind]++
   charts[kind].clear()
+  delete lastResults[kind]
   hideAseProgress(`${kind}-prog-row`)
-  $(`${kind}-prog-label`).textContent = '—'
+  if ($(`${kind}-prog-label`)) $(`${kind}-prog-label`).textContent = '—'
+  if (kind === 'acf') { $('acf-result').classList.add('hidden'); clearAnalysis('acfdist', false) }
+  for (const id of { msd: ['msd-info'], vdos: ['vdos-info'] }[kind] || []) $(id).classList.add('hidden')
   if (report) setStatus('Analysis cleared. Your trajectory and atom selection are unchanged.')
 }
 
@@ -1316,6 +1339,12 @@ for (const [kind, chart] of Object.entries(charts)) {
     try {
       await chart.downloadPNG(`MONET-${kind}.png`)
       setStatus('Plot PNG download started.')
+    } catch (error) { setStatus(error.message) }
+  })
+  $(`csv-${kind}`).addEventListener('click', () => {
+    try {
+      chart.downloadCSV(`MONET-${kind}.csv`)
+      setStatus('CSV download started.')
     } catch (error) { setStatus(error.message) }
   })
 }
@@ -1335,7 +1364,8 @@ async function runAse (kind, command) {
   if (kind === 'conv' && $('conv-apply-cell').checked && !aseState.cellParameters) return { ok: false, error: 'Apply a manual crystal cell first.' }
   const options = kind !== 'conv' || $('conv-apply-cell').checked ? cellOptions() : {}
   command = { ...command, ...options }
-  const source = $('analysis-source').textContent + (options.cell ? ` Cell: ${options.cell.join(', ')}; PBC ${options.pbc.map(v => v ? 1 : 0).join('')}.` : ' Source cell.') + (kind === 'rmsd' ? ' Raw Cartesian RMSD.' : ` MIC ${options.mic ? 'on' : 'off'}.`)
+  const rmsdNote = command.align ? ' Kabsch-aligned RMSD.' : ' Raw Cartesian RMSD.'
+  const source = $('analysis-source').textContent + (options.cell ? ` Cell: ${options.cell.join(', ')}; PBC ${options.pbc.map(v => v ? 1 : 0).join('')}.` : ' Source cell.') + (['rmsd', 'rmsdmatrix'].includes(kind) ? rmsdNote + (command.unwrap ? ' Unwrapped.' : '') : ` MIC ${options.mic ? 'on' : 'off'}.`)
   aseState.busy = true
   aseState.activeKind = kind
   updateAseControls()
@@ -1380,7 +1410,12 @@ $('btn-run-rmsd').addEventListener('click', async () => {
   let indices
   try { indices = MonetASEModel.selectedIndices($('rmsd-atoms').value, aseState.analysisAtoms) }
   catch (error) { return setStatus(error.message) }
-  const r = await runAse('rmsd', { action: 'rmsd', filename: traj, frame_step: step, indices })
+  const reference = $('rmsd-reference').value.trim()
+  const r = await runAse('rmsd', {
+    action: 'rmsd', filename: traj, frame_step: step, indices,
+    align: $('rmsd-align').checked, unwrap: $('rmsd-unwrap').checked,
+    ...(reference ? { reference_index: Number(reference) } : {})
+  })
 
   if (!r.ok) { setStatus('RMSD error: ' + (r.message || r.error)); return }
 
@@ -1388,13 +1423,14 @@ $('btn-run-rmsd').addEventListener('click', async () => {
   const labels = r.frame_indices.map(String)
   charts.rmsd.setData({
     source: charts.rmsd.source,
-    title:    'RMSD vs Frame 0',
+    title:    `RMSD vs frame ${r.reference_index}${r.aligned ? ' (Kabsch-aligned)' : ''}`,
+    notes:    r.warning ? [r.warning] : [],
     xLabel:   'Frame',
     yLabel:   'RMSD (Å)',
     labels,
     datasets: [{ label: indices ? `RMSD · MONET IDs ${indices.map(i => r.atomMapping[i].monetId).join(', ')}` : 'RMSD · all atoms', data: r.rmsd, colorIndex: 0 }]
   })
-  setStatus(`RMSD computed over ${r.rmsd.length} frames`)
+  setStatus(`RMSD computed over ${r.rmsd.length} frames` + (r.warning ? ` — ${r.warning}` : ''))
 })
 
 // =============================================================================
@@ -1525,6 +1561,281 @@ $('btn-run-dihedrals').addEventListener('click', async () => {
   setStatus(`Dihedral angles computed (${r.angleRange === 'signed90' ? '−90° to +90°, folded' : '0–360°'}).`)
 })
 
+
+// =============================================================================
+// ── Time axis (user-defined MD time step) ────────────────────────────────────
+// =============================================================================
+
+const TIME_UNITS = { fs: 1, au: 0.02418884326585747, ps: 1000 }
+const fmt = (value, digits = 3) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toLocaleString('en-US', { maximumFractionDigits: 6 }) : '—'
+
+// Returns { timestep (fs per MD step), stride (MD steps per saved frame), dt (fs per saved frame) } or null.
+function timeAxis () {
+  const value = Number($('md-timestep').value)
+  const stride = Number($('md-stride').value)
+  if (!$('md-timestep').value.trim() || !(value > 0) || !Number.isInteger(stride) || stride < 1) return null
+  const timestep = value * TIME_UNITS[$('md-timestep-unit').value]
+  return { timestep, stride, dt: timestep * stride }
+}
+
+function updateTimeInfo () {
+  const axis = timeAxis()
+  $('md-dt-info').textContent = axis
+    ? `Time between saved frames: ${fmt(axis.dt, 6)} fs (${fmt(axis.timestep, 6)} fs × ${axis.stride}).`
+    : 'Set the MD time step used in your simulation (needed for MSD, VDOS and autocorrelation).'
+  if (lastResults.acf) showAcfResult()
+}
+for (const id of ['md-timestep', 'md-timestep-unit', 'md-stride']) {
+  $(id).addEventListener('input', updateTimeInfo)
+  $(id).addEventListener('change', updateTimeInfo)
+}
+
+function requireTime () {
+  const axis = timeAxis()
+  if (!axis) throw new Error('Set the MD time step (and MD steps per saved frame) in the Time axis row first.')
+  return axis
+}
+
+const lineLabels = values => values.map(value => fmt(value, 5))
+
+// =============================================================================
+// ── ASE: RMSD matrix ─────────────────────────────────────────────────────────
+// =============================================================================
+
+$('btn-run-rmsdmatrix').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  let indices
+  try { indices = MonetASEModel.selectedIndices($('rmsdmatrix-atoms').value, aseState.analysisAtoms) }
+  catch (error) { return setStatus(error.message) }
+  const r = await runAse('rmsdmatrix', {
+    action: 'rmsd_matrix', filename, indices, frame_step: Number($('rmsdmatrix-step').value),
+    max_frames: Number($('rmsdmatrix-max').value), align: $('rmsdmatrix-align').checked, unwrap: $('rmsdmatrix-unwrap').checked
+  })
+  if (!r.ok) return setStatus('RMSD matrix error: ' + (r.message || r.error))
+  charts.rmsdmatrix.setData({
+    title: `Pairwise RMSD${r.aligned ? ' (Kabsch-aligned)' : ''}`, source: charts.rmsdmatrix.source,
+    xLabel: 'Frame', yLabel: 'Frame', colorLabel: 'RMSD (Å)',
+    labels: r.frame_indices.map(String), matrix: r.matrix,
+    notes: [r.truncated ? `Only the first ${r.frame_indices.length} analysed frames are shown; increase the frame step to cover the whole run.` : '', r.warning || ''].filter(Boolean)
+  })
+  setStatus(`RMSD matrix computed for ${r.frame_indices.length} frames.`)
+})
+
+// =============================================================================
+// ── ASE: RDF ─────────────────────────────────────────────────────────────────
+// =============================================================================
+
+function drawRdf () {
+  const r = lastResults.rdf
+  if (!r) return
+  const showN = $('rdf-plot').value === 'n'
+  charts.rdf.setData({
+    title: `Radial distribution function ${r.label}`, source: charts.rdf.source,
+    xLabel: 'r (Å)', yLabel: showN ? 'n(r) — coordination number' : 'g(r)',
+    labels: lineLabels(r.r),
+    datasets: [{ label: `${showN ? 'n(r)' : 'g(r)'} ${r.label} · ${r.n_a}×${r.n_b} atoms · ${r.n_frames} frames`, data: showN ? r.n : r.g, colorIndex: showN ? 4 : 2 }],
+    notes: [`Rmax ${fmt(r.rmax, 4)} Å (limit ${fmt(r.rmax_limit, 4)} Å)`]
+  })
+}
+$('rdf-plot').addEventListener('change', drawRdf)
+
+$('btn-run-rdf').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  let indices
+  try { indices = MonetASEModel.selectedIndices($('rdf-atoms').value, aseState.analysisAtoms) }
+  catch (error) { return setStatus(error.message) }
+  const elements = $('rdf-elements').value.trim().split(/\s+/).filter(Boolean)
+  const rmax = $('rdf-rmax').value.trim()
+  const r = await runAse('rdf', {
+    action: 'rdf', filename, indices, elements: elements.length ? elements : undefined,
+    nbins: Number($('rdf-bins').value), frame_step: Number($('rdf-step').value), ...(rmax ? { rmax: Number(rmax) } : {})
+  })
+  if (!r.ok) return setStatus('RDF error: ' + (r.message || r.error))
+  lastResults.rdf = r
+  drawRdf()
+  setStatus(`RDF ${r.label} computed over ${r.n_frames} frames.`)
+})
+
+// =============================================================================
+// ── ASE: MSD / diffusion ─────────────────────────────────────────────────────
+// =============================================================================
+
+$('btn-run-msd').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  let indices, axis
+  try {
+    indices = MonetASEModel.selectedIndices($('msd-atoms').value, aseState.analysisAtoms)
+    axis = requireTime()
+  } catch (error) { return setStatus(error.message) }
+  const start = $('msd-fit-start').value.trim(), end = $('msd-fit-end').value.trim()
+  const r = await runAse('msd', {
+    action: 'msd', filename, indices, dt: axis.dt, frame_step: Number($('msd-step').value),
+    remove_drift: $('msd-drift').checked, ...(start ? { fit_start: Number(start) } : {}), ...(end ? { fit_end: Number(end) } : {})
+  })
+  if (!r.ok) return setStatus('MSD error: ' + (r.message || r.error))
+  const names = Object.keys(r.series)
+  const fit = r.fits.selection
+  const datasets = names.map((name, i) => ({ label: name === 'selection' ? 'MSD · selection' : `MSD · ${name}`, data: r.series[name], colorIndex: i }))
+  datasets.push({
+    label: `Linear fit ${fmt(r.fit_start, 4)}–${fmt(r.fit_end, 4)} fs`, dash: true, colorIndex: names.length,
+    data: r.times.map(t => t >= r.fit_start && t <= r.fit_end ? fit.slope * t + fit.intercept : NaN)
+  })
+  const lines = names.map(name => `${name === 'selection' ? 'Selection' : name}: D = ${fmt(r.fits[name].D_cm2_s, 4)} cm²/s (${fmt(r.fits[name].D_A2_fs, 4)} Å²/fs, R² ${fmt(r.fits[name].r2, 3)})`)
+  charts.msd.setData({
+    title: 'Mean-square displacement', source: charts.msd.source,
+    xLabel: 'Lag time (fs)', yLabel: 'MSD (Å²)', labels: lineLabels(r.times), datasets,
+    notes: [lines[0], r.periodic ? 'Unwrapped with minimum-image steps.' : 'No periodic cell: positions used as written.', r.warning || ''].filter(Boolean)
+  })
+  $('msd-info').textContent = lines.join(' · ') + (r.warning ? ` — ${r.warning}` : '')
+  $('msd-info').classList.remove('hidden')
+  setStatus(lines[0])
+})
+
+// =============================================================================
+// ── ASE: VDOS ────────────────────────────────────────────────────────────────
+// =============================================================================
+
+$('btn-run-vdos').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  let indices, axis
+  try {
+    indices = MonetASEModel.selectedIndices($('vdos-atoms').value, aseState.analysisAtoms)
+    axis = requireTime()
+  } catch (error) { return setStatus(error.message) }
+  const r = await runAse('vdos', {
+    action: 'vdos', filename, indices, dt: axis.dt, frame_step: Number($('vdos-step').value),
+    mass_weighted: $('vdos-mass').checked, smooth_cm: Number($('vdos-smooth').value) || 0, max_cm: Number($('vdos-max').value) || 4000
+  })
+  if (!r.ok) return setStatus('VDOS error: ' + (r.message || r.error))
+  const info = `Nyquist limit ${fmt(r.nyquist_cm, 5)} cm⁻¹ · resolution ${fmt(r.resolution_cm, 3)} cm⁻¹ · ${r.n_frames} frames · Δt ${fmt(r.dt, 5)} fs`
+  charts.vdos.setData({
+    title: 'Vibrational density of states', source: charts.vdos.source,
+    xLabel: 'Wavenumber (cm⁻¹)', yLabel: 'Normalised intensity', labels: lineLabels(r.wavenumber),
+    datasets: [{ label: `VDOS${$('vdos-mass').checked ? ' (mass-weighted)' : ''}`, data: r.intensity, colorIndex: 0 }],
+    notes: [info, r.warning || ''].filter(Boolean), yMin: 0
+  })
+  $('vdos-info').textContent = info + (r.warning ? ` — ${r.warning}` : '')
+  $('vdos-info').classList.remove('hidden')
+  setStatus('VDOS computed. ' + info)
+})
+
+// =============================================================================
+// ── ASE: autocorrelation and decorrelation stride ────────────────────────────
+// =============================================================================
+
+function acfTau () {
+  const r = lastResults.acf
+  const manual = Number($('acf-tau-manual').value)
+  if ($('acf-tau-manual').value.trim() && manual > 0) return { tau: manual, source: 'entered' }
+  if (r && Number.isFinite(r.tau_fit) && r.tau_fit > 0) return { tau: r.tau_fit, source: 'fit' }
+  if (r && Number.isFinite(r.tau_int) && r.tau_int > 0) return { tau: r.tau_int, source: 'integral' }
+  return null
+}
+
+function showAcfResult () {
+  const r = lastResults.acf
+  if (!r) return
+  const axis = timeAxis()
+  const steps = value => axis ? ` = ${fmt(value / axis.timestep, 4)} MD steps = ${fmt(value / axis.dt, 4)} saved frames` : ''
+  $('acf-tau-text').textContent = [
+    `τ (fit exp(−t/τ), ${r.fit_points} points up to ${fmt(r.fit_end, 4)} fs) = ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs${steps(r.tau_fit)}`,
+    `τ (integral to first zero) = ${fmt(r.tau_int, 4)} fs${r.decorrelated ? '' : ' (ACF never crossed zero: extend the lag range or the run)'}`,
+    `Mean ${fmt(r.statistics[0].mean, 5)} ± ${fmt(r.statistics[0].sem, 2)} (std ${fmt(r.statistics[0].std, 4)}), N_eff ≈ ${fmt(r.n_effective, 3)} of ${r.n_frames} frames`
+  ].join(' · ')
+  const choice = acfTau()
+  const factor = Number($('acf-multiplier').value) || 1
+  if (!choice || !axis) {
+    $('acf-stride-text').textContent = axis ? 'No correlation time available.' : 'Set the MD time step to convert τ into a sampling stride.'
+    $('acf-apply-stride').disabled = true
+  } else {
+    const stride = Math.max(1, Math.ceil(factor * choice.tau / axis.dt - 1e-9))
+    $('acf-stride-text').textContent = `Sample every ${stride} saved frames (${fmt(stride * axis.stride, 6)} MD steps, ${fmt(stride * axis.dt, 5)} fs) using τ ${choice.source} = ${fmt(choice.tau, 4)} fs × ${factor}`
+    $('acf-apply-stride').dataset.stride = stride
+    $('acf-apply-stride').disabled = false
+  }
+  $('acf-result').classList.remove('hidden')
+}
+for (const id of ['acf-tau-manual', 'acf-multiplier']) $(id).addEventListener('input', showAcfResult)
+$('acf-apply-stride').addEventListener('click', () => {
+  const stride = Number($('acf-apply-stride').dataset.stride)
+  if (!Number.isInteger(stride) || stride < 1) return
+  $('inp-freq').value = stride
+  updateSampledCount()
+  setStatus(`Sampling frequency set to every ${stride} frames (step 02). Re-run the extraction to apply it.`)
+})
+$('acf-quantity').addEventListener('change', () => {
+  $('acf-groups').placeholder = { dihedral: '1 2 3 4', angle: '2 1 3', bond: '1 2', rmsd: '1 2 3 …' }[$('acf-quantity').value]
+  $('acf-mode').value = 'linear'
+  clearAnalysis('acf', false)
+  if ($('ase-selection-target').value === 'acf') updateSelectionTarget()
+})
+
+$('btn-run-acf').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  const quantity = $('acf-quantity').value
+  let groups, axis
+  try {
+    axis = requireTime()
+    groups = quantity === 'rmsd'
+      ? [MonetASEModel.selectedIndices($('acf-groups').value, aseState.analysisAtoms) || aseState.analysisAtoms.map(atom => atom.aseIndex)]
+      : MonetASEModel.groupsFromIds($('acf-groups').value, ACF_WIDTH[quantity], aseState.analysisAtoms)
+  } catch (error) { return setStatus(error.message) }
+  const maxLag = $('acf-maxlag').value.trim()
+  const r = await runAse('acf', {
+    action: 'acf', filename, quantity, groups, dt: axis.dt, frame_step: Number($('acf-step').value),
+    mode: $('acf-mode').value, fit_until: $('acf-fit').value, nbins: Number($('acf-bins').value),
+    ...(maxLag ? { max_lag: Number(maxLag) } : {})
+  })
+  if (!r.ok) return setStatus('Autocorrelation error: ' + (r.message || r.error))
+  lastResults.acf = r
+  const label = quantity === 'rmsd' ? 'RMSD' : groups.map(group => MonetASEModel.seriesLabel(group.join('-'), r.atomMapping)).join(' | ')
+  const unit = { dihedral: '°', angle: '°', bond: 'Å', rmsd: 'Å' }[quantity]
+  const datasets = [{ label: `C(t) · ${label}`, data: r.acf, colorIndex: 0 }]
+  if (r.fit_curve) datasets.push({ label: `exp(−t/τ), τ = ${fmt(r.tau_fit, 4)} fs`, data: r.fit_curve, dash: true, colorIndex: 1 })
+  charts.acf.setData({
+    title: `Autocorrelation of the ${quantity === 'rmsd' ? 'RMSD' : quantity}`, source: charts.acf.source,
+    xLabel: 'Time lag (fs)', yLabel: r.mode === 'circular' ? '⟨cos Δθ⟩' : 'Normalised autocorrelation',
+    labels: lineLabels(r.lags), datasets,
+    notes: [`τ fit ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs · τ integral ${fmt(r.tau_int, 4)} fs · Δt ${fmt(r.dt, 5)} fs`]
+  })
+  charts.acfdist.source = charts.acf.source
+  charts.acfdist.setData({
+    title: `Distribution of the ${quantity === 'rmsd' ? 'RMSD' : quantity}`, source: charts.acf.source,
+    xLabel: `${quantity === 'rmsd' ? 'RMSD' : quantity[0].toUpperCase() + quantity.slice(1)} (${unit})`, yLabel: 'Probability density',
+    labels: lineLabels(r.distribution.x),
+    datasets: [{ label: `${label} · ${r.n_frames} frames`, data: r.distribution.density, bars: true, colorIndex: 2 }],
+    notes: [`Mean ${fmt(r.statistics[0].mean, 5)} ${unit} · std ${fmt(r.statistics[0].std, 4)} ${unit}`], yMin: 0
+  })
+  showAcfResult()
+  setStatus(`Autocorrelation computed: τ = ${fmt(r.tau_fit, 4)} fs.`)
+})
+
+// =============================================================================
+// ── ASE: unwrap trajectory ───────────────────────────────────────────────────
+// =============================================================================
+
+$('btn-unwrap').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load a trajectory first.')
+  const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+  const output = await window.monet.aseSelectOutput(`${stem}-unwrapped.extxyz`)
+  if (!output) return
+  $('download-unwrapped').classList.add('hidden')
+  const r = await runAse('unwrap', { action: 'unwrap', filename, output })
+  if (!r.ok) return setStatus('Unwrap error: ' + (r.message || r.error))
+  if (r.downloadURL) {
+    $('download-unwrapped').href = r.downloadURL
+    $('download-unwrapped').download = r.output || `${stem}-unwrapped.extxyz`
+    $('download-unwrapped').classList.remove('hidden')
+  }
+  setStatus(`Unwrapped ${r.n_frames} frames${r.warning ? ` — ${r.warning}` : ''}.`)
+})
+
 // =============================================================================
 // ── ASE: Format conversion ────────────────────────────────────────────────────
 // =============================================================================
@@ -1606,6 +1917,7 @@ window.addEventListener('load', () => {
   updateSampledCount()
   updateFormatUI()
   updateQmUI()
+  updateTimeInfo()
   if (window.monet.isBrowser) {
     state.outputDir = 'MONET-results'
     $('output-dir-text').textContent = 'Download results as a ZIP file'

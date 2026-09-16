@@ -15,6 +15,7 @@ import sys, os, json, traceback, math
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import monet_io
+import monet_analysis
 
 try:
     import numpy as np
@@ -45,6 +46,17 @@ def ok(**kwargs):
 
 def err(msg):
     _emit({"type": "error", "ok": False, "message": msg})
+
+def _report_exception():
+    """Input problems become short messages; unexpected failures keep their traceback."""
+    error = sys.exc_info()[1]
+    if isinstance(error, ValueError):
+        err(str(error))
+    elif isinstance(error, KeyError):
+        err(f'Missing parameter: {error}')
+    else:
+        _report_exception()
+
 
 def _require_ase():
     if not _ASE_OK:
@@ -136,7 +148,7 @@ def action_read_info(cmd):
             cellpar   = atoms.cell.cellpar().tolist(),
         )
     except Exception:
-        err(traceback.format_exc())
+        _report_exception()
 
 
 def _require_xyz(filename):
@@ -199,37 +211,242 @@ def action_import(cmd):
     ok(**summary)
 
 
+def _frame_data(cmd, indices=None, max_frames=None, need_cell=False):
+    """(frame_indices, positions[F, n, 3], cells[F, 3, 3] or None, pbc) with the cell/PBC options applied."""
+    filename = cmd['filename']
+    step = cmd.get('frame_step', 1)
+    frames, positions, cells = [], [], []
+    pbc = None
+    for i, atoms in _load_images(filename, step, max_frames=max_frames, cmd=cmd, label='Reading frame'):
+        if indices is not None:
+            _validate_groups([indices], len(indices), len(atoms))
+            atoms = atoms[list(indices)]
+        frames.append(i)
+        positions.append(atoms.get_positions())
+        if atoms.cell.rank == 3:
+            cells.append(atoms.cell.array.copy())
+            pbc = atoms.pbc.copy() if pbc is None else pbc
+        elif need_cell:
+            raise ValueError('This analysis needs a complete periodic cell. Apply a crystal cell or use an extended XYZ with a lattice.')
+    if not frames:
+        raise ValueError('No frames found.')
+    if cells and len(cells) != len(frames):
+        raise ValueError('Some frames have no cell; apply a constant crystal cell.')
+    if need_cell and (pbc is None or not pbc.any()):
+        raise ValueError('This analysis needs periodic directions (PBC) in the cell settings.')
+    return frames, np.array(positions), (np.array(cells) if cells else None), pbc
+
+
+def _maybe_unwrap(cmd, positions, cells, pbc):
+    if not cmd.get('unwrap') or cells is None or pbc is None or not pbc.any():
+        return positions, None
+    unwrapped, worst = monet_analysis.unwrap(positions, cells, pbc)
+    warning = None
+    if worst > 0.35:
+        warning = f'Largest step between analysed frames is {worst:.2f} of the cell; use a smaller frame step for reliable unwrapping.'
+    return unwrapped, warning
+
+
 def action_rmsd(cmd):
-    """RMSD of selected atoms vs frame-0, sampled every frame_step frames."""
+    """RMSD of selected atoms vs a reference frame, optionally Kabsch-aligned and unwrapped."""
     if not _require_ase(): return
-    filename   = cmd["filename"]
-    indices    = cmd.get("indices")          # 0-indexed list; None = all
-    frame_step = int(cmd.get("frame_step", 1))
-
+    indices = cmd.get("indices")          # 0-indexed list; None = all
     prog("Loading frames …", 0)
-    try:
-        ref_pos = None
-        raw_idx = []
-        rmsds = []
-        for i, img in _load_images(filename, frame_step, cmd=cmd):
-            pos = img.get_positions()
-            if indices is not None:
-                _validate_groups([indices], len(indices), len(img))
-                pos = pos[np.array(indices)]
-            if ref_pos is None:
-                ref_pos = pos.copy()
-            if pos.shape != ref_pos.shape:
-                raise ValueError('All frames must contain the same number of atoms.')
-            diff = pos - ref_pos
-            rmsds.append(float(np.sqrt(np.mean(np.sum(diff ** 2, axis=1)))))
-            raw_idx.append(i)
-        if not rmsds:
-            raise ValueError('No frames found.')
+    frames, positions, cells, pbc = _frame_data(cmd, indices)
+    positions, warning = _maybe_unwrap(cmd, positions, cells, pbc)
+    reference = cmd.get('reference_index')
+    if reference is None:
+        ref = positions[0]
+    else:
+        if reference not in frames:
+            raise ValueError('The reference frame must be one of the analysed frames (a multiple of the frame step).')
+        ref = positions[frames.index(reference)]
+    values = monet_analysis.kabsch_rmsd(positions, ref, bool(cmd.get('align')))
+    prog("RMSD done", 100)
+    ok(rmsd=values.tolist(), frame_indices=frames, reference_index=frames[0] if reference is None else reference,
+       aligned=bool(cmd.get('align')), warning=warning)
 
-        prog("RMSD done", 100)
-        ok(rmsd=rmsds, frame_indices=raw_idx)
-    except Exception:
-        err(traceback.format_exc())
+
+def action_rmsd_matrix(cmd):
+    """Pairwise RMSD between analysed frames (reference paper: revisiting of states)."""
+    if not _require_ase(): return
+    max_frames = cmd.get('max_frames', 1000)
+    prog("Loading frames …", 0)
+    frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'), max_frames=max_frames)
+    positions, warning = _maybe_unwrap(cmd, positions, cells, pbc)
+    matrix = monet_analysis.rmsd_matrix(positions, bool(cmd.get('align', True)), progress=prog)
+    prog("Done", 100)
+    ok(matrix=np.round(matrix, 6).tolist(), frame_indices=frames, aligned=bool(cmd.get('align', True)),
+       truncated=len(frames) >= max_frames, warning=warning)
+
+
+def _element_group(symbols, indices, element):
+    pool = range(len(symbols)) if indices is None else indices
+    return [i for i in pool if element is None or symbols[i] == element]
+
+
+def action_rdf(cmd):
+    """Normalised radial distribution function g(r) and coordination number n(r)."""
+    if not _require_ase(): return
+    prog("Loading frames …", 0)
+    frames, positions, cells, pbc = _frame_data(cmd, need_cell=True)
+    symbols = _first_atoms(cmd['filename'], cmd).get_chemical_symbols()
+    elements = cmd.get('elements') or []
+    first = elements[0] if elements else None
+    second = elements[1] if len(elements) > 1 else first
+    group_a = _element_group(symbols, cmd.get('indices'), first)
+    group_b = _element_group(symbols, cmd.get('indices'), second)
+    if not group_a or not group_b or (group_a == group_b and len(group_a) < 2):
+        raise ValueError('The element/atom selection leaves too few atoms for an RDF.')
+    limit = monet_analysis.max_rdf_radius(cells)
+    rmax = cmd.get('rmax') or limit
+    if rmax > limit + 1e-9:
+        raise ValueError(f'Rmax must not exceed half the smallest cell width ({limit:.3f} A) for minimum-image distances.')
+    r, g, n = monet_analysis.rdf(positions, cells, pbc, group_a, group_b, rmax, cmd.get('nbins', 200), progress=prog)
+    prog("Done", 100)
+    ok(r=r.tolist(), g=g.tolist(), n=n.tolist(), n_frames=len(frames), rmax=rmax, rmax_limit=limit,
+       n_a=len(group_a), n_b=len(group_b), label=f"{first or 'all'}–{second or 'all'}")
+
+
+def action_msd(cmd):
+    """Mean-square displacement (unwrapped, time-origin averaged) and diffusion coefficient."""
+    if not _require_ase(): return
+    dt = cmd['dt'] * cmd.get('frame_step', 1)
+    prog("Loading frames …", 0)
+    frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'))
+    positions, warning = _maybe_unwrap({**cmd, 'unwrap': True}, positions, cells, pbc)
+    if cmd.get('remove_drift', True):
+        positions = positions - (positions.mean(axis=1, keepdims=True) - positions[:1].mean(axis=1, keepdims=True))
+    if len(frames) < 4:
+        raise ValueError('MSD needs at least four analysed frames.')
+    prog("Computing MSD …", 90)
+    symbols = _first_atoms(cmd['filename'], cmd).get_chemical_symbols()
+    chosen = cmd.get('indices') or list(range(len(symbols)))
+    times = np.arange(len(frames)) * dt
+    series = {'selection': monet_analysis.msd(positions)}
+    if cmd.get('by_element', True):
+        for element in dict.fromkeys(symbols[i] for i in chosen):
+            columns = [k for k, i in enumerate(chosen) if symbols[i] == element]
+            if len(columns) != len(chosen):
+                series[element] = monet_analysis.msd(positions[:, columns])
+    start = cmd.get('fit_start', 0.1 * times[-1])
+    end = cmd.get('fit_end', 0.5 * times[-1])
+    fits = {name: monet_analysis.diffusion(times, values, start, end) for name, values in series.items()}
+    prog("Done", 100)
+    ok(times=times.tolist(), series={k: v.tolist() for k, v in series.items()}, fits=fits,
+       fit_start=start, fit_end=end, frame_indices=frames, dt=dt, warning=warning,
+       periodic=bool(pbc is not None and pbc.any()))
+
+
+def action_vdos(cmd):
+    """Vibrational density of states from finite-difference velocities."""
+    if not _require_ase(): return
+    dt = cmd['dt'] * cmd.get('frame_step', 1)
+    prog("Loading frames …", 0)
+    frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'))
+    positions, warning = _maybe_unwrap({**cmd, 'unwrap': True}, positions, cells, pbc)
+    masses = None
+    if cmd.get('mass_weighted', True):
+        atoms = _first_atoms(cmd['filename'], cmd)
+        chosen = cmd.get('indices') or list(range(len(atoms)))
+        masses = atoms.get_masses()[chosen]
+    prog("Computing spectrum …", 90)
+    freq, intensity = monet_analysis.vdos(positions, dt, masses, cmd.get('smooth_cm', 0))
+    keep = freq <= cmd.get('max_cm', 4000)
+    prog("Done", 100)
+    ok(wavenumber=freq[keep].tolist(), intensity=intensity[keep].tolist(), n_frames=len(frames), dt=dt,
+       nyquist_cm=float(freq[-1]), resolution_cm=float(freq[1] - freq[0]) if len(freq) > 1 else None, warning=warning)
+
+
+def action_unwrap(cmd):
+    """Write an unwrapped extended XYZ copy (continuous atom paths across PBC)."""
+    if not _require_ase(): return
+    prog("Loading frames …", 0)
+    frames, positions, cells, pbc = _frame_data(cmd, need_cell=True)
+    unwrapped, warning = _maybe_unwrap({**cmd, 'unwrap': True}, positions, cells, pbc)
+    symbols = _first_atoms(cmd['filename'], cmd).get_chemical_symbols()
+    row = ''.join(f'{s} %.8f %.8f %.8f\n' for s in symbols)
+    flags = ' '.join('T' if v else 'F' for v in pbc)
+    with open(cmd['output'], 'w') as fh:
+        for k, frame in enumerate(frames):
+            lattice = ' '.join(f'{v:.10f}' for v in cells[k].ravel())
+            fh.write(f'{len(symbols)}\nLattice="{lattice}" Properties=species:S:1:pos:R:3 pbc="{flags}" frame={frame} unwrapped=T\n')
+            fh.write(row % tuple((unwrapped[k] + 0.0).ravel()))
+    prog("Done", 100)
+    ok(n_frames=len(frames), output=cmd['output'], warning=warning)
+
+
+def _series_for(cmd, quantity, groups):
+    """Per-group time series (groups x frames) of a geometric quantity."""
+    mic = cmd.get('mic', False)
+    width = {'bond': 2, 'angle': 3, 'dihedral': 4, 'rmsd': None}[quantity]
+    values = [[] for _ in groups]
+    frames = []
+    reference = None
+    for fi, atoms in _load_images(cmd['filename'], cmd.get('frame_step', 1), cmd=cmd, label='Frame'):
+        frames.append(fi)
+        if quantity == 'rmsd':
+            _validate_groups(groups, len(groups[0]), len(atoms))
+            positions = atoms.get_positions()
+            if reference is None:
+                reference = positions
+            for k, group in enumerate(groups):
+                values[k].append(float(monet_analysis.kabsch_rmsd(positions[None, group], reference[group], cmd.get('align', False))[0]))
+            continue
+        _validate_groups(groups, width, len(atoms))
+        for k, g in enumerate(groups):
+            if quantity == 'bond':
+                values[k].append(float(atoms.get_distance(g[0], g[1], mic=mic)))
+            elif quantity == 'angle':
+                values[k].append(float(atoms.get_angle(*g, mic=mic)))
+            else:
+                values[k].append(float(atoms.get_dihedral(*g, mic=mic)))
+    return frames, np.array(values)
+
+
+def action_acf(cmd):
+    """Autocorrelation of a selected quantity, exponential fit, correlation times and distribution."""
+    if not _require_ase(): return
+    quantity = cmd['quantity']
+    groups = cmd['groups']
+    step = cmd.get('frame_step', 1)
+    dt = cmd['dt'] * step
+    prog("Computing the quantity …", 0)
+    frames, series = _series_for(cmd, quantity, groups)
+    angular = quantity in ('angle', 'dihedral')
+    mode = cmd.get('mode', 'linear')
+    if mode == 'circular' and not angular:
+        raise ValueError('Circular autocorrelation applies to angles and dihedrals only.')
+    signal = monet_analysis.unwrap_angles(series) if quantity == 'dihedral' and mode == 'linear' else series
+    max_lag = cmd.get('max_lag')
+    lags_steps = None if max_lag is None else int(round(max_lag / dt))
+    acf = monet_analysis.autocorrelation(signal, mode, lags_steps)
+    lags = np.arange(len(acf)) * dt
+    fit = monet_analysis.correlation_time(lags, acf, cmd.get('fit_until', 'zero'))
+    tau = fit['tau_fit']
+    curve = np.exp(-lags / tau).tolist() if math.isfinite(tau) and tau > 0 else None
+    period = 360.0 if quantity == 'dihedral' else None
+    shown = series % 360.0 if period else series
+    bins = cmd.get('nbins', 60)
+    value_range = (0.0, 360.0) if quantity == 'dihedral' else (0.0, 180.0) if quantity == 'angle' else None
+    centres, density = monet_analysis.histogram_density(shown, bins, value_range)
+    # Standard error of the mean corrected for correlation (N_eff = N dt / (2 tau_int)).
+    tau_int = fit['tau_int']
+    n = series.shape[1]
+    n_eff = n * dt / (2 * tau_int) if math.isfinite(tau_int) and tau_int > 0 else n
+    per_group = []
+    for k, row in enumerate(shown):
+        if quantity == 'dihedral':
+            radians = np.radians(row)
+            mean = float(np.degrees(np.arctan2(np.sin(radians).mean(), np.cos(radians).mean())) % 360)
+            std = float(np.degrees(np.sqrt(-2 * np.log(max(np.hypot(np.sin(radians).mean(), np.cos(radians).mean()), 1e-12)))))
+        else:
+            mean, std = float(row.mean()), float(row.std(ddof=1)) if n > 1 else 0.0
+        per_group.append({'mean': mean, 'std': std, 'sem': std / math.sqrt(max(min(n_eff, n), 1))})
+    prog("Done", 100)
+    ok(lags=lags.tolist(), acf=acf.tolist(), fit_curve=curve, frame_indices=frames, dt=dt, frame_step=step,
+       series=np.round(shown, 6).tolist(), distribution={'x': centres.tolist(), 'density': density.tolist()},
+       statistics=per_group, n_frames=n, n_effective=float(min(n_eff, n)), mode=mode, quantity=quantity, **fit)
 
 
 def action_pdd(cmd):
@@ -272,7 +489,7 @@ def action_pdd(cmd):
         prog("Done", 100)
         ok(r=centres, counts=counts.tolist(), n_frames=n_frames, rmax=_rmax)
     except Exception:
-        err(traceback.format_exc())
+        _report_exception()
 
 
 def action_bonds(cmd):
@@ -296,7 +513,7 @@ def action_bonds(cmd):
         prog("Done", 100)
         ok(series=series, frame_indices=raw_idx)
     except Exception:
-        err(traceback.format_exc())
+        _report_exception()
 
 
 def action_angles(cmd):
@@ -320,7 +537,7 @@ def action_angles(cmd):
         prog("Done", 100)
         ok(series=series, frame_indices=raw_idx)
     except Exception:
-        err(traceback.format_exc())
+        _report_exception()
 
 
 def action_dihedrals(cmd):
@@ -344,7 +561,7 @@ def action_dihedrals(cmd):
         prog("Done", 100)
         ok(series=series, frame_indices=raw_idx)
     except Exception:
-        err(traceback.format_exc())
+        _report_exception()
 
 
 def action_convert(cmd):
@@ -373,7 +590,7 @@ def action_convert(cmd):
         prog("Done", 100)
         ok(n_frames=len(images), output=out)
     except Exception:
-        err(traceback.format_exc())
+        _report_exception()
 
 
 def action_average(cmd):
@@ -400,7 +617,7 @@ def action_average(cmd):
         prog("Done", 100)
         ok(n_frames=n, output=output)
     except Exception:
-        err(traceback.format_exc())
+        _report_exception()
 
 
 def _validate_groups(groups, width, atom_count):
@@ -478,6 +695,55 @@ def validate_command(cmd):
         raise ValueError('PBC must contain three boolean flags.')
     if 'mic' in cmd and type(cmd['mic']) is not bool:
         raise ValueError('Periodic-image option must be boolean.')
+    def positive(name, required=False, integer=False, maximum=None):
+        value = cmd.get(name)
+        if value is None:
+            if required:
+                raise ValueError(f'{name} is required.')
+            return
+        kind = (int,) if integer else (int, float)
+        if type(value) not in kind or not math.isfinite(value) or value <= 0 or (maximum and value > maximum):
+            raise ValueError(f'{name} must be a positive {"integer" if integer else "number"}' + (f' up to {maximum}.' if maximum else '.'))
+    action = cmd.get('action')
+    if action in ('msd', 'vdos', 'acf'):
+        positive('dt', required=True)
+    for name in ('fit_start', 'fit_end', 'max_lag', 'max_cm'):
+        positive(name)
+    if 'smooth_cm' in cmd and (type(cmd['smooth_cm']) not in (int, float) or not 0 <= cmd['smooth_cm'] < 1000):
+        raise ValueError('Smoothing must be between 0 and 1000 cm-1.')
+    positive('max_frames', integer=True, maximum=3000)
+    for name in ('align', 'unwrap', 'remove_drift', 'by_element', 'mass_weighted'):
+        if name in cmd and type(cmd[name]) is not bool:
+            raise ValueError(f'{name} must be true or false.')
+    if cmd.get('reference_index') is not None and (type(cmd['reference_index']) is not int or cmd['reference_index'] < 0):
+        raise ValueError('Reference frame must be a non-negative integer.')
+    if action == 'rdf':
+        bins = cmd.get('nbins', 200)
+        if type(bins) is not int or not 1 <= bins <= 10000:
+            raise ValueError('Bins must be an integer between 1 and 10000.')
+        positive('rmax')
+    if action == 'acf':
+        quantity = cmd.get('quantity')
+        widths = {'bond': 2, 'angle': 3, 'dihedral': 4, 'rmsd': None}
+        if quantity not in widths:
+            raise ValueError('Choose bond, angle, dihedral or RMSD for the autocorrelation.')
+        groups = cmd.get('groups')
+        if not isinstance(groups, list) or not groups or not all(isinstance(g, list) and g for g in groups):
+            raise ValueError('Select at least one atom group.')
+        for group in groups:
+            if any(type(i) is not int or i < 0 for i in group) or len(set(group)) != len(group):
+                raise ValueError('Atom groups must contain distinct valid indices.')
+            if widths[quantity] and len(group) != widths[quantity]:
+                raise ValueError(f'Use groups of {widths[quantity]} atoms for this quantity.')
+        if quantity == 'rmsd' and len(groups) != 1:
+            raise ValueError('RMSD autocorrelation uses a single atom selection.')
+        if cmd.get('mode', 'linear') not in ('linear', 'circular'):
+            raise ValueError('Unknown autocorrelation mode.')
+        if cmd.get('fit_until', 'zero') not in ('zero', 'efold', 'all'):
+            raise ValueError('Unknown fit window.')
+        bins = cmd.get('nbins', 60)
+        if type(bins) is not int or not 2 <= bins <= 2000:
+            raise ValueError('Distribution bins must be an integer between 2 and 2000.')
     if cmd.get('action') == 'import':
         import monet_formats
         if cmd.get('format', 'auto') not in monet_formats.FORMATS:
@@ -525,6 +791,12 @@ ACTIONS = {
     "scan":      action_scan,
     "frame":     action_frame,
     "extract":   action_extract,
+    "rmsd_matrix": action_rmsd_matrix,
+    "rdf":       action_rdf,
+    "msd":       action_msd,
+    "vdos":      action_vdos,
+    "unwrap":    action_unwrap,
+    "acf":       action_acf,
     "import":    action_import,
     "read_info": action_read_info,
     "molecule":  action_molecule,
@@ -556,7 +828,7 @@ def main():
         validate_command(cmd)
         handler(cmd)
     except Exception:
-        err(traceback.format_exc())
+        _report_exception()
 
 if __name__ == "__main__":
     main()

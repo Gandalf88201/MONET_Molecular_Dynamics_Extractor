@@ -269,16 +269,25 @@
       const top = (source ? 58 : 42) + notes.length * 15
       const size = Math.max(40, Math.min(W - 190, H - top - 60))
       const left = 76 + Math.max(0, (W - 190 - size) / 2)
-      const bitmap = ctx.createImageData(n, n)
+      // Nearest-neighbour cells written straight into device pixels (sharp at any export scale).
+      const colorsByCell = new Uint8ClampedArray(n * n * 3)
       matrix.forEach((row, i) => row.forEach((value, j) => {
-        const [r, g, b] = Number.isFinite(value) ? heatColor(colors.heat, (value - min) / (max - min)) : [128, 128, 128]
-        bitmap.data.set([r, g, b, 255], ((n - 1 - i) * n + j) * 4)
+        colorsByCell.set(Number.isFinite(value) ? heatColor(colors.heat, (value - min) / (max - min)) : [128, 128, 128], (i * n + j) * 3)
       }))
-      const tile = document.createElement('canvas')
-      tile.width = n; tile.height = n
-      tile.getContext('2d').putImageData(bitmap, 0, 0)
-      ctx.imageSmoothingEnabled = false
-      ctx.drawImage(tile, left, top, size, size)
+      const pixels = Math.max(1, Math.round(size * scale))
+      const bitmap = ctx.createImageData(pixels, pixels)
+      const columns = Array.from({ length: pixels }, (_, x) => Math.min(n - 1, Math.floor(x * n / pixels)))
+      for (let y = 0; y < pixels; y++) {
+        const i = n - 1 - Math.min(n - 1, Math.floor(y * n / pixels))
+        for (let x = 0; x < pixels; x++) {
+          const source = (i * n + columns[x]) * 3, target = (y * pixels + x) * 4
+          bitmap.data[target] = colorsByCell[source]
+          bitmap.data[target + 1] = colorsByCell[source + 1]
+          bitmap.data[target + 2] = colorsByCell[source + 2]
+          bitmap.data[target + 3] = 255
+        }
+      }
+      ctx.putImageData(bitmap, Math.round(left * scale), Math.round(top * scale))
       ctx.strokeStyle = colors.axis; ctx.strokeRect(left, top, size, size)
       ctx.font = '11px sans-serif'; ctx.fillStyle = colors.tick
       const ticks = Math.min(6, n - 1)

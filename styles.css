@@ -836,3 +836,15 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .qm-grid .field-input { padding: 5px 7px; }
 .qm-templates summary { cursor: pointer; color: var(--blue); font-size: .78rem; }
 .qm-template-text { font-size: .72rem; line-height: 1.35; resize: vertical; margin-top: 6px; white-space: pre; }
+
+/* ── Time axis and new analyses ── */
+.ase-time-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: .74rem; color: var(--text-dim); flex-shrink: 0; }
+.ase-time-row strong { color: var(--text); }
+.ase-time-row label { display: flex; align-items: center; gap: 5px; }
+#md-dt-info { color: var(--blue); }
+.ase-subpanel .ase-ctrl-row label { font-size: .74rem; color: var(--text-dim); display: inline-flex; align-items: center; gap: 4px; }
+.acf-select, .rdf-plot { width: auto !important; }
+.chart-canvas.chart-square { min-height: 420px; }
+.acf-result { color: var(--text); }
+.acf-result strong { color: var(--green); }
+#acf-tau-text { margin-bottom: 4px; }

@@ -59,6 +59,10 @@ w.monet = {
     if (command.action === 'molecule') return { ok: true, indices: [command.seed, ...activeAtoms.map((_,i) => i).filter(i => i !== command.seed)] }
     if (defer) return new Promise(resolve => { pendingResolve = resolve })
     if (command.action === 'dihedrals') return { ok: true, frame_indices: [0, 1], series: { [command.quads[0].join('-')]: [270, 90] } }
+    if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3] }
+    if (command.action === 'rmsd_matrix') return { ok: true, matrix: [[0, 1], [1, 0]], frame_indices: [0, 10], aligned: true, truncated: false }
+    if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
+    if (command.action === 'vdos') return { ok: true, wavenumber: [0, 500, 1000], intensity: [0, .002, 0], nyquist_cm: 33356, resolution_cm: 8.3, n_frames: 100, dt: command.dt }
     if (command.action === 'bonds') return { ok: true, frame_indices: [0, 1], series: { [command.pairs[0].join('-')]: [1, 1] } }
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
@@ -219,6 +223,53 @@ async function run () {
   assert.match(el('qm-status').textContent, /distinct/); checks++
   await click('retry-processing'); await click('next-4')
   assert.match(el('status-msg').textContent, /distinct/); checks++
+  // New analyses: the MD time step must be set by the user; nothing is assumed.
+  activeAtoms = atoms; nextFile = 'torsion.xyz'
+  el('inp-format').value = 'auto'; el('inp-format').dispatchEvent(new w.Event('change'))
+  await click('btn-reference-clear')
+  await click('btn-browse'); await click('next-1')
+  el('vtab-ase').click()
+  el('acf-groups').value = '1 2 3 4'
+  await click('btn-run-acf')
+  assert.match(el('status-msg').textContent, /Set the MD time step/); checks++
+  el('md-timestep').value = '20'; el('md-timestep-unit').value = 'au'; el('md-timestep-unit').dispatchEvent(new w.Event('change'))
+  el('md-stride').value = '1'; el('md-stride').dispatchEvent(new w.Event('input'))
+  assert.match(el('md-dt-info').textContent, /0\.483777 fs/); checks++
+  await click('btn-run-acf')
+  assert.equal(latestCommand.action, 'acf'); assert.deepEqual(JSON.parse(JSON.stringify(latestCommand.groups)), [[0, 1, 2, 3]]); checks++
+  assert.ok(Math.abs(latestCommand.dt - 20 * 0.02418884326585747) < 1e-12); checks++
+  assert.equal(w.testMonet.charts.acf.data.datasets.length, 2); assert.equal(w.testMonet.charts.acf.data.datasets[1].dash, true); checks++
+  assert.equal(w.testMonet.charts.acfdist.data.datasets[0].bars, true); checks++
+  // tau = 43.6 fs with dt = 20 a.u. -> 90.1 frames -> stride 91 (factor 1)
+  assert.match(el('acf-tau-text').textContent, /= 90\.12 MD steps = 90\.12 saved frames/); checks++
+  assert.match(el('acf-stride-text').textContent, /every 91 saved frames/); checks++
+  el('acf-multiplier').value = '2'; el('acf-multiplier').dispatchEvent(new w.Event('input'))
+  assert.match(el('acf-stride-text').textContent, /every 181 saved frames/); checks++
+  el('acf-tau-manual').value = '10'; el('acf-tau-manual').dispatchEvent(new w.Event('input'))
+  assert.match(el('acf-stride-text').textContent, /every 42 saved frames.*entered/); checks++
+  el('md-stride').value = '5'; el('md-stride').dispatchEvent(new w.Event('input'))
+  assert.match(el('acf-stride-text').textContent, /every 9 saved frames \(45 MD steps/); checks++
+  await click('acf-apply-stride')
+  assert.equal(el('inp-freq').value, '9'); checks++
+  await click('csv-acf')
+  assert.equal(downloadName, 'MONET-acf.csv'); assert.match(await pngBlob.text(), /^# Autocorrelation of the dihedral/); checks++
+  el('acf-quantity').value = 'bond'; el('acf-quantity').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.charts.acf.data, null); assert.equal(el('acf-result').classList.contains('hidden'), true); checks++
+  el('acf-groups').value = '1 2 3'; await click('btn-run-acf')
+  assert.match(el('status-msg').textContent, /groups of 2/); checks++
+  el('rmsdmatrix-atoms').value = ''; await click('btn-run-rmsdmatrix')
+  assert.equal(latestCommand.action, 'rmsd_matrix'); assert.equal(latestCommand.align, true); assert.equal(w.testMonet.charts.rmsdmatrix.data.matrix.length, 2); checks++
+  await click('download-rmsdmatrix')
+  assert.equal((await loadImage(Buffer.from(await pngBlob.arrayBuffer()))).width, 2400); checks++
+  await click('btn-run-msd')
+  assert.equal(w.testMonet.charts.msd.data.datasets.at(-1).dash, true); assert.match(el('msd-info').textContent, /D = 0\.01667 cm²\/s \(0\.1667 Å²\/fs/); checks++
+  await click('btn-run-vdos')
+  assert.equal(latestCommand.mass_weighted, true); assert.match(el('vdos-info').textContent, /Nyquist/); checks++
+  el('ase-selection-target').value = 'acf'; el('ase-selection-target').dispatchEvent(new w.Event('change'))
+  assert.match(el('ase-selection-hint').textContent, /groups of 2/); checks++
+  el('rmsd-align').checked = true; el('rmsd-reference').value = '0'
+  await click('btn-run-rmsd')
+  assert.equal(latestCommand.align, true); assert.equal(latestCommand.reference_index, 0); checks++
   // Day/night toggle persists the choice and redraws canvases without errors.
   const theme = w.document.documentElement.dataset.theme
   let redraws = 0

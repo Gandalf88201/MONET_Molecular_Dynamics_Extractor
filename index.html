@@ -306,6 +306,13 @@
         <p class="panel-desc" id="cell-status" aria-live="polite">No manual cell. Source lattice/PBC are used when present.</p>
       </details>
       <label class="ase-append-label"><input type="checkbox" id="ase-mic" checked /> Use minimum-image distances and angles in periodic directions (requires cell/PBC)</label>
+      <div class="ase-time-row">
+        <strong>Time axis</strong>
+        <label>MD time step <input class="field-input field-input-sm" id="md-timestep" type="number" min="0" step="any" placeholder="set" /></label>
+        <select class="field-input field-input-sm" id="md-timestep-unit"><option value="fs">fs</option><option value="au">a.u.</option><option value="ps">ps</option></select>
+        <label>MD steps per saved frame <input class="field-input field-input-sm" id="md-stride" type="number" min="1" step="1" value="1" /></label>
+        <span id="md-dt-info" aria-live="polite">Set the MD time step used in your simulation (needed for MSD, VDOS and autocorrelation).</span>
+      </div>
       <div class="ase-workspace">
       <aside class="ase-reference">
 
@@ -334,6 +341,11 @@
           <option value="bonds">Bond lengths — groups of 2</option>
           <option value="angles">Bond angles — groups of 3</option>
           <option value="dihedrals">Dihedrals — groups of 4</option>
+          <option value="rmsdmatrix">RMSD matrix — selected atoms</option>
+          <option value="rdf">RDF — selected atoms</option>
+          <option value="msd">MSD / diffusion — selected atoms</option>
+          <option value="vdos">VDOS — selected atoms</option>
+          <option value="acf">Autocorrelation — atom groups</option>
         </select>
         <label class="ase-append-label"><input type="checkbox" id="ase-append-group" /> Append to existing atom groups</label>
         <button class="btn btn-sm btn-accent" id="ase-use-selection" disabled>Use selection</button>
@@ -360,6 +372,11 @@
         <button class="ase-stab" data-stab="bonds">Bond Lengths</button>
         <button class="ase-stab" data-stab="angles">Bond Angles</button>
         <button class="ase-stab" data-stab="dihedrals">Dihedral Angles</button>
+        <button class="ase-stab" data-stab="rmsdmatrix">RMSD Matrix</button>
+        <button class="ase-stab" data-stab="rdf">RDF</button>
+        <button class="ase-stab" data-stab="msd">MSD / Diffusion</button>
+        <button class="ase-stab" data-stab="vdos">VDOS</button>
+        <button class="ase-stab" data-stab="acf">Autocorrelation</button>
         <button class="ase-stab" data-stab="convert">Convert</button>
       </div>
 
@@ -372,6 +389,12 @@
           <input class="field-input field-input-sm" type="number" id="rmsd-step" value="1" min="1" />
           <button class="btn btn-sm btn-accent" id="btn-run-rmsd">Compute RMSD</button>
         </div>
+        <div class="ase-ctrl-row">
+          <label><input type="checkbox" id="rmsd-align" /> Kabsch alignment (remove translation and rotation)</label>
+          <label><input type="checkbox" id="rmsd-unwrap" /> Unwrap PBC</label>
+          <label class="field-label" for="rmsd-reference">Reference frame</label>
+          <input class="field-input field-input-sm" type="number" id="rmsd-reference" min="0" placeholder="first" />
+        </div>
         <div class="ase-prog-row hidden" id="rmsd-prog-row">
           <div class="progress-bar"><div class="progress-fill" id="rmsd-prog-fill"></div></div>
           <span id="rmsd-prog-label">—</span>
@@ -379,6 +402,7 @@
         <div class="ase-plot-actions">
           <button class="btn btn-sm" id="clear-rmsd" disabled>Clear analysis</button>
           <button class="btn btn-sm" id="download-rmsd" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-rmsd" disabled>Download data CSV</button>
         </div>
         <canvas class="chart-canvas" id="chart-rmsd"></canvas>
         <div class="chart-placeholder" id="chart-rmsd-ph">
@@ -411,6 +435,7 @@
         <div class="ase-plot-actions">
           <button class="btn btn-sm" id="clear-pdd" disabled>Clear analysis</button>
           <button class="btn btn-sm" id="download-pdd" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-pdd" disabled>Download data CSV</button>
         </div>
         <canvas class="chart-canvas" id="chart-pdd"></canvas>
         <div class="chart-placeholder" id="chart-pdd-ph">
@@ -435,6 +460,7 @@
         <div class="ase-plot-actions">
           <button class="btn btn-sm" id="clear-bonds" disabled>Clear analysis</button>
           <button class="btn btn-sm" id="download-bonds" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-bonds" disabled>Download data CSV</button>
         </div>
         <canvas class="chart-canvas" id="chart-bonds"></canvas>
         <div class="chart-placeholder" id="chart-bonds-ph">
@@ -464,6 +490,7 @@
         <div class="ase-plot-actions">
           <button class="btn btn-sm" id="clear-angles" disabled>Clear analysis</button>
           <button class="btn btn-sm" id="download-angles" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-angles" disabled>Download data CSV</button>
         </div>
         <canvas class="chart-canvas" id="chart-angles"></canvas>
         <div class="chart-placeholder" id="chart-angles-ph">
@@ -490,9 +517,194 @@
         <div class="ase-plot-actions">
           <button class="btn btn-sm" id="clear-dihedrals" disabled>Clear analysis</button>
           <button class="btn btn-sm" id="download-dihedrals" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-dihedrals" disabled>Download data CSV</button>
         </div>
         <canvas class="chart-canvas" id="chart-dihedrals"></canvas>
         <div class="chart-placeholder" id="chart-dihedrals-ph">Dihedral-angle evolution over the active trajectory</div>
+      </div>
+
+
+      <!-- Pairwise RMSD matrix -->
+      <div class="ase-subpanel" id="ase-sub-rmsdmatrix">
+        <label class="field-label" for="rmsdmatrix-atoms">Atoms — MONET IDs (blank = all)</label>
+        <input class="field-input" id="rmsdmatrix-atoms" placeholder="Use the molecular viewer or enter IDs" />
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="rmsdmatrix-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="rmsdmatrix-step" value="10" min="1" />
+          <label class="field-label" for="rmsdmatrix-max">Max frames</label>
+          <input class="field-input field-input-sm" type="number" id="rmsdmatrix-max" value="500" min="2" max="3000" />
+          <label><input type="checkbox" id="rmsdmatrix-align" checked /> Kabsch alignment</label>
+          <label><input type="checkbox" id="rmsdmatrix-unwrap" /> Unwrap PBC</label>
+          <button class="btn btn-sm btn-accent" id="btn-run-rmsdmatrix">Compute matrix</button>
+        </div>
+        <p class="panel-desc">Low off-diagonal RMSD means the trajectory revisits earlier states; blocks along the diagonal show distinct basins. Use a frame step close to the decorrelation stride to compare non-correlated configurations.</p>
+        <div class="ase-prog-row hidden" id="rmsdmatrix-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="rmsdmatrix-prog-fill"></div></div>
+          <span id="rmsdmatrix-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-rmsdmatrix" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-rmsdmatrix" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-rmsdmatrix" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas chart-square" id="chart-rmsdmatrix"></canvas>
+        <div class="chart-placeholder" id="chart-rmsdmatrix-ph">Pairwise RMSD between analysed frames</div>
+      </div>
+
+      <!-- Radial distribution function -->
+      <div class="ase-subpanel" id="ase-sub-rdf">
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="rdf-elements">Element pair (blank = all; O H = O–H)</label>
+          <input class="field-input" id="rdf-elements" placeholder="e.g. O O" />
+        </div>
+        <label class="field-label" for="rdf-atoms">Restrict to atoms — MONET IDs (blank = all)</label>
+        <input class="field-input" id="rdf-atoms" placeholder="optional" />
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="rdf-rmax">R<sub>max</sub> (Å)</label>
+          <input class="field-input field-input-sm" type="number" id="rdf-rmax" min="0.1" step="0.1" placeholder="max" />
+          <label class="field-label" for="rdf-bins">Bins</label>
+          <input class="field-input field-input-sm" type="number" id="rdf-bins" value="200" min="10" />
+          <label class="field-label" for="rdf-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="rdf-step" value="1" min="1" />
+          <label class="field-label" for="rdf-plot">Plot</label>
+          <select class="field-input field-input-sm rdf-plot" id="rdf-plot"><option value="g">g(r)</option><option value="n">n(r)</option></select>
+          <button class="btn btn-sm btn-accent" id="btn-run-rdf">Compute RDF</button>
+        </div>
+        <p class="panel-desc" id="rdf-info">Normalised g(r) with minimum-image distances; needs a periodic cell. R<sub>max</sub> is limited to half the smallest cell width. n(r) is the running coordination number.</p>
+        <div class="ase-prog-row hidden" id="rdf-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="rdf-prog-fill"></div></div>
+          <span id="rdf-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-rdf" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-rdf" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-rdf" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-rdf"></canvas>
+        <div class="chart-placeholder" id="chart-rdf-ph">Radial distribution function</div>
+      </div>
+
+      <!-- MSD and diffusion -->
+      <div class="ase-subpanel" id="ase-sub-msd">
+        <label class="field-label" for="msd-atoms">Atoms — MONET IDs (blank = all)</label>
+        <input class="field-input" id="msd-atoms" placeholder="Use the molecular viewer or enter IDs" />
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="msd-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="msd-step" value="1" min="1" />
+          <label class="field-label" for="msd-fit-start">Fit from (fs)</label>
+          <input class="field-input field-input-sm" type="number" id="msd-fit-start" min="0" step="any" placeholder="10%" />
+          <label class="field-label" for="msd-fit-end">to (fs)</label>
+          <input class="field-input field-input-sm" type="number" id="msd-fit-end" min="0" step="any" placeholder="50%" />
+          <label><input type="checkbox" id="msd-drift" checked /> Remove centre-of-geometry drift</label>
+          <button class="btn btn-sm btn-accent" id="btn-run-msd">Compute MSD</button>
+        </div>
+        <p class="panel-desc">Positions are unwrapped when a periodic cell is present; MSD is averaged over all time origins; D = slope / 6 from a linear fit in the chosen window.</p>
+        <div class="info-box hidden" id="msd-info"></div>
+        <div class="ase-prog-row hidden" id="msd-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="msd-prog-fill"></div></div>
+          <span id="msd-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-msd" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-msd" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-msd" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-msd"></canvas>
+        <div class="chart-placeholder" id="chart-msd-ph">Mean-square displacement vs lag time</div>
+      </div>
+
+      <!-- Vibrational density of states -->
+      <div class="ase-subpanel" id="ase-sub-vdos">
+        <label class="field-label" for="vdos-atoms">Atoms — MONET IDs (blank = all)</label>
+        <input class="field-input" id="vdos-atoms" placeholder="Use the molecular viewer or enter IDs" />
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="vdos-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="vdos-step" value="1" min="1" />
+          <label class="field-label" for="vdos-smooth">Smoothing (cm⁻¹)</label>
+          <input class="field-input field-input-sm" type="number" id="vdos-smooth" value="10" min="0" step="any" />
+          <label class="field-label" for="vdos-max">Up to (cm⁻¹)</label>
+          <input class="field-input field-input-sm" type="number" id="vdos-max" value="4000" min="10" step="any" />
+          <label><input type="checkbox" id="vdos-mass" checked /> Mass-weighted</label>
+          <button class="btn btn-sm btn-accent" id="btn-run-vdos">Compute VDOS</button>
+        </div>
+        <p class="panel-desc">Fourier transform of finite-difference velocities (Hann window), normalised to unit area. Save frames every MD step (or few steps) for accurate high frequencies; the Nyquist limit is shown after the calculation.</p>
+        <div class="info-box hidden" id="vdos-info"></div>
+        <div class="ase-prog-row hidden" id="vdos-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="vdos-prog-fill"></div></div>
+          <span id="vdos-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-vdos" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-vdos" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-vdos" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-vdos"></canvas>
+        <div class="chart-placeholder" id="chart-vdos-ph">Vibrational density of states</div>
+      </div>
+
+      <!-- Autocorrelation -->
+      <div class="ase-subpanel" id="ase-sub-acf">
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="acf-quantity">Quantity</label>
+          <select class="field-input field-input-sm acf-select" id="acf-quantity">
+            <option value="dihedral">Dihedral angle (4 IDs)</option>
+            <option value="angle">Bond angle (3 IDs)</option>
+            <option value="bond">Bond length (2 IDs)</option>
+            <option value="rmsd">RMSD vs first frame (IDs)</option>
+          </select>
+          <label class="field-label" for="acf-groups">MONET IDs (several groups are averaged)</label>
+          <input class="field-input" id="acf-groups" placeholder="1 2 3 4" />
+        </div>
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="acf-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="acf-step" value="1" min="1" />
+          <label class="field-label" for="acf-maxlag">Max lag (fs)</label>
+          <input class="field-input field-input-sm" type="number" id="acf-maxlag" min="0" step="any" placeholder="all" />
+          <label class="field-label" for="acf-mode">Correlation</label>
+          <select class="field-input field-input-sm acf-select" id="acf-mode">
+            <option value="linear">Normalised fluctuations ⟨δx(0)δx(t)⟩/⟨δx²⟩</option>
+            <option value="circular">Circular ⟨cos[θ(t)−θ(0)]⟩ (angles)</option>
+          </select>
+          <label class="field-label" for="acf-fit">Fit exp(−t/τ) up to</label>
+          <select class="field-input field-input-sm acf-select" id="acf-fit">
+            <option value="zero">first zero crossing</option>
+            <option value="efold">3 × first 1/e crossing</option>
+            <option value="all">whole lag range</option>
+          </select>
+          <label class="field-label" for="acf-bins">Distribution bins</label>
+          <input class="field-input field-input-sm" type="number" id="acf-bins" value="60" min="2" />
+          <button class="btn btn-sm btn-accent" id="btn-run-acf">Compute ACF</button>
+        </div>
+        <p class="panel-desc">Dihedrals are unwrapped across 0/360° before the linear correlation. τ gives the decorrelation time: sampling configurations every ≥ τ yields statistically independent structures.</p>
+        <div class="info-box acf-result hidden" id="acf-result">
+          <div id="acf-tau-text"></div>
+          <div class="ase-ctrl-row">
+            <label class="field-label" for="acf-tau-manual">Use τ (fs)</label>
+            <input class="field-input field-input-sm" type="number" id="acf-tau-manual" min="0" step="any" placeholder="fit" />
+            <label class="field-label" for="acf-multiplier">× factor</label>
+            <input class="field-input field-input-sm" type="number" id="acf-multiplier" min="0.1" step="0.1" value="1" />
+            <strong id="acf-stride-text"></strong>
+            <button class="btn btn-sm btn-accent" id="acf-apply-stride" disabled>Use as sampling frequency</button>
+          </div>
+        </div>
+        <div class="ase-prog-row hidden" id="acf-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="acf-prog-fill"></div></div>
+          <span id="acf-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-acf" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-acf" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-acf" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-acf"></canvas>
+        <div class="chart-placeholder" id="chart-acf-ph">Autocorrelation function with exponential fit</div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-acfdist" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-acfdist" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-acfdist" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-acfdist"></canvas>
+        <div class="chart-placeholder" id="chart-acfdist-ph">Probability distribution of the selected quantity</div>
       </div>
 
       <!-- Format conversion sub-panel -->
@@ -537,6 +749,15 @@
           <span id="conv-prog-label">—</span>
         </div>
         <a class="btn btn-next hidden" id="download-converted" download>Download converted file</a>
+        <div class="info-box" style="margin-top:1rem">
+          <strong>Unwrap the active trajectory</strong> — rebuilds continuous atom paths across periodic boundaries (needs a periodic cell) and saves an extended XYZ copy.
+          <div style="margin-top:.5rem"><button class="btn btn-sm btn-accent" id="btn-unwrap" disabled>Unwrap and download</button></div>
+        </div>
+        <div class="ase-prog-row hidden" id="unwrap-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="unwrap-prog-fill"></div></div>
+          <span id="unwrap-prog-label">—</span>
+        </div>
+        <a class="btn btn-next hidden" id="download-unwrapped" download>Download unwrapped trajectory</a>
         <div id="conv-result" class="info-box hidden" style="margin-top:.8rem"></div>
       </div>
 
