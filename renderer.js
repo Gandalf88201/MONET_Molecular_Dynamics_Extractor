@@ -21,6 +21,7 @@ const COV = {
 }
 
 function atomColor   (el) { return CPK[el]  ?? DEFAULT_COLOR }
+function themeColor  (name, fallback) { return globalThis.MonetTheme ? MonetTheme.color(name, fallback) : fallback }
 function covalentRad (el) { return COV[el]  ?? COV.default   }
 
 function hexToRgb (hex) {
@@ -132,8 +133,12 @@ class MolecularViewer {
 
     // background gradient
     const bg = ctx.createLinearGradient(0, 0, 0, canvas.height)
-    bg.addColorStop(0, '#0d0d1a')
-    bg.addColorStop(1, '#10101f')
+    bg.addColorStop(0, themeColor('--canvas-bg', '#0d0d1a'))
+    bg.addColorStop(1, themeColor('--canvas-bg2', '#10101f'))
+    const selectColor = themeColor('--select', '#ffd700')
+    const selectRing = themeColor('--select-ring', '#fff')
+    const outline = themeColor('--atom-outline', 'rgba(0,0,0,0)')
+    const carbonBond = themeColor('--bond-carbon', '#666')
     ctx.fillStyle = bg
     ctx.fillRect(0, 0, canvas.width, canvas.height)
 
@@ -141,11 +146,11 @@ class MolecularViewer {
 
     if (this.cell) {
       const vertices = this.cellVertices().map(point => this._project(...point))
-      ctx.save(); ctx.strokeStyle = '#54cbd8'; ctx.globalAlpha = .65; ctx.lineWidth = 1
+      ctx.save(); ctx.strokeStyle = themeColor('--cell-line', '#54cbd8'); ctx.globalAlpha = .65; ctx.lineWidth = 1
       for (let i = 0; i < 8; i++) for (const bit of [1, 2, 4]) if (!(i & bit)) {
         ctx.beginPath(); ctx.moveTo(vertices[i].sx, vertices[i].sy); ctx.lineTo(vertices[i | bit].sx, vertices[i | bit].sy); ctx.stroke()
       }
-      ctx.font = '12px monospace'; ctx.fillStyle = '#8fe9f3'
+      ctx.font = '12px monospace'; ctx.fillStyle = themeColor('--cell-label', '#8fe9f3')
       for (const [i, label] of [[1, 'a'], [2, 'b'], [4, 'c']]) ctx.fillText(label, vertices[i].sx, vertices[i].sy)
       ctx.restore()
     }
@@ -167,11 +172,11 @@ class MolecularViewer {
       const aColor = atomColor(a.element)
       const bColor = atomColor(b.element)
       ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(midx, midy)
-      ctx.strokeStyle = aColor === '#404040' ? '#666' : aColor
+      ctx.strokeStyle = aColor === '#404040' ? carbonBond : aColor
       ctx.globalAlpha = 0.55
       ctx.stroke()
       ctx.beginPath(); ctx.moveTo(midx, midy); ctx.lineTo(b.sx, b.sy)
-      ctx.strokeStyle = bColor === '#404040' ? '#666' : bColor
+      ctx.strokeStyle = bColor === '#404040' ? carbonBond : bColor
       ctx.stroke()
     }
     ctx.restore()
@@ -187,7 +192,7 @@ class MolecularViewer {
 
       if (isSel) {
         ctx.shadowBlur  = 22
-        ctx.shadowColor = '#ffd700'
+        ctx.shadowColor = selectColor
       }
 
       // Sphere-like radial gradient
@@ -199,14 +204,18 @@ class MolecularViewer {
 
       ctx.beginPath()
       ctx.arc(a.sx, a.sy, r, 0, Math.PI * 2)
-      ctx.fillStyle = isSel ? '#ffd700' : grd
+      ctx.fillStyle = isSel ? selectColor : grd
       ctx.fill()
 
       if (isSel) {
         ctx.lineWidth   = 2.5
-        ctx.strokeStyle = '#fff'
+        ctx.strokeStyle = selectRing
         ctx.stroke()
         ctx.shadowBlur = 0
+      } else {
+        ctx.lineWidth   = 1
+        ctx.strokeStyle = outline
+        ctx.stroke()
       }
 
       // Label: always show atom ID (1-indexed), element on hover-like if selected
@@ -219,7 +228,7 @@ class MolecularViewer {
         ctx.fillText(a.index, a.sx, a.sy)
       if (this.showSelectionOrder && isSel) {
         ctx.font = 'bold 11px monospace'
-        ctx.fillStyle = '#ffd700'
+        ctx.fillStyle = themeColor('--gold', '#ffd700')
         ctx.fillText(`#${[...selected].indexOf(a.index) + 1}`, a.sx + r + 12, a.sy - r - 5)
       }
 
@@ -781,10 +790,12 @@ $$('.ase-stab').forEach(btn => {
 // ── LineChart — canvas-based scientific line chart ───────────────────────────
 // =============================================================================
 
-const CHART_PALETTE = [
-  '#4d9de0', '#e94560', '#00c87a', '#ffd700',
-  '#c77dff', '#ff9f1c', '#2ec4b6', '#ff6b6b'
-]
+// Series colors are resolved from the active theme when a chart is drawn.
+window.addEventListener('monet-theme', () => {
+  viewer.render()
+  aseViewer.render()
+  redrawVisibleChart()
+})
 
 // =============================================================================
 // ── ASE panel state + helpers ────────────────────────────────────────────────
@@ -1209,7 +1220,7 @@ $('btn-run-rmsd').addEventListener('click', async () => {
     xLabel:   'Frame',
     yLabel:   'RMSD (Å)',
     labels,
-    datasets: [{ label: indices ? `RMSD · MONET IDs ${indices.map(i => r.atomMapping[i].monetId).join(', ')}` : 'RMSD · all atoms', data: r.rmsd, color: '#4d9de0' }]
+    datasets: [{ label: indices ? `RMSD · MONET IDs ${indices.map(i => r.atomMapping[i].monetId).join(', ')}` : 'RMSD · all atoms', data: r.rmsd, colorIndex: 0 }]
   })
   setStatus(`RMSD computed over ${r.rmsd.length} frames`)
 })
@@ -1246,7 +1257,7 @@ $('btn-run-pdd').addEventListener('click', async () => {
     xLabel:   'Distance (Å)',
     yLabel:   'Count',
     labels:   r.r.map(v => v.toFixed(2)),
-    datasets: [{ label: label, data: r.counts, color: '#00c87a' }]
+    datasets: [{ label: label, data: r.counts, colorIndex: 2 }]
   })
   setStatus(`PDD over ${r.n_frames} frames`)
 })
@@ -1271,7 +1282,7 @@ $('btn-run-bonds').addEventListener('click', async () => {
   hideAseProgress('bonds-prog-row')
   const labels = r.frame_indices.map(String)
   const datasets = Object.entries(r.series).map(([key, data], i) => ({
-    label: MonetASEModel.seriesLabel(key, r.atomMapping), data, color: CHART_PALETTE[i % CHART_PALETTE.length]
+    label: MonetASEModel.seriesLabel(key, r.atomMapping), data, colorIndex: i
   }))
   charts.bonds.setData({
     source: charts.bonds.source,
@@ -1301,7 +1312,7 @@ $('btn-run-angles').addEventListener('click', async () => {
   hideAseProgress('angles-prog-row')
   const labels   = r.frame_indices.map(String)
   const datasets = Object.entries(r.series).map(([key, data], i) => ({
-    label: MonetASEModel.seriesLabel(key, r.atomMapping), data, color: CHART_PALETTE[i % CHART_PALETTE.length]
+    label: MonetASEModel.seriesLabel(key, r.atomMapping), data, colorIndex: i
   }))
   charts.angles.setData({
     source: charts.angles.source + (r.angleRange === '360' ? ` Reference normal: ${r.angleNormal.join(', ')}.` : ''), angleRange: r.angleRange, angleNormal: r.angleNormal,
@@ -1336,7 +1347,7 @@ $('btn-run-dihedrals').addEventListener('click', async () => {
     source: charts.dihedrals.source, angleRange: r.angleRange,
     labels: r.frame_indices.map(String),
     datasets: Object.entries(r.series).map(([key, data], i) => ({
-      label: MonetASEModel.seriesLabel(key, r.atomMapping), data, color: CHART_PALETTE[i % CHART_PALETTE.length]
+      label: MonetASEModel.seriesLabel(key, r.atomMapping), data, colorIndex: i
     }))
   })
   setStatus(`Dihedral angles computed (${r.angleRange === 'signed90' ? '−90° to +90°, folded' : '0–360°'}).`)

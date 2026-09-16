@@ -57,7 +57,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['ase-model.js', 'plot.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, state, aseState };' : ''))
+for (const file of ['theme.js', 'ase-model.js', 'plot.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, state, aseState };' : ''))
 const el = id => w.document.getElementById(id)
 const tick = () => new Promise(resolve => setImmediate(resolve))
 async function click (id) { el(id).click(); await tick(); await tick() }
@@ -186,6 +186,16 @@ async function run () {
   assert.match(el('ase-atom-match').textContent, /does not match MONET/); checks++
   await click('btn-browse')
   assert.equal(el('ase-atom-count').textContent, '0'); checks++
-  console.log(`PASS: ${checks} DOM/plot checks (stable atom IDs, dihedrals, clear controls, PNG export).`)
+  // Day/night toggle persists the choice and redraws canvases without errors.
+  const theme = w.document.documentElement.dataset.theme
+  let redraws = 0
+  w.addEventListener('monet-theme', () => redraws++)
+  await click('theme-toggle')
+  assert.notEqual(w.document.documentElement.dataset.theme, theme); checks++
+  assert.equal(w.localStorage.getItem('monet-theme'), w.document.documentElement.dataset.theme); checks++
+  assert.equal(el('theme-toggle').getAttribute('aria-pressed'), String(w.document.documentElement.dataset.theme === 'light')); checks++
+  await click('theme-toggle')
+  assert.equal(w.document.documentElement.dataset.theme, theme); assert.equal(redraws, 2); checks++
+  console.log(`PASS: ${checks} DOM/plot checks (stable atom IDs, dihedrals, clear controls, PNG export, theme).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => w.close())

@@ -14,7 +14,7 @@ import webbrowser
 
 ROOT = Path(__file__).resolve().parent
 MAX_BODY = 150 * 1024 * 1024
-STATIC = {'index.html', 'styles.css', 'xyz.js', 'ase-model.js', 'plot.js', 'browser-bridge.js', 'renderer.js', 'examples/water.XYZ'}
+STATIC = {'index.html', 'styles.css', 'theme.js', 'xyz.js', 'ase-model.js', 'plot.js', 'browser-bridge.js', 'renderer.js', 'examples/water.XYZ'}
 FORMATS = {'xyz', 'extxyz', 'vasp', 'cif', 'espresso-in', 'lammps-data', 'aims', 'turbomole', 'gaussian-in', 'dftb', 'json'}
 
 
