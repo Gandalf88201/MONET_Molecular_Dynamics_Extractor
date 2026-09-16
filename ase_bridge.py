@@ -172,14 +172,30 @@ def action_extract(cmd):
     atom_count = cmd.get('atom_count')
     if atom_count is not None and atom_count != traj.natoms:
         raise ValueError('Atom count changed. Load the trajectory again.')
+    qm = cmd.get('qm')
+    if qm is not None:
+        import monet_qm
+        qm = monet_qm.writer(qm)
     prog('Reading trajectory …', 0)
     summary = monet_io.extract(
         traj, out_dir, cmd.get('selected') or [], cmd.get('frequency'),
         compute_average=bool(cmd.get('compute_average')), generate_gaussian=bool(cmd.get('generate_gaussian')),
-        options=cmd.get('history'), progress=lambda message, pct: prog(message, pct * .9))
+        options=cmd.get('history'), progress=lambda message, pct: prog(message, pct * .9), qm_writer=qm)
     if cmd.get('zip'):
         monet_io.zip_tree(out_dir, cmd['zip'], progress=lambda message, pct: prog(message, 90 + pct * .1))
     prog(f"Extracted {summary['totalFrames']:,} frames · {summary['sampledFrames']:,} sampled configurations", 100)
+    ok(**summary)
+
+
+def action_import(cmd):
+    """Convert another code's trajectory (plus optional reference/cell files) into extended XYZ."""
+    import monet_formats
+    prog('Importing trajectory …', 0)
+    summary = monet_formats.import_to_extxyz(
+        cmd['filename'], cmd['output'], cmd.get('format') or 'auto', name=cmd.get('source_name'),
+        reference=cmd.get('reference'), cell_file=cmd.get('cell_file'),
+        cell_vectors=cmd.get('cell_vectors', 'rows'), progress=prog)
+    prog(f"Imported {summary['frames']:,} frames from {summary['source_label']}", 100)
     ok(**summary)
 
 
@@ -462,6 +478,12 @@ def validate_command(cmd):
         raise ValueError('PBC must contain three boolean flags.')
     if 'mic' in cmd and type(cmd['mic']) is not bool:
         raise ValueError('Periodic-image option must be boolean.')
+    if cmd.get('action') == 'import':
+        import monet_formats
+        if cmd.get('format', 'auto') not in monet_formats.FORMATS:
+            raise ValueError('Unsupported input format.')
+        if cmd.get('cell_vectors', 'rows') not in ('rows', 'columns'):
+            raise ValueError('Cell vectors must be rows or columns.')
     mode = cmd.get('angle_range', 'natural')
     if mode not in ('natural', '360', 'signed90'):
         raise ValueError('Unknown angle range.')
@@ -503,6 +525,7 @@ ACTIONS = {
     "scan":      action_scan,
     "frame":     action_frame,
     "extract":   action_extract,
+    "import":    action_import,
     "read_info": action_read_info,
     "molecule":  action_molecule,
     "rmsd":      action_rmsd,

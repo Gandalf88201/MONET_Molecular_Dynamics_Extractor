@@ -4,6 +4,7 @@ const path    = require('path')
 const fs      = require('fs')
 const readline = require('readline')
 const XYZ = require('./xyz.js')
+const QM = require('./qm-inputs.js')
 const { finished } = require('stream/promises')
 const { spawn, execFile } = require('child_process')
 
@@ -39,11 +40,11 @@ app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) creat
 // ---------------------------------------------------------------------------
 ipcMain.handle('select-file', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select XYZ Trajectory File',
+    title: 'Select Trajectory or Structure File',
     properties: ['openFile'],
     filters: [
-      { name: 'XYZ Trajectory', extensions: ['xyz'] },
-      { name: 'All Files',      extensions: ['*']   }
+      { name: 'All Files',      extensions: ['*']   },
+      { name: 'XYZ Trajectory', extensions: ['xyz', 'extxyz'] }
     ]
   })
   return r.canceled ? null : r.filePaths[0]
@@ -131,8 +132,10 @@ async function processTrajectory (event, options) {
     frequency,
     computeAverage,
     generateGaussian,
-    configCount
+    configCount,
+    qm
   } = options
+  if (qm) QM.validate(qm)
 
   if (!Number.isInteger(frequency) || frequency < 1) throw new Error('Sampling frequency must be a positive integer.')
   if (!selectedAtoms.length || selectedAtoms.some(id => !Number.isInteger(id) || id < 1 || id > atomCount)) {
@@ -190,6 +193,15 @@ async function processTrajectory (event, options) {
         fs.mkdirSync(confDir, { recursive: true })
         fs.writeFileSync(path.join(confDir, `pos${sampledCount}.txt`), rows)
         if (generateGaussian) writeGaussianInputs(confDir, rows)
+        if (qm) {
+          const atomsSel = selected.map(i => atoms[i])
+          const conf = { index: sampledCount, frame: frameIndex, symbols: atomsSel.map(a => a.element), positions: atomsSel.map(a => [a.x, a.y, a.z]), lattice: frame.lattice }
+          for (const file of QM.render(qm, conf)) {
+            const target = path.join(confDir, ...file.path.split('/'))
+            fs.mkdirSync(path.dirname(target), { recursive: true })
+            fs.writeFileSync(target, file.text)
+          }
+        }
       }
 
       frameIndex++
@@ -306,6 +318,23 @@ ipcMain.handle('ase-run', async (event, command) => {
     return await runAseBridge(command, msg => event.sender.send('ase-progress', msg))
   } catch (e) {
     return { ok: false, error: e.message }
+  }
+})
+
+ipcMain.handle('ase-import', async (event, name, options = {}) => {
+  try {
+    if (!_pythonBin) _pythonBin = await detectPython()
+    if (!_pythonBin) return { error: 'Python with ASE is required to import this format.' }
+    const folder = fs.mkdtempSync(path.join(require('os').tmpdir(), 'monet-import-'))
+    const output = path.join(folder, path.basename(name).replace(/\.[^.]*$/, '') + '.extxyz')
+    const result = await runAseBridge({
+      action: 'import', filename: name, output, format: options.format || 'auto', source_name: path.basename(name),
+      reference: options.reference || undefined, cell_file: options.cellFile || undefined, cell_vectors: options.cellVectors || 'rows'
+    }, msg => event.sender.send('ase-progress', msg))
+    if (!result.ok) return { error: result.message || result.error }
+    return { filePath: output, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label }
+  } catch (e) {
+    return { error: e.message }
   }
 })
 

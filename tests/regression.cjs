@@ -39,7 +39,8 @@ async function run () {
     return { files: [chosenFile], addEventListener (name, fn) { events[name] = fn }, remove () {}, click () { events[chosenEvent]() } }
   } }
   let zipBlob
-  const context = { window: {}, document, MonetXYZ: XYZ, TextDecoder, TextEncoder, Blob, setTimeout, URL: { createObjectURL (blob) { zipBlob = blob; return 'blob:test' }, revokeObjectURL () {} } }
+  const QM = require('../qm-inputs.js')
+  const context = { window: {}, document, MonetXYZ: XYZ, MonetQM: QM, TextDecoder, TextEncoder, Blob, setTimeout, URL: { createObjectURL (blob) { zipBlob = blob; return 'blob:test' }, revokeObjectURL () {} } }
   vm.runInNewContext(fs.readFileSync(path.join(root, 'browser-bridge.js'), 'utf8'), context)
   const api = context.window.monet
   assert.equal(await api.selectFile(), 'water.XYZ'); checks++
@@ -68,7 +69,7 @@ async function run () {
   // Exercise actual Electron IPC handlers without launching an Electron window.
   const handlers = new Map()
   const electron = { app: { whenReady: () => ({ then () {} }), on () {} }, ipcMain: { handle (name, fn) { handlers.set(name, fn) } } }
-  const desktop = { require: name => name === 'electron' ? electron : name === './xyz.js' ? XYZ : require(name), __dirname: root, console, process, Set }
+  const desktop = { require: name => name === 'electron' ? electron : name.startsWith('./') ? require(path.join(root, name)) : require(name), __dirname: root, console, process, Set }
   vm.runInNewContext(fs.readFileSync(path.join(root, 'main.js'), 'utf8'), desktop)
   const filePath = path.join(root, 'examples/water.XYZ')
   assert.equal((await handlers.get('analyze-file')(null, filePath)).configCount, 2); checks++
@@ -76,6 +77,25 @@ async function run () {
   assert.ok((await handlers.get('analyze-file')(null, path.join(temp, 'missing.xyz'))).error); checks++
   const result = await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, filePath, outputDir: path.join(temp, 'desktop') })
   assert.equal(result.success, true); assert.equal(result.sampledFrames, 2); checks++
+  // Template-based QM inputs: same files from the desktop and browser engines.
+  const qm = QM.defaultSpec(['orca', 'qe', 'vasp'])
+  qm.params.multiplicities = [1]
+  const withQm = { ...options, generateGaussian: false, qm }
+  await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...withQm, filePath, outputDir: path.join(temp, 'desktop-qm') })
+  const orca = fs.readFileSync(path.join(temp, 'desktop-qm/2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp'), 'utf8')
+  assert.match(orca, /\* xyz 0 1\nO  0.1000000  0.0000000  0.0000000\nH  -0.6570000  0.5860000  0.0000000\n\*/); checks++
+  assert.ok(fs.existsSync(path.join(temp, 'desktop-qm/2-SAMPLED_CONFIGURATIONS/conf1/vasp/POSCAR'))); checks++
+  assert.ok(!fs.existsSync(path.join(temp, 'desktop-qm/2-SAMPLED_CONFIGURATIONS/conf1/sing.dat'))); checks++
+  const local = await api.processTrajectory(withQm)
+  assert.equal(local.success, true); checks++
+  const localZip = path.join(temp, 'local-qm.zip')
+  fs.writeFileSync(localZip, Buffer.from(await zipBlob.arrayBuffer()))
+  require('node:child_process').execFileSync('python3', ['-c', `
+import zipfile, sys, pathlib
+with zipfile.ZipFile(sys.argv[1]) as z:
+ assert z.read('2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp').decode() == pathlib.Path(sys.argv[2]).read_text()
+ assert 'qe/sing.pwi' in ' '.join(z.namelist())
+`, localZip, path.join(temp, 'desktop-qm/2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp')]); checks++
   const extracted = fs.readFileSync(path.join(temp, 'desktop/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz'), 'utf8')
   assert.equal(parse(extracted).configCount, 2); assert.equal(parse(extracted).atomCount, 2); checks++
   // Python's standard ZIP reader verifies CRCs and output numerics independently.

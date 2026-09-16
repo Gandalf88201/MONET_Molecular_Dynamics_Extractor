@@ -334,6 +334,7 @@ const state = {
   firstFrame:    null,   // [{ index, element, x, y, z }]
   selectedAtoms: new Set(),
   outputDir:     null,
+  source: { original: null, format: 'auto', reference: null, cellFile: null, label: null },
   opts: {
     computeAverage:   true,
     generateGaussian: true
@@ -433,13 +434,70 @@ function clearTrajectory () {
   syncSelectionUI()
 }
 
+const FORMAT_HINTS = {
+  auto: 'XYZ/extXYZ files are read directly; other files are recognised by name and content and imported.',
+  xyz: 'Read directly. Add a CP2K .cell file to attach a per-step lattice (NPT runs).',
+  'qe-cp-pos': 'cp.x positions in bohr. Needs a reference structure with the same atom order; add the .cel file for the cell.',
+  'cp2k-dcd': 'DCD has no element names: add a reference structure (e.g. the first frame as XYZ).',
+  'cpmd-trajectory': 'CPMD TRAJECTORY (bohr). Needs a reference structure with the same atom order; restart markers are skipped.',
+  qbox: 'Reads every MD iteration (<atomset>) from the Qbox output.',
+  'espresso-out': 'Reads every ionic step of a pw.x relax/MD output.',
+  'orca-output': 'Reads the geometries printed in the ORCA output. ORCA MD trajectories (.xyz) are read directly as XYZ.'
+}
+const REFERENCE_FORMATS = new Set(['qe-cp-pos', 'cp2k-dcd', 'cpmd-trajectory'])
+const CELL_FORMATS = new Set(['auto', 'xyz', 'qe-cp-pos', 'cpmd-trajectory'])
+
+function updateFormatUI () {
+  const format = $('inp-format').value
+  state.source.format = format
+  $('aux-reference').classList.toggle('hidden', !REFERENCE_FORMATS.has(format) && !state.source.reference)
+  $('aux-cell').classList.toggle('hidden', !CELL_FORMATS.has(format) && !state.source.cellFile)
+  $('inp-cell-vectors').classList.toggle('hidden', format !== 'qe-cp-pos')
+  const canImport = Boolean(window.monet.canImport)
+  $('format-hint').textContent = (FORMAT_HINTS[format] || 'Imported with ASE into extended XYZ.') +
+    (canImport ? '' : ' Only XYZ is available in this mode: run python3 start_monet.py to import other formats.')
+}
+$('inp-format').addEventListener('change', updateFormatUI)
+
+function needsImport () {
+  const { original, format, cellFile } = state.source
+  if (cellFile) return true
+  if (format === 'xyz') return false
+  return format !== 'auto' || !/\.(xyz|extxyz)$/i.test(original || '')
+}
+
+for (const [kind, button, clear, label] of [['reference', 'btn-reference', 'btn-reference-clear', 'reference-path'], ['cellFile', 'btn-cell-file', 'btn-cell-file-clear', 'cell-file-path']]) {
+  $(button).addEventListener('click', async () => {
+    try {
+      const fp = await window.monet.selectFile()
+      if (!fp) return
+      state.source[kind] = fp
+      $(label).textContent = fp
+      updateFormatUI()
+    } catch (error) { setStatus('Could not open file: ' + error.message) }
+  })
+  $(clear).addEventListener('click', () => {
+    state.source[kind] = null
+    $(label).textContent = 'Not selected'
+    updateFormatUI()
+  })
+}
+
+function releaseTrajectory () {
+  for (const name of new Set([state.source.original, state.filePath])) {
+    if (name && name !== aseState.convInput) window.monet.releaseFile?.(name)
+  }
+}
+
 $('btn-browse').addEventListener('click', async () => {
   setStatus('Selecting file …')
   try {
     const fp = await window.monet.selectFile()
     if (!fp) { setStatus('Ready'); return }
-    if (state.filePath && state.filePath !== aseState.convInput) window.monet.releaseFile?.(state.filePath)
+    releaseTrajectory()
     clearTrajectory()
+    state.source.original = fp
+    state.source.label = null
     state.filePath = fp
     $('file-path-text').textContent = fp
     $('file-display').classList.remove('hidden')
@@ -456,10 +514,26 @@ $('next-1').addEventListener('click', async () => {
   $('next-2').disabled = true
   setStatus('Analysing trajectory …')
   try {
+    if (state.filePath !== state.source.original) {
+      window.monet.releaseFile?.(state.filePath)
+      state.filePath = state.source.original
+    }
+    state.source.label = null
+    if (needsImport()) {
+      if (!window.monet.importFile) throw new Error('Importing this format needs the launcher (python3 start_monet.py) or the desktop app.')
+      setStatus('Importing trajectory with ASE …')
+      const imported = await window.monet.importFile(state.source.original, {
+        format: state.source.format, reference: state.source.reference, cellFile: state.source.cellFile,
+        cellVectors: $('inp-cell-vectors').value
+      })
+      if (imported.error) throw new Error(imported.error)
+      state.filePath = imported.filePath
+      state.source.label = imported.sourceLabel
+    }
     const info = await window.monet.analyzeFile(state.filePath)
     if (info.error) throw new Error(info.error)
     state.fileInfo = info
-    $('stat-format').textContent = info.format
+    $('stat-format').textContent = state.source.label ? `${state.source.label} → extXYZ` : info.format
     $('stat-configs').textContent = info.configCount.toLocaleString()
     $('stat-atoms').textContent = info.atomCount.toLocaleString()
     updateSampledCount()
@@ -579,9 +653,69 @@ $('next-3').addEventListener('click', () => goTo(4))
 // =============================================================================
 
 $('opt-average').addEventListener('change',  e => { state.opts.computeAverage   = e.target.checked })
-$('opt-gaussian').addEventListener('change', e => {
-  state.opts.generateGaussian = e.target.checked
-  $('gaussian-details').style.opacity = e.target.checked ? '1' : '0.35'
+
+// Quantum-chemistry inputs: editable templates (kept for the session) + common parameters.
+const qmTemplates = Object.fromEntries(Object.entries(MonetQM.CODES).map(([code, def]) => [code, def.files.map(file => ({ ...file }))]))
+const qmCodes = () => [...$$('[data-qm-code]')].filter(input => input.checked).map(input => input.dataset.qmCode)
+
+function buildQmSpec () {
+  const codes = qmCodes()
+  if (!codes.length) return null
+  const spec = MonetQM.defaultSpec(codes)
+  for (const code of codes) spec.codes[code].files = qmTemplates[code].map(file => ({ ...file }))
+  const mults = $('qm-mults').value.trim().split(/[\s,]+/).filter(Boolean).map(Number)
+  Object.assign(spec.params, {
+    charge: Number($('qm-charge').value), multiplicities: mults, nproc: Number($('qm-nproc').value),
+    mem: $('qm-mem').value.trim(), method: $('qm-method').value.trim(), basis: $('qm-basis').value.trim(),
+    padding: Number($('qm-padding').value)
+  })
+  spec.cell = aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null
+  return MonetQM.validate(spec)
+}
+
+function updateQmUI () {
+  const codes = qmCodes()
+  state.opts.generateGaussian = codes.includes('gaussian')
+  $('gaussian-details').classList.toggle('disabled', !codes.length)
+  const select = $('qm-template-file'), previous = select.value
+  select.replaceChildren()
+  for (const code of codes) {
+    qmTemplates[code].forEach((file, i) => {
+      const option = document.createElement('option')
+      option.value = `${code}:${i}`
+      option.textContent = `${MonetQM.CODES[code].label} — ${file.name}`
+      select.appendChild(option)
+    })
+  }
+  if ([...select.options].some(option => option.value === previous)) select.value = previous
+  showTemplate()
+  try {
+    buildQmSpec()
+    $('qm-status').textContent = codes.length ? `Inputs for: ${codes.map(code => MonetQM.CODES[code].label).join(', ')}.` : 'No quantum-chemistry inputs will be written.'
+  } catch (error) { $('qm-status').textContent = error.message }
+}
+
+function selectedTemplate () {
+  const [code, index] = ($('qm-template-file').value || '').split(':')
+  return code ? { code, index: Number(index) } : null
+}
+function showTemplate () {
+  const target = selectedTemplate()
+  $('qm-template-text').value = target ? qmTemplates[target.code][target.index].template : ''
+  $('qm-template-text').disabled = !target
+}
+$$('[data-qm-code]').forEach(input => input.addEventListener('change', updateQmUI))
+for (const id of ['qm-charge', 'qm-mults', 'qm-nproc', 'qm-mem', 'qm-method', 'qm-basis', 'qm-padding']) $(id).addEventListener('input', updateQmUI)
+$('qm-template-file').addEventListener('change', showTemplate)
+$('qm-template-text').addEventListener('input', () => {
+  const target = selectedTemplate()
+  if (target) qmTemplates[target.code][target.index].template = $('qm-template-text').value
+})
+$('qm-template-reset').addEventListener('click', () => {
+  const target = selectedTemplate()
+  if (!target) return
+  qmTemplates[target.code][target.index] = { ...MonetQM.CODES[target.code].files[target.index] }
+  showTemplate()
 })
 
 $('btn-output-dir').addEventListener('click', async () => {
@@ -595,6 +729,10 @@ $('btn-output-dir').addEventListener('click', async () => {
 $('back-4').addEventListener('click', () => goTo(3))
 
 $('next-4').addEventListener('click', () => {
+  try { state.opts.qm = buildQmSpec() } catch (error) {
+    $('qm-status').textContent = error.message
+    return setStatus(error.message)
+  }
   goTo(5)
   runProcessing().catch(error => {
     log('ERROR: ' + error.message, 'error')
@@ -645,6 +783,7 @@ async function runProcessing () {
   log(`File     : ${state.filePath}`)
   log(`Atoms    : ${[...state.selectedAtoms].sort((a,b)=>a-b).join(', ')}`)
   log(`Frequency: every ${state.frequency} frames`)
+  log(`QM inputs: ${state.opts.qm ? Object.keys(state.opts.qm.codes).join(', ') : 'none'}`)
   log(`Output   : ${state.outputDir}`)
   log('')
 
@@ -660,7 +799,8 @@ async function runProcessing () {
     selectedAtoms:    processedIds,
     frequency:        state.frequency,
     computeAverage:   state.opts.computeAverage,
-    generateGaussian: state.opts.generateGaussian
+    generateGaussian: false,
+    ...(state.opts.qm ? { qm: state.opts.qm } : {})
   })
   $('cancel-processing').classList.add('hidden')
 
@@ -702,6 +842,17 @@ $('next-5').addEventListener('click', () => {
 // ── Step 6 — Results ─────────────────────────────────────────────────────────
 // =============================================================================
 
+function qmSummary () {
+  const spec = state.opts.qm
+  if (!spec) return ''
+  return ', ' + Object.keys(spec.codes).map(code => {
+    const folder = MonetQM.CODES[code].folder
+    const names = spec.codes[code].files.map(file => /\{(tag|mult|state|chk)\}/.test(file.name)
+      ? spec.params.multiplicities.map(m => file.name.replace('{tag}', MonetQM.stateOf(m).tag)).join(', ') : file.name)
+    return folder ? `${folder}/ (${names.join(', ')})` : names.join(', ')
+  }).join('; ')
+}
+
 function buildResultsView (result) {
   $('result-summary').innerHTML = `
     <div class="result-stat"><span>Total frames</span><strong>${result.totalFrames.toLocaleString()}</strong></div>
@@ -715,7 +866,7 @@ function buildResultsView (result) {
     { icon: '📁', label: '2-SAMPLED_CONFIGURATIONS/',
       sub: [
         'SAMPLED_CONFIGURATIONS.xyz',
-        `conf1/ … conf${result.sampledFrames}/ (pos*.txt${state.opts.generateGaussian ? ', sing.dat, trip.dat' : ''})`
+        `conf1/ … conf${result.sampledFrames}/ (pos*.txt${qmSummary()})`
       ]
     },
     ...(state.opts.computeAverage
@@ -739,6 +890,9 @@ $('back-6').addEventListener('click', () => {
   state.firstFrame    = null
   state.selectedAtoms = new Set()
   state.outputDir     = window.monet.isBrowser ? 'MONET-results' : null
+  releaseTrajectory()
+  state.source.original = null
+  state.source.label = null
   clearTrajectory()
   $('next-4').disabled = !window.monet.isBrowser
   $('output-dir-text').textContent = window.monet.isBrowser ? 'Download results as a ZIP file' : 'Not selected'
@@ -1450,6 +1604,8 @@ window.addEventListener('load', () => {
   updateCellPreset()
   updateSelectionTarget()
   updateSampledCount()
+  updateFormatUI()
+  updateQmUI()
   if (window.monet.isBrowser) {
     state.outputDir = 'MONET-results'
     $('output-dir-text').textContent = 'Download results as a ZIP file'

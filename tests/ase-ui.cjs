@@ -35,15 +35,21 @@ const atoms = [
   { index: 3, element: 'C', x: 0, y: 1, z: 0 },
   { index: 4, element: 'H', x: 0, y: 1, z: 1 }
 ]
+let lastProcessOptions, importCalls = []
 let activeAtoms = atoms, latestCommand, pendingResolve, defer = false, checks = 0
 const listeners = new Set()
+let nextFile = 'torsion.xyz'
 w.monet = {
-  isBrowser: true, selectFile: async () => 'torsion.xyz',
+  isBrowser: true, selectFile: async () => nextFile,
+  canImport: true,
+  importFile: async (name, options) => { importCalls.push([name, options]); return { filePath: 'imported/' + name + '.extxyz', sourceLabel: 'VASP XDATCAR', frames: 2 } },
+  releaseFile: () => {},
   analyzeFile: async () => ({ atomCount: 4, configCount: 2, format: 'XYZ' }),
   readFrame: async () => ({ atoms }),
   onProgress () {}, onAseProgress: callback => { listeners.add(callback); return () => listeners.delete(callback) },
   aseCheck: async () => ({ ok: true, ase_version: 'test' }),
   processTrajectory: async options => {
+    lastProcessOptions = options
     activeAtoms = atoms.filter(atom => options.selectedAtoms.includes(atom.index))
     return { success: true, totalFrames: 2, sampledFrames: 2, outputDir: 'MONET-results' }
   },
@@ -57,7 +63,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'ase-model.js', 'plot.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, state, aseState };' : ''))
+for (const file of ['theme.js', 'qm-inputs.js', 'ase-model.js', 'plot.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, state, aseState };' : ''))
 const el = id => w.document.getElementById(id)
 const tick = () => new Promise(resolve => setImmediate(resolve))
 async function click (id) { el(id).click(); await tick(); await tick() }
@@ -186,6 +192,33 @@ async function run () {
   assert.match(el('ase-atom-match').textContent, /does not match MONET/); checks++
   await click('btn-browse')
   assert.equal(el('ase-atom-count').textContent, '0'); checks++
+  // Other formats are imported before analysis; XYZ is read directly.
+  nextFile = 'XDATCAR'
+  await click('btn-browse'); await click('next-1')
+  assert.equal(importCalls.length, 1); assert.equal(importCalls[0][1].format, 'auto'); checks++
+  assert.equal(el('stat-format').textContent, 'VASP XDATCAR → extXYZ'); assert.equal(w.testMonet.state.filePath, 'imported/XDATCAR.extxyz'); checks++
+  el('inp-format').value = 'cpmd-trajectory'; el('inp-format').dispatchEvent(new w.Event('change'))
+  assert.equal(el('aux-reference').classList.contains('hidden'), false); checks++
+  nextFile = 'first-frame.xyz'; await click('btn-reference')
+  await click('back-2'); await click('next-1')
+  assert.equal(importCalls.at(-1)[1].reference, 'first-frame.xyz'); assert.equal(importCalls.at(-1)[1].format, 'cpmd-trajectory'); checks++
+  // Quantum-chemistry settings reach the extraction engine as a validated template spec.
+  w.document.querySelector('[data-qm-code="orca"]').click()
+  el('qm-mults').value = '2'; el('qm-mults').dispatchEvent(new w.Event('input'))
+  el('qm-charge').value = '-1'; el('qm-charge').dispatchEvent(new w.Event('input'))
+  assert.match(el('qm-template-file').textContent, /ORCA — \{tag\}\.inp/); checks++
+  el('qm-template-file').value = 'orca:0'; el('qm-template-file').dispatchEvent(new w.Event('change'))
+  el('qm-template-text').value = '! custom {mult}\n{coords}'; el('qm-template-text').dispatchEvent(new w.Event('input'))
+  el('inp-atom-ids').value = '1 2'; await click('btn-apply-ids')
+  await click('next-2'); await click('next-3'); await click('next-4')
+  await tick(); await tick()
+  assert.deepEqual(Object.keys(lastProcessOptions.qm.codes), ['gaussian', 'orca']); checks++
+  assert.equal(lastProcessOptions.qm.params.charge, -1); assert.deepEqual([...lastProcessOptions.qm.params.multiplicities], [2]); checks++
+  assert.equal(lastProcessOptions.qm.codes.orca.files[0].template, '! custom {mult}\n{coords}'); assert.equal(lastProcessOptions.generateGaussian, false); checks++
+  el('qm-mults').value = '1 1'; el('qm-mults').dispatchEvent(new w.Event('input'))
+  assert.match(el('qm-status').textContent, /distinct/); checks++
+  await click('retry-processing'); await click('next-4')
+  assert.match(el('status-msg').textContent, /distinct/); checks++
   // Day/night toggle persists the choice and redraws canvases without errors.
   const theme = w.document.documentElement.dataset.theme
   let redraws = 0

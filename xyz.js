@@ -45,6 +45,12 @@
         if (/STEP\s*[=:]/i.test(line)) this.format = 'CPMD'
         else if (/\bi\s*=/.test(line)) this.format = 'CP2K'
         this.columns = { element: 0, position: 1, required: 4 }
+        this.lattice = null
+        const lattice = line.match(/\bLattice="([^"]+)"/)
+        if (lattice) {
+          const values = lattice[1].trim().split(/\s+/).map(Number)
+          if (values.length === 9 && values.every(Number.isFinite)) this.lattice = [values.slice(0, 3), values.slice(3, 6), values.slice(6, 9)]
+        }
         const props = line.match(/\bProperties=([^\s]+)/)
         if (props) {
           const fields = props[1].replace(/^"|"$/g, '').split(':')
@@ -85,7 +91,7 @@
             this.elements = this.atoms.map(atom => atom.element)
             this.rawElements = this.rawRow || null
           }
-          const frame = { index: this.configCount++, comment: this.comment, atoms: this.atoms }
+          const frame = { index: this.configCount++, comment: this.comment, atoms: this.atoms, lattice: this.lattice }
           this.phase = 'count'
           return frame
         }

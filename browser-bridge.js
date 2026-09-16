@@ -92,7 +92,7 @@
   }
 
   async function localExtraction (options) {
-    const { filePath, frequency, selectedAtoms, computeAverage, generateGaussian } = options
+    const { filePath, frequency, selectedAtoms, computeAverage, generateGaussian, qm } = options
     const selected = new Set(selectedAtoms)
     const entries = [['0-HISTORY/run.json', JSON.stringify({ ...options, date: new Date().toISOString() }, null, 2)]]
     const full = [], sampled = []
@@ -112,6 +112,10 @@
           for (const [name, multiplicity, checkpoint, tag] of [['sing', 1, 's0', 'singlet'], ['trip', 3, 't0', 'triplet']]) {
             entries.push([`${folder}/${name}.dat`, `%nproc=6\n%chk=${checkpoint}.chk\n%mem=4gb\n#p ub3lyp/6-31+g(d,p) maxdisk=300gb nosymm scf=tight gfinput gfoldprint pop=full\n\nscf_${tag}\n\n0 ${multiplicity}\n${positions}\n`])
           }
+        }
+        if (qm) {
+          const conf = { index: sampledFrames, frame: frame.index, symbols: atoms.map(a => a.element), positions: atoms.map(a => [a.x, a.y, a.z]), lattice: frame.lattice }
+          for (const file of MonetQM.render(qm, conf)) entries.push([`${folder}/${file.path}`, file.text])
         }
       }
       if (computeAverage) {
@@ -235,6 +239,23 @@
     isBrowser: true,
     hasAseServer: server,
     selectFile,
+    canImport: server,
+    importFile: safe(async (name, options = {}) => {
+      if (!server) throw new Error('Importing other formats needs the launcher: run python3 start_monet.py.')
+      const fileId = await upload(name)
+      const extra = {}
+      if (options.reference) extra.reference_id = await upload(options.reference)
+      if (options.cellFile) extra.cell_id = await upload(options.cellFile)
+      const result = await job({
+        action: 'import', file_id: fileId, format: options.format || 'auto', cell_vectors: options.cellVectors || 'rows',
+        source_name: (files.get(name)?.name || name), ...extra
+      }, 'ase', emitAse)
+      if (!result.ok) throw new Error(result.message || result.error)
+      let key = `imported/${(files.get(name)?.name || name).replace(/\.[^./]*$/, '')}.extxyz`
+      for (let copy = 2; remote.has(key); copy++) key = `imported-${copy}/${key.split('/').pop()}`
+      remote.set(key, Promise.resolve(result.file_id))
+      return { filePath: key, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label }
+    }),
     releaseFile: async name => {
       const pending = remote.get(name)
       remote.delete(name)
@@ -297,6 +318,7 @@
       const result = await serverRun({
         action: 'extract', filename: filePath, selected: [...selected], frequency, atom_count: options.atomCount,
         compute_average: Boolean(options.computeAverage), generate_gaussian: Boolean(options.generateGaussian),
+        ...(options.qm ? { qm: options.qm } : {}),
         history: { ...options, date: new Date().toISOString() }
       }, 'extraction', status => emit({ step: 'extraction', status: 'progress', message: status.message, percent: status.percent }))
       if (!result.ok) throw new Error(result.message || result.error)

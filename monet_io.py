@@ -457,7 +457,7 @@ def extract(traj, out_dir, selected, frequency, compute_average=False, generate_
     total = traj.nframes
     with open(full_path, 'w', buffering=8 << 20) as full, open(sampled_path, 'w', buffering=1 << 20) as sample:
         # Every atom row is parsed so the whole file is validated, as in the desktop/browser engines.
-        for frame, positions, _ in traj.iter_frames(range(total)):
+        for frame, positions, comment in traj.iter_frames(range(total)):
             if compute_average:
                 sums += positions
             positions = positions[indices]
@@ -476,7 +476,9 @@ def extract(traj, out_dir, selected, frequency, compute_average=False, generate_
                         with open(os.path.join(folder, f'{name}.dat'), 'w') as fh:
                             fh.write(GAUSSIAN_TEMPLATE.format(chk=f'{chk}.chk', tag=f'scf_{tag}', mult=mult, positions=atoms_text))
                 if qm_writer:
-                    qm_writer(folder, sampled, frame, selected_symbols, positions)
+                    lattice = traj.cell(comment)[0]
+                    qm_writer(folder, sampled, frame, selected_symbols, positions,
+                              None if lattice is None else lattice.tolist())
             if frame % 500 == 499:
                 if cancelled and cancelled():
                     raise RuntimeError('Extraction cancelled.')
