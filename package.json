@@ -1,7 +1,7 @@
 {
   "name": "monet-electron",
-  "version": "1.0.5",
-  "description": "MONET Molecular Dynamics Extractor — Desktop GUI with 3D molecular visualizer",
+  "version": "1.1.0",
+  "description": "MONET Molecular Dynamics Extractor \u2014 Desktop GUI with 3D molecular visualizer",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -16,9 +16,17 @@
   "build": {
     "appId": "edu.uchicago.monet",
     "productName": "MONET",
-    "directories": { "output": "dist" },
-    "linux": { "target": "AppImage" },
-    "win":  { "target": "nsis" },
-    "mac":  { "target": "dmg" }
+    "directories": {
+      "output": "dist"
+    },
+    "linux": {
+      "target": "AppImage"
+    },
+    "win": {
+      "target": "nsis"
+    },
+    "mac": {
+      "target": "dmg"
+    }
   }
 }

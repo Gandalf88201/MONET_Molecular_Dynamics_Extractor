@@ -1,0 +1,184 @@
+'use strict'
+const assert = require('node:assert/strict')
+const fs = require('node:fs')
+const path = require('node:path')
+const vm = require('node:vm')
+const { File } = require('node:buffer')
+const { spawn } = require('node:child_process')
+const root = path.resolve(__dirname, '..')
+const fileText = fs.readFileSync(path.join(root, 'examples/water.XYZ'), 'utf8')
+const child = spawn(process.env.PYTHON || 'python3', [path.join(root, 'start_monet.py'), '--port', '0', '--no-browser'])
+let checks = 0
+async function main () {
+  const origin = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('Server did not start')), 10000)
+    let buffer = ''
+    child.on('error', reject)
+    child.on('exit', code => { clearTimeout(timer); reject(new Error(`Server exited: ${code}`)) })
+    child.stdout.on('data', chunk => {
+      buffer += chunk
+      const match = buffer.match(/MONET: (http:\/\/127\.0\.0\.1:\d+)/)
+      if (match) { clearTimeout(timer); resolve(match[1]) }
+    })
+  })
+  const html = await (await fetch(origin)).text()
+  const token = html.match(/name="monet-api-token" content="([^"]+)"/)[1]
+  assert.ok(token); checks++
+  assert.equal((await fetch(origin + '/ase_bridge.py')).status, 404); checks++
+  assert.equal((await fetch(origin + '/api/check', { method: 'POST', body: '{}' })).status, 403); checks++
+  const cross = await fetch(origin + '/api/check', { method: 'POST', headers: { 'X-Monet-Token': token, Origin: 'https://example.com' }, body: '{}' })
+  assert.equal(cross.status, 403); checks++
+  let file = new File([fileText], 'water.XYZ')
+  let downloaded
+  const context = {
+    window: {}, MonetXYZ: require('../xyz.js'), File, Blob, TextEncoder, TextDecoder, AbortController, atob, setTimeout, clearTimeout,
+    fetch: (route, options) => fetch(origin + route, options),
+    URL: { createObjectURL (blob) { downloaded = blob; return 'blob:test' }, revokeObjectURL () {} },
+    document: {
+      querySelector: () => ({ content: token }), body: { appendChild () {} },
+      createElement () {
+        const callbacks = {}
+        return { files: [file], remove () {}, addEventListener (name, callback) { callbacks[name] = callback }, click () { callbacks.change() } }
+      }
+    }
+  }
+  vm.runInNewContext(fs.readFileSync(path.join(root, 'browser-bridge.js'), 'utf8'), context)
+  const api = context.window.monet
+  const status = await api.aseCheck()
+  assert.equal(status.ok, true, JSON.stringify(status)); checks++
+  const name = await api.selectFile()
+  let result = await api.aseRun({ action: 'rmsd', filename: name, frame_step: 1 })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.ok(Math.abs(result.rmsd[1] - .1) < 1e-10); checks++
+  result = await api.aseRun({ action: 'bonds', filename: name, pairs: [[0, 1]], frame_step: 1 })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.ok(Math.abs(result.series['0-1'][0] - Math.hypot(.757, .586)) < 1e-10); checks++
+  result = await api.aseRun({ action: 'angles', filename: name, triplets: [[1, 0, 2]], frame_step: 1 })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  const expectedAngle = Math.acos((-(.757 ** 2) + .586 ** 2) / (.757 ** 2 + .586 ** 2)) * 180 / Math.PI
+  assert.ok(Math.abs(result.series['1-0-2'][0] - expectedAngle) < 1e-10); checks++
+  result = await api.aseRun({ action: 'pdd', filename: name, elements: ['O', 'H'], nbins: 10, rmax: 3, frame_step: 1 })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.counts.reduce((a, b) => a + b, 0), 4); checks++
+  for (const command of [
+    { action: 'bonds', pairs: [[-1, 1]] }, { action: 'angles', triplets: [[0, 0, 1]] },
+    { action: 'rmsd', frame_step: 0 }, { action: 'rmsd', frame_step: 1.5 },
+    { action: 'pdd', nbins: 0 }, { action: 'bonds', pairs: [[0, 9]] }
+  ]) {
+    result = await api.aseRun({ filename: name, frame_step: 1, ...command })
+    assert.equal(result.ok, false, JSON.stringify(command)); checks++
+  }
+  const processed = await api.processTrajectory({ filePath: name, atomCount: 3, selectedAtoms: [1, 3], frequency: 1, computeAverage: false, generateGaussian: false })
+  assert.equal(processed.success, true); checks++
+  result = await api.aseRun({ action: 'bonds', filename: 'MONET-results/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz', pairs: [[0, 1]], frame_step: 1 })
+  assert.equal(result.ok, true, JSON.stringify(result)); checks++
+  // A separately selected conversion file must not replace a loaded input with the same name.
+  file = new File(['1\n\nHe 0 0 0\n'], 'water.XYZ')
+  const second = await api.selectFile()
+  assert.notEqual(name, second); checks++
+  result = await api.aseRun({ action: 'convert', input: name, output: 'water.extxyz', format: 'extxyz', first_frame_only: false })
+  assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.n_frames, 2)
+  assert.match(await downloaded.text(), /Properties=species:S:1:pos:R:3/); checks++
+  result = await api.aseRun({ action: 'convert', input: name, output: 'water.gjf', format: 'gaussian-in', first_frame_only: true })
+  assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.n_frames, 1); checks++
+  result = await api.aseRun({ action: 'convert', input: name, output: 'water.gjf', format: 'gaussian-in', first_frame_only: false })
+  assert.equal(result.ok, false); assert.match(result.message, /first frame/); checks++
+  result = await api.aseRun({ action: 'convert', input: name, output: 'water.vasp', format: 'vasp', first_frame_only: true })
+  assert.equal(result.ok, false); assert.match(result.message, /cell vectors/); checks++
+  // Verify the loaded/extracted atom lists against what ASE actually reads.
+  const model = require('../ase-model.js')
+  const xyz = require('../xyz.js')
+  const parser = new xyz.Parser()
+  let firstFrame
+  for (const line of fileText.split('\n')) { const frame = parser.push(line); if (frame && !firstFrame) firstFrame = frame }
+  result = await api.aseRun({ action: 'read_info', filename: name })
+  assert.equal(model.verifyAtoms(model.atomMap(firstFrame.atoms), result), true); checks++
+  result = await api.aseRun({ action: 'read_info', filename: 'MONET-results/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz' })
+  const mapping = model.atomMap(firstFrame.atoms, [3, 1])
+  assert.deepEqual(mapping.map(atom => atom.monetId), [1, 3])
+  assert.equal(model.verifyAtoms(mapping, result), true); checks++
+  assert.deepEqual(model.groupsFromIds('1 3', 2, mapping), [[0, 1]]); checks++
+  assert.throws(() => model.groupsFromIds('1 2', 2, mapping), /not in/); checks++
+  assert.throws(() => model.verifyAtoms(mapping.slice().reverse(), result), /does not match/); checks++
+  file = new File([fs.readFileSync(path.join(root, 'examples/torsion.xyz'), 'utf8')], 'torsion.xyz')
+  const torsionName = await api.selectFile()
+  result = await api.aseRun({ action: 'dihedrals', filename: torsionName, quads: [[0, 1, 2, 3]], frame_step: 1 })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.deepEqual(result.series['0-1-2-3'], [270, 90]); checks++
+  result = await api.aseRun({ action: 'dihedrals', filename: torsionName, quads: [[0, 1, 2, 3]], frame_step: 2 })
+  assert.deepEqual(result.frame_indices, [0]); checks++
+  for (const quads of [[[0, 1, 2, 2]], [[0, 1, 2, 4]]]) {
+    result = await api.aseRun({ action: 'dihedrals', filename: torsionName, quads, frame_step: 1 })
+    assert.equal(result.ok, false); checks++
+  }
+  file = new File(['4\ncollinear\nC 0 0 0\nC 1 0 0\nC 2 0 0\nH 3 0 0\n'], 'linear.xyz')
+  const linearName = await api.selectFile()
+  result = await api.aseRun({ action: 'dihedrals', filename: linearName, quads: [[0, 1, 2, 3]], frame_step: 1 })
+  assert.equal(result.ok, false); checks++
+  // Selected-atom RMSD must exclude motion of unselected atoms.
+  file = new File(['2\nframe0\nC 0 0 0\nH 1 0 0\n2\nframe1\nC 0 0 0\nH 3 0 0\n'], 'subset.xyz')
+  const subsetName = await api.selectFile()
+  result = await api.aseRun({ action: 'rmsd', filename: subsetName, indices: [0], frame_step: 1 })
+  assert.deepEqual(result.rmsd, [0, 0]); checks++
+  result = await api.aseRun({ action: 'rmsd', filename: subsetName, indices: [1], frame_step: 1 })
+  assert.deepEqual(result.rmsd, [0, 2]); checks++
+  result = await api.aseRun({ action: 'pdd', filename: name, indices: [0, 1], nbins: 10, rmax: 3, frame_step: 1 })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.counts.reduce((sum, value) => sum + value, 0), 2); checks++
+  for (const indices of [[0, 0], [], [20], [-1]]) {
+    result = await api.aseRun({ action: 'rmsd', filename: name, indices, frame_step: 1 })
+    assert.equal(result.ok, false); checks++
+  }
+  result = await api.aseRun({ action: 'pdd', filename: name, indices: [0], frame_step: 1 })
+  assert.equal(result.ok, false); checks++
+  // Crystal geometry, finite molecules across boundaries, and angular conventions.
+  const cell = [10, 10, 10, 90, 90, 90]
+  file = new File(['4\nTwo OH molecules, one across x boundary\nO .2 0 0\nH 9.4 0 0\nO 5 5 5\nH 5.8 5 5\n'], 'periodic.xyz')
+  const periodicName = await api.selectFile()
+  result = await api.aseRun({ action: 'read_info', filename: periodicName, cell, pbc: [true, false, false] })
+  assert.equal(result.ok, true, JSON.stringify(result)); assert.deepEqual(result.cellpar, cell); assert.deepEqual(result.pbc, [true, false, false]); checks++
+  for (const [mic, expected] of [[true, .8], [false, 9.2]]) {
+    result = await api.aseRun({ action: 'bonds', filename: periodicName, pairs: [[0, 1]], cell, mic })
+    assert.equal(result.ok, true, JSON.stringify(result)); assert.ok(Math.abs(result.series['0-1'][0] - expected) < 1e-9); checks++
+  }
+  result = await api.aseRun({ action: 'molecule', filename: periodicName, seed: 1, cell, mic: true, bond_scale: 1.2 })
+  assert.equal(result.ok, true, JSON.stringify(result)); assert.deepEqual(result.indices, [1, 0]); checks++
+  result = await api.aseRun({ action: 'molecule', filename: periodicName, seed: 1, cell, mic: false })
+  assert.deepEqual(result.indices, [1]); checks++
+  result = await api.aseRun({ action: 'molecule', filename: periodicName, seed: 2, cell, mic: true })
+  assert.deepEqual(result.indices, [2, 3]); checks++
+  result = await api.aseRun({ action: 'convert', input: periodicName, output: 'crystal.extxyz', format: 'extxyz', cell, pbc: [true, false, false], first_frame_only: true })
+  assert.equal(result.ok, true, JSON.stringify(result)); const cellText = await downloaded.text(); assert.match(cellText, /Lattice=/); assert.match(cellText, /pbc="T F F"/); checks++
+  file = new File([cellText], 'native-cell.xyz'); const nativeCellName = await api.selectFile()
+  result = await api.aseRun({ action: 'bonds', filename: nativeCellName, pairs: [[0, 1]], mic: true })
+  assert.ok(Math.abs(result.series['0-1'][0] - .8) < 1e-9); checks++
+  result = await api.aseRun({ action: 'convert', input: name, output: 'water.vasp', format: 'vasp', cell, first_frame_only: true })
+  assert.equal(result.ok, true, JSON.stringify(result)); checks++
+  for (const badCell of [[0,10,10,90,90,90], [10,10,10,1,1,179], [10,10,10,90,180,90], [10,10]]) {
+    result = await api.aseRun({ action: 'read_info', filename: name, cell: badCell }); assert.equal(result.ok, false); checks++
+  }
+  file = new File(['1\nInfinite carbon network\nC 0 0 0\n'], 'network.xyz'); const networkName = await api.selectFile()
+  result = await api.aseRun({ action: 'molecule', filename: networkName, seed: 0, cell: [1.4,10,10,90,90,90], mic: true })
+  assert.equal(result.ok, false); assert.match(result.message, /periodic network/); checks++
+  file = new File(['3\nDirected angle\nC 1 0 0\nC 0 0 0\nC 0 9 0\n'], 'directed.xyz'); const directedName = await api.selectFile()
+  for (const [mode, normal, expected] of [['natural', [0,0,1], 90], ['360', [0,0,1], 270], ['360', [0,0,-1], 90], ['signed90', [0,0,1], -90]]) {
+    result = await api.aseRun({ action: 'angles', filename: directedName, triplets: [[0,1,2]], cell, mic: true, angle_range: mode, angle_normal: normal })
+    assert.equal(result.ok, true, JSON.stringify(result)); assert.ok(Math.abs(result.series['0-1-2'][0] - expected) < 1e-9); checks++
+  }
+  for (const normal of [[0,0,0], [1,0,0], [1,2]]) {
+    result = await api.aseRun({ action: 'angles', filename: directedName, triplets: [[0,1,2]], cell, mic: true, angle_range: '360', angle_normal: normal })
+    assert.equal(result.ok, false); checks++
+  }
+  result = await api.aseRun({ action: 'dihedrals', filename: torsionName, quads: [[0,1,2,3]], angle_range: 'signed90' })
+  assert.deepEqual(result.series['0-1-2-3'], [-90,-90]); checks++
+  file = new File(['4\nWrapped torsion\nC 1 0 0\nC 0 0 0\nC 0 1 0\nH 10 1 1\n'], 'wrapped-torsion.xyz'); const wrappedName = await api.selectFile()
+  result = await api.aseRun({ action: 'dihedrals', filename: wrappedName, quads: [[0,1,2,3]], cell, mic: true })
+  assert.ok(Math.abs(result.series['0-1-2-3'][0] - 270) < 1e-8); checks++
+  result = await api.aseRun({ action: 'pdd', filename: periodicName, indices: [0,1], cell, mic: true, nbins: 10, rmax: 2 })
+  assert.equal(result.counts.reduce((sum, value) => sum+value, 0), 1); checks++
+  // Negative backend path injection: request paths cannot be used to read local files.
+  const forbidden = await fetch(origin + '/api/run', { method: 'POST', headers: { 'X-Monet-Token': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'rmsd', filename: '/etc/passwd' }) })
+  assert.equal(forbidden.status, 400); checks++
+  console.log(`PASS: ${checks} live integration checks with ASE ${status.ase_version}.`)
+}
+main().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => child.kill())

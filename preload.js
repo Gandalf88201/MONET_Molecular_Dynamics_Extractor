@@ -14,5 +14,9 @@ contextBridge.exposeInMainWorld('monet', {
   aseCheck:          ()               => ipcRenderer.invoke('ase-check'),
   aseRun:            cmd              => ipcRenderer.invoke('ase-run', cmd),
   aseSelectOutput:   name             => ipcRenderer.invoke('ase-select-output', name),
-  onAseProgress:     cb               => ipcRenderer.on('ase-progress', (_, d) => cb(d)),
+  onAseProgress: cb => {
+    const listener = (_, data) => cb(data)
+    ipcRenderer.on('ase-progress', listener)
+    return () => ipcRenderer.removeListener('ase-progress', listener)
+  },
 })

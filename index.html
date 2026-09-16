@@ -59,7 +59,7 @@
     <!-- ── STEP 1: File Input ── -->
     <section class="step-panel active" id="panel-1">
       <h2 class="panel-title">Select Trajectory File</h2>
-      <p class="panel-desc">Load an <code>.xyz</code> file produced by CPMD or CP2K.</p>
+      <p class="panel-desc">Load a standard <code>.xyz</code> trajectory, including CPMD and CP2K files.</p>
       <button class="btn btn-primary" id="btn-browse">Browse …</button>
       <div id="file-display" class="file-info hidden">
         <div class="file-path" id="file-path-text"></div>
@@ -85,7 +85,7 @@
       </div>
       <div class="step-nav-row">
         <button class="btn btn-back" id="back-2">← Back</button>
-        <button class="btn btn-next" id="next-2">Next →</button>
+        <button class="btn btn-next" id="next-2" disabled>Next →</button>
       </div>
     </section>
 
@@ -160,6 +160,8 @@
         <div class="progress-label" id="prog-label">Starting …</div>
       </div>
       <div class="log-box" id="log-box"></div>
+      <a class="btn btn-next hidden" id="download-results" download="MONET-results.zip">Download results ZIP</a>
+      <button class="btn btn-back hidden" id="retry-processing">← Back to options</button>
       <div class="step-nav-row">
         <span></span>
         <button class="btn btn-next hidden" id="next-5">Results →</button>
@@ -207,17 +209,99 @@
     <!-- ── ASE Analysis tab ── -->
     <div class="vtab-content" id="vtab-content-ase">
 
+      <div class="info-box" id="ase-connection">Checking ASE connection …</div>
+      <button class="btn btn-sm" id="btn-ase-recheck">Recheck ASE connection</button>
+      <div class="info-box" id="analysis-source">Load an XYZ file and click Next to begin analysis.</div>
+
+      <details class="ase-cell-panel">
+        <summary>Crystal cell and periodic boundaries</summary>
+        <p class="panel-desc">Choose the lattice metric (crystal system), then enter a, b, c in Å and α, β, γ in degrees. Crystal habit alone does not determine the unit cell. Coordinates stay Cartesian: a along x, b in xy, c with positive z. No symmetry expansion or rescaling is performed.</p>
+        <label class="field-label" for="cell-system">Crystal system / setting</label>
+        <select class="field-input" id="cell-system">
+          <option value="triclinic">Triclinic / custom</option><option value="monoclinic">Monoclinic (unique b)</option>
+          <option value="orthorhombic">Orthorhombic</option><option value="tetragonal">Tetragonal</option>
+          <option value="hexagonal">Hexagonal / trigonal (hexagonal axes)</option><option value="rhombohedral">Trigonal (rhombohedral axes)</option>
+          <option value="cubic">Cubic</option>
+        </select>
+        <div class="cell-grid">
+<label class="field-label">a (Å)<input class="field-input" id="cell-a" type="number" step="any" value="10" /></label>
+<label class="field-label">b (Å)<input class="field-input" id="cell-b" type="number" step="any" value="10" /></label>
+<label class="field-label">c (Å)<input class="field-input" id="cell-c" type="number" step="any" value="10" /></label>
+<label class="field-label">α = ∠(b,c)<input class="field-input" id="cell-alpha" type="number" step="any" value="90" /></label>
+<label class="field-label">β = ∠(a,c)<input class="field-input" id="cell-beta" type="number" step="any" value="90" /></label>
+<label class="field-label">γ = ∠(a,b)<input class="field-input" id="cell-gamma" type="number" step="any" value="90" /></label>
+</div>
+        <div class="ase-ctrl-row">Periodic directions:
+          <label><input type="checkbox" id="cell-pbc-a" checked /> a</label>
+          <label><input type="checkbox" id="cell-pbc-b" checked /> b</label>
+          <label><input type="checkbox" id="cell-pbc-c" checked /> c</label>
+        </div>
+        <div class="ase-ctrl-row">
+          <button class="btn btn-sm" id="cell-apply">Apply cell</button>
+          <button class="btn btn-sm" id="cell-read">Read cell from XYZ</button>
+          <button class="btn btn-sm" id="cell-reset">Use source cell</button>
+        </div>
+        <p class="panel-desc" id="cell-status" aria-live="polite">No manual cell. Source lattice/PBC are used when present.</p>
+      </details>
+      <label class="ase-append-label"><input type="checkbox" id="ase-mic" checked /> Use minimum-image distances and angles in periodic directions (requires cell/PBC)</label>
+      <div class="ase-workspace">
+      <aside class="ase-reference">
+
+        <div class="ase-molecule-toolbar">
+          <strong>ASE molecule · first frame</strong>
+          <button class="btn btn-sm" id="ase-fit-view">Fit view</button>
+        </div>
+        <canvas id="ase-mol-canvas" aria-label="ASE molecular viewer: click atoms to select; drag to rotate; scroll to zoom"></canvas>
+        <p class="panel-desc">Click atoms in order · Right-click an atom to select its molecule · Drag to rotate · Scroll to zoom</p>
+        <div id="ase-context-menu" class="ase-context-menu hidden">
+          <button class="btn btn-sm" id="ase-select-molecule">Select molecule from atom</button>
+        </div>
+        <label class="field-label">Molecule bond cutoff × covalent radii
+          <input class="field-input field-input-sm" id="ase-bond-scale" type="number" value="1.2" min="0.5" max="2" step="0.05" />
+        </label>
+        <p class="panel-desc">Molecules are inferred from first-frame connectivity; adjust the cutoff for unusual bonds. Molecule selection uses graph order, not a torsion path: pick ordered atoms individually for angles.</p>
+        <div class="ase-pick-header">Selected in order: <strong id="ase-picked-count">0</strong>
+          <button class="btn btn-sm" id="ase-clear-selection" disabled>Clear selection</button>
+        </div>
+        <div id="ase-picked-atoms" class="ase-picked-atoms" aria-live="polite">No atoms selected.</div>
+
+        <label class="field-label" for="ase-selection-target">Use selection for</label>
+        <select class="field-input" id="ase-selection-target">
+          <option value="rmsd">RMSD — selected atoms</option>
+          <option value="pdd">Pair distances — selected atoms</option>
+          <option value="bonds">Bond lengths — groups of 2</option>
+          <option value="angles">Bond angles — groups of 3</option>
+          <option value="dihedrals">Dihedrals — groups of 4</option>
+        </select>
+        <label class="ase-append-label"><input type="checkbox" id="ase-append-group" /> Append to existing atom groups</label>
+        <button class="btn btn-sm btn-accent" id="ase-use-selection" disabled>Use selection</button>
+        <p class="panel-desc" id="ase-selection-hint">Choose atoms, use the selection, then click Compute in the analysis panel.</p>
+      <details class="ase-atom-list" open>
+        <summary>Atoms in the active ASE trajectory — <span id="ase-atom-count">0</span></summary>
+        <p class="panel-desc">Use the same MONET IDs as in the viewer. Coordinates below are from the first frame (Å).</p>
+        <div class="ase-atom-scroll"><table class="atom-table">
+          <thead><tr><th>MONET ID</th><th>ASE index</th><th>Element</th><th>x (Å)</th><th>y (Å)</th><th>z (Å)</th></tr></thead>
+          <tbody id="ase-atom-body"></tbody>
+        </table></div>
+        <p class="panel-desc" id="ase-atom-match">No trajectory loaded.</p>
+      </details>
+      </aside>
+      <section class="ase-analysis-work">
+      <button class="btn btn-sm" id="btn-clear-analyses" disabled>Clear all analyses</button>
       <!-- ASE sub-tabs -->
       <div class="ase-subtabbar">
         <button class="ase-stab active" data-stab="rmsd">RMSD</button>
         <button class="ase-stab" data-stab="pdd">Pair Distances</button>
         <button class="ase-stab" data-stab="bonds">Bond Lengths</button>
         <button class="ase-stab" data-stab="angles">Bond Angles</button>
+        <button class="ase-stab" data-stab="dihedrals">Dihedral Angles</button>
         <button class="ase-stab" data-stab="convert">Convert</button>
       </div>
 
       <!-- RMSD sub-panel -->
       <div class="ase-subpanel active" id="ase-sub-rmsd">
+        <label class="field-label" for="rmsd-atoms">Atoms for RMSD — MONET IDs (blank = all)</label>
+        <input class="field-input" id="rmsd-atoms" placeholder="Use the molecular viewer or enter IDs" />
         <div class="ase-ctrl-row">
           <label class="field-label">Frame step (1 = every frame)</label>
           <input class="field-input field-input-sm" type="number" id="rmsd-step" value="1" min="1" />
@@ -227,6 +311,10 @@
           <div class="progress-bar"><div class="progress-fill" id="rmsd-prog-fill"></div></div>
           <span id="rmsd-prog-label">—</span>
         </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-rmsd" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-rmsd" disabled>Download plot PNG</button>
+        </div>
         <canvas class="chart-canvas" id="chart-rmsd"></canvas>
         <div class="chart-placeholder" id="chart-rmsd-ph">
           Run RMSD to see the time evolution vs. frame 0
@@ -235,6 +323,8 @@
 
       <!-- Pair-distance distribution sub-panel -->
       <div class="ase-subpanel" id="ase-sub-pdd">
+        <label class="field-label" for="pdd-atoms">Atoms for pair distances — MONET IDs (blank = all)</label>
+        <input class="field-input" id="pdd-atoms" placeholder="Use the molecular viewer or enter IDs" />
         <div class="ase-ctrl-row">
           <label class="field-label">R<sub>max</sub> (Å)</label>
           <input class="field-input field-input-sm" type="number" id="pdd-rmax" value="8" step="0.5" min="1" />
@@ -245,7 +335,7 @@
           <button class="btn btn-sm btn-accent" id="btn-run-pdd">Compute</button>
         </div>
         <div class="ase-ctrl-row">
-          <label class="field-label">Filter elements (blank = all)</label>
+          <label class="field-label">Element pair (blank = all; C N = C–N only)</label>
           <input class="field-input" type="text" id="pdd-elements"
                  placeholder="e.g.  C N  (space-separated)" />
         </div>
@@ -253,18 +343,22 @@
           <div class="progress-bar"><div class="progress-fill" id="pdd-prog-fill"></div></div>
           <span id="pdd-prog-label">—</span>
         </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-pdd" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-pdd" disabled>Download plot PNG</button>
+        </div>
         <canvas class="chart-canvas" id="chart-pdd"></canvas>
         <div class="chart-placeholder" id="chart-pdd-ph">
-          Pair-distance distribution across all sampled frames
+          Pair-distance counts from 0.5 Å to Rmax across sampled frames
         </div>
       </div>
 
       <!-- Bond lengths sub-panel -->
       <div class="ase-subpanel" id="ase-sub-bonds">
         <div class="ase-ctrl-row">
-          <label class="field-label">Atom pairs (0-indexed, space-sep, e.g. 0 5  2 8)</label>
+          <label class="field-label">MONET atom ID pairs (e.g. 1 2  1 3)</label>
           <input class="field-input" type="text" id="bonds-pairs"
-                 placeholder="0 5  2 8  1 3" />
+                 placeholder="1 2  1 3" />
           <label class="field-label">Frame step</label>
           <input class="field-input field-input-sm" type="number" id="bonds-step" value="1" min="1" />
           <button class="btn btn-sm btn-accent" id="btn-run-bonds">Compute</button>
@@ -272,6 +366,10 @@
         <div class="ase-prog-row hidden" id="bonds-prog-row">
           <div class="progress-bar"><div class="progress-fill" id="bonds-prog-fill"></div></div>
           <span id="bonds-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-bonds" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-bonds" disabled>Download plot PNG</button>
         </div>
         <canvas class="chart-canvas" id="chart-bonds"></canvas>
         <div class="chart-placeholder" id="chart-bonds-ph">
@@ -282,21 +380,54 @@
       <!-- Bond angles sub-panel -->
       <div class="ase-subpanel" id="ase-sub-angles">
         <div class="ase-ctrl-row">
-          <label class="field-label">Atom triplets (0-indexed, e.g. 0 1 2  3 4 5)</label>
+          <label class="field-label">MONET atom ID triplets (e.g. 2 1 3; middle ID is the vertex)</label>
           <input class="field-input" type="text" id="angles-triplets"
-                 placeholder="0 1 2  3 4 5" />
+                 placeholder="2 1 3" />
           <label class="field-label">Frame step</label>
           <input class="field-input field-input-sm" type="number" id="angles-step" value="1" min="1" />
           <button class="btn btn-sm btn-accent" id="btn-run-angles">Compute</button>
         </div>
+<div class="ase-ctrl-row"><label class="field-label" for="angles-range">Angle range</label><select class="field-input" id="angles-range"><option value="natural">Bond angle: 0–180°</option><option value="360">0–360°</option><option value="signed90">−90° to +90° (folded, modulo 180°)</option></select></div>
+<label class="field-label hidden" id="angles-normal-row">Reference normal x y z (Cartesian, selects orientation for 0–360°)
+          <input class="field-input" id="angles-normal" value="0 0 1" /></label>
+        <p class="panel-desc">0–360° retains the spatial angle magnitude and uses the reference normal to choose direction; an in-plane normal is rejected. Folded mode maps the usual 0–180° bond angle modulo 180°.</p>
         <div class="ase-prog-row hidden" id="angles-prog-row">
           <div class="progress-bar"><div class="progress-fill" id="angles-prog-fill"></div></div>
           <span id="angles-prog-label">—</span>
+        </div>
+
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-angles" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-angles" disabled>Download plot PNG</button>
         </div>
         <canvas class="chart-canvas" id="chart-angles"></canvas>
         <div class="chart-placeholder" id="chart-angles-ph">
           Bond-angle evolution over the extracted trajectory
         </div>
+      </div>
+
+      <div class="ase-subpanel" id="ase-sub-dihedrals">
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="dihedrals-quads">Four MONET atom IDs in bond order (e.g. 1 2 3 4)</label>
+          <input class="field-input" type="text" id="dihedrals-quads" placeholder="1 2 3 4" />
+          <label class="field-label" for="dihedrals-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="dihedrals-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-dihedrals">Compute dihedrals</button>
+        </div>
+        <p class="panel-desc">Torsion about the middle bond, in ASE's 0–360° convention. Periodic-image correction is optional in Crystal cell. Collinear groups have undefined dihedrals.</p>
+<div class="ase-ctrl-row"><label class="field-label" for="dihedrals-range">Angle range</label><select class="field-input" id="dihedrals-range"><option value="360">0–360°</option><option value="signed90">−90° to +90° (folded, modulo 180°)</option></select></div>
+<p class="panel-desc">Folded mode maps torsions modulo 180° into [−90°, +90°); +90° is represented by −90°. Opposite orientations become equivalent. Change the range, then recompute.</p>
+        <div class="ase-prog-row hidden" id="dihedrals-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="dihedrals-prog-fill"></div></div>
+          <span id="dihedrals-prog-label">—</span>
+        </div>
+
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-dihedrals" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-dihedrals" disabled>Download plot PNG</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-dihedrals"></canvas>
+        <div class="chart-placeholder" id="chart-dihedrals-ph">Dihedral-angle evolution over the active trajectory</div>
       </div>
 
       <!-- Format conversion sub-panel -->
@@ -320,10 +451,14 @@
           <option value="lammps-data">LAMMPS data</option>
           <option value="aims">FHI-aims</option>
           <option value="turbomole">Turbomole</option>
-          <option value="gaussian">Gaussian</option>
+          <option value="gaussian-in">Gaussian</option>
           <option value="dftb">DFTB+</option>
           <option value="json">ASE JSON</option>
         </select>
+        <label class="toggle-row"><input type="checkbox" id="conv-first-frame" checked />
+          <span>Convert first frame only (required for single-structure formats)</span></label>
+<label class="ase-append-label"><input type="checkbox" id="conv-apply-cell" /> Apply the manual crystal cell above to this conversion input</label>
+        <p class="panel-desc">Crystal formats may require cell data absent from plain XYZ. Quantum ESPRESSO also requires pseudopotential settings.</p>
         <label class="field-label" style="margin-top:.8rem">Output file</label>
         <div class="dir-row">
           <div class="dir-path" id="conv-output-path">—</div>
@@ -336,9 +471,12 @@
           <div class="progress-bar"><div class="progress-fill" id="conv-prog-fill"></div></div>
           <span id="conv-prog-label">—</span>
         </div>
+        <a class="btn btn-next hidden" id="download-converted" download>Download converted file</a>
         <div id="conv-result" class="info-box hidden" style="margin-top:.8rem"></div>
       </div>
 
+      </section><!-- .ase-analysis-work -->
+      </div><!-- .ase-workspace -->
     </div><!-- #vtab-content-ase -->
   </main>
 
@@ -349,6 +487,10 @@
   <span id="status-msg">Ready</span>
 </footer>
 
+<script src="xyz.js"></script>
+<script src="browser-bridge.js"></script>
+<script src="ase-model.js"></script>
+<script src="plot.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

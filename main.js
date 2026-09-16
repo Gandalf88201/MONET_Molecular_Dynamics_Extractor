@@ -3,6 +3,8 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path    = require('path')
 const fs      = require('fs')
 const readline = require('readline')
+const XYZ = require('./xyz.js')
+const { finished } = require('stream/promises')
 const { spawn, execFile } = require('child_process')
 
 let mainWindow
@@ -80,63 +82,33 @@ ipcMain.handle('process-trajectory', async (event, options) => {
 // analyzeTrajectoryFile
 //   Returns: { atomCount, configCount, format, filePath }
 // ---------------------------------------------------------------------------
-async function analyzeTrajectoryFile (filePath) {
-  const rl = readline.createInterface({ input: fs.createReadStream(filePath), crlfDelay: Infinity })
-
-  let lineNum     = 0
-  let atomCount   = 0
-  let configCount = 0
-  let format      = 'unknown'
-
-  for await (const line of rl) {
-    lineNum++
-    if (lineNum === 1) atomCount = parseInt(line.trim(), 10)
-
-    if      (line.includes('STEP ='))  { format = 'CPMD'; configCount++ }
-    else if (line.includes('STEP:'))   { format = 'CPMD'; configCount++ }
-    else if (/ i =/.test(line))        { format = 'CP2K'; configCount++ }
-  }
-
-  return { atomCount, configCount, format, filePath }
+async function * trajectoryLines (filePath) {
+  const input = fs.createReadStream(filePath)
+  const rl = readline.createInterface({ input, crlfDelay: Infinity })
+  try { yield * rl } finally { rl.close(); input.destroy() }
 }
 
-// ---------------------------------------------------------------------------
-// readTrajectoryFrame
-//   Returns: { atoms: [{index, element, x, y, z}] }
-// ---------------------------------------------------------------------------
-async function readTrajectoryFrame (filePath, frameIndex, atomCount) {
-  const frameSize = atomCount + 2
-  const startLine = frameIndex * frameSize   // 0-indexed line number
+async function analyzeTrajectoryFile (filePath) {
+  const parser = new XYZ.Parser()
+  for await (const line of trajectoryLines(filePath)) parser.push(line)
+  return { ...parser.finish(), filePath }
+}
 
-  const rl = readline.createInterface({ input: fs.createReadStream(filePath), crlfDelay: Infinity })
-
-  const atoms        = []
-  let   absLine      = -1
-  let   frameLineNum = 0
-  let   inFrame      = false
-
-  for await (const line of rl) {
-    absLine++
-    if (absLine === startLine) inFrame = true
-    if (!inFrame) continue
-
-    frameLineNum++
-    if (frameLineNum === 1 || frameLineNum === 2) continue   // skip header lines
-
-    const parts = line.trim().split(/\s+/)
-    if (parts.length >= 4) {
-      atoms.push({
-        index:   atoms.length + 1,
-        element: parts[0],
-        x:       parseFloat(parts[1]),
-        y:       parseFloat(parts[2]),
-        z:       parseFloat(parts[3])
-      })
-    }
-    if (frameLineNum >= frameSize) break
+async function readTrajectoryFrame (filePath, frameIndex) {
+  if (!Number.isInteger(frameIndex) || frameIndex < 0) throw new Error('Invalid frame index.')
+  for await (const frame of XYZ.frames(trajectoryLines(filePath))) {
+    if (frame.index === frameIndex) return { atoms: frame.atoms }
   }
+  throw new Error('Frame index is outside the trajectory.')
+}
 
-  return { atoms }
+// Normalize validated frames for the existing extraction pipeline.
+async function * normalizedTrajectoryLines (filePath) {
+  for await (const frame of XYZ.frames(trajectoryLines(filePath))) {
+    yield String(frame.atoms.length)
+    yield frame.comment
+    for (const atom of frame.atoms) yield `${atom.element} ${atom.x} ${atom.y} ${atom.z}`
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -153,6 +125,12 @@ async function processTrajectory (event, options) {
     generateGaussian
   } = options
 
+  const info = await analyzeTrajectoryFile(filePath)
+  if (info.atomCount !== atomCount) throw new Error('Atom count changed. Load the trajectory again.')
+  if (!Number.isInteger(frequency) || frequency < 1) throw new Error('Sampling frequency must be a positive integer.')
+  if (!selectedAtoms.length || selectedAtoms.some(id => !Number.isInteger(id) || id < 1 || id > atomCount)) {
+    throw new Error('Select valid atom IDs from the loaded trajectory.')
+  }
   const send      = msg => event.sender.send('progress', msg)
   const frameSize = atomCount + 2
   const selSet    = new Set(selectedAtoms.map(Number))
@@ -183,83 +161,94 @@ async function processTrajectory (event, options) {
   const sampledPath  = path.join(dirs.sampled,  'SAMPLED_CONFIGURATIONS.xyz')
   const ftStream     = fs.createWriteStream(fullTrajPath)
   const smStream     = fs.createWriteStream(sampledPath)
+  let writeError = null
+  ftStream.on('error', error => { writeError = error })
+  smStream.on('error', error => { writeError = error })
 
   // Collected sampled frames for individual conf folders
   const sampledFrames = []
 
   send({ step: 'extraction', status: 'started', message: 'Reading trajectory …' })
 
-  const rl = readline.createInterface({ input: fs.createReadStream(filePath), crlfDelay: Infinity })
+  const rl = normalizedTrajectoryLines(filePath)
 
   let lineInFrame      = 0
   let frameIndex       = 0   // 0-indexed
   let atomLineIndex    = 0   // 1-indexed within frame
   let currentFrameAtoms = []
 
-  for await (const line of rl) {
-    lineInFrame++
+  try {
+    for await (const line of rl) {
+      if (writeError) throw writeError
+      lineInFrame++
 
-    if (lineInFrame === 1) {
-      // Start of new frame
-      currentFrameAtoms = []
-      atomLineIndex     = 0
-    } else if (lineInFrame === 2) {
-      // Comment / step header — ignore content
-    } else {
-      // Atom line
-      atomLineIndex++
-      const parts = line.trim().split(/\s+/)
-      if (parts.length >= 4) {
-        const atom = {
-          index:   atomLineIndex,
-          element: parts[0],
-          x:       parseFloat(parts[1]),
-          y:       parseFloat(parts[2]),
-          z:       parseFloat(parts[3])
-        }
-        currentFrameAtoms.push(atom)
+      if (lineInFrame === 1) {
+        // Start of new frame
+        currentFrameAtoms = []
+        atomLineIndex     = 0
+      } else if (lineInFrame === 2) {
+        // Comment / step header — ignore content
+      } else {
+        // Atom line
+        atomLineIndex++
+        const parts = line.trim().split(/\s+/)
+        if (parts.length >= 4) {
+          const atom = {
+            index:   atomLineIndex,
+            element: parts[0],
+            x:       parseFloat(parts[1]),
+            y:       parseFloat(parts[2]),
+            z:       parseFloat(parts[3])
+          }
+          currentFrameAtoms.push(atom)
 
-        if (computeAverage) {
-          avgSum[atomLineIndex - 1].x       += atom.x
-          avgSum[atomLineIndex - 1].y       += atom.y
-          avgSum[atomLineIndex - 1].z       += atom.z
-          avgSum[atomLineIndex - 1].element  = atom.element
+          if (computeAverage) {
+            avgSum[atomLineIndex - 1].x       += atom.x
+            avgSum[atomLineIndex - 1].y       += atom.y
+            avgSum[atomLineIndex - 1].z       += atom.z
+            avgSum[atomLineIndex - 1].element  = atom.element
+          }
         }
       }
-    }
 
-    if (lineInFrame >= frameSize) {
-      // Frame complete
-      if (computeAverage) avgFrameCount++
+      if (lineInFrame >= frameSize) {
+        // Frame complete
+        if (computeAverage) avgFrameCount++
 
-      const selAtoms = currentFrameAtoms.filter(a => selSet.has(a.index))
+        const selAtoms = currentFrameAtoms.filter(a => selSet.has(a.index))
 
-      // Always write to full trajectory
-      ftStream.write(`${selCount}\n`)
-      ftStream.write(`frame ${frameIndex}\n`)
-      for (const a of selAtoms)
-        ftStream.write(`${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`)
-
-      // Write to sampled every `frequency` frames (include frame 0)
-      if (frameIndex % frequency === 0) {
-        smStream.write(`${selCount}\n`)
-        smStream.write(`frame ${frameIndex}\n`)
+        // Always write to full trajectory
+        ftStream.write(`${selCount}\n`)
+        ftStream.write(`frame ${frameIndex}\n`)
         for (const a of selAtoms)
-          smStream.write(`${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`)
+          ftStream.write(`${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`)
 
-        sampledFrames.push({ frameIndex, atoms: selAtoms })
+        // Write to sampled every `frequency` frames (include frame 0)
+        if (frameIndex % frequency === 0) {
+          smStream.write(`${selCount}\n`)
+          smStream.write(`frame ${frameIndex}\n`)
+          for (const a of selAtoms)
+            smStream.write(`${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`)
+
+          sampledFrames.push({ frameIndex, atoms: selAtoms })
+        }
+
+        frameIndex++
+        lineInFrame = 0
+
+        if (frameIndex % 200 === 0)
+          send({ step: 'extraction', status: 'progress', message: `Processed ${frameIndex} frames …`, frameIndex })
       }
-
-      frameIndex++
-      lineInFrame = 0
-
-      if (frameIndex % 200 === 0)
-        send({ step: 'extraction', status: 'progress', message: `Processed ${frameIndex} frames …`, frameIndex })
     }
-  }
 
-  ftStream.end()
-  smStream.end()
+    ftStream.end()
+    smStream.end()
+    await Promise.all([finished(ftStream), finished(smStream)])
+  } catch (error) {
+    ftStream.destroy()
+    smStream.destroy()
+    throw error
+  }
 
   send({
     step: 'extraction', status: 'done',
@@ -418,7 +407,7 @@ function runAseBridge (command, onProgress) {
           if (msg.type === 'result' || msg.type === 'error') { resolve(msg); return }
         } catch {}
       }
-      if (code !== 0) resolve({ ok: false, error: `Python exited with code ${code}` })
+      resolve({ ok: false, error: code !== 0 ? `Python exited with code ${code}` : 'Python returned no result.' })
     })
 
     py.stdin.write(JSON.stringify(command) + '\n')

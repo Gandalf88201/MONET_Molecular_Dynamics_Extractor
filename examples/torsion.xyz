@@ -1,0 +1,12 @@
+4
+Torsion frame 0
+C 1 0 0
+C 0 0 0
+C 0 1 0
+H 0 1 1
+4
+Torsion frame 1
+C 1 0 0
+C 0 0 0
+C 0 1 0
+H 0 1 -1
