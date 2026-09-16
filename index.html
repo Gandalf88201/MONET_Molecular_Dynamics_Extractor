@@ -161,6 +161,7 @@
         <div class="progress-bar"><div class="progress-fill" id="prog-fill"></div></div>
         <div class="progress-label" id="prog-label">Starting …</div>
       </div>
+      <button class="btn btn-sm hidden" id="cancel-processing">Cancel extraction</button>
       <div class="log-box" id="log-box"></div>
       <a class="btn btn-next hidden" id="download-results" download="MONET-results.zip">Download results ZIP</a>
       <button class="btn btn-back hidden" id="retry-processing">← Back to options</button>
@@ -289,7 +290,10 @@
       </details>
       </aside>
       <section class="ase-analysis-work">
-      <button class="btn btn-sm" id="btn-clear-analyses" disabled>Clear all analyses</button>
+      <div class="ase-plot-actions ase-global-actions">
+        <button class="btn btn-sm" id="btn-clear-analyses" disabled>Clear all analyses</button>
+        <button class="btn btn-sm" id="ase-cancel" disabled>Cancel running calculation</button>
+      </div>
       <!-- ASE sub-tabs -->
       <div class="ase-subtabbar">
         <button class="ase-stab active" data-stab="rmsd">RMSD</button>

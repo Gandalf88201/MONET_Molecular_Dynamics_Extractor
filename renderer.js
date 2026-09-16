@@ -438,6 +438,7 @@ $('btn-browse').addEventListener('click', async () => {
   try {
     const fp = await window.monet.selectFile()
     if (!fp) { setStatus('Ready'); return }
+    if (state.filePath && state.filePath !== aseState.convInput) window.monet.releaseFile?.(state.filePath)
     clearTrajectory()
     state.filePath = fp
     $('file-path-text').textContent = fp
@@ -619,7 +620,9 @@ window.monet.onProgress(data => {
   log(data.message, data.status === 'done' ? 'success' : 'info')
   setStatus(data.message)
 
-  if (data.status === 'done' && PROGRESS_STEPS[data.step]) {
+  if (data.step === 'extraction' && Number.isFinite(data.percent)) {
+    setProgress(Math.min(data.percent * PROGRESS_STEPS.extraction / .4, 95))
+  } else if (data.status === 'done' && PROGRESS_STEPS[data.step]) {
     progressAccum += PROGRESS_STEPS[data.step] * 100
     setProgress(Math.min(progressAccum, 95))
   }
@@ -647,15 +650,19 @@ async function runProcessing () {
 
   const processedIds = [...state.selectedAtoms]
   const sourceAtoms = MonetASEModel.atomMap(state.firstFrame, processedIds)
+  $('cancel-processing').classList.remove('hidden')
+  $('cancel-processing').disabled = !window.monet.cancel
   const result = await window.monet.processTrajectory({
     filePath:         state.filePath,
     outputDir:        state.outputDir,
     atomCount:        state.fileInfo.atomCount,
+    configCount:      state.fileInfo.configCount,
     selectedAtoms:    processedIds,
     frequency:        state.frequency,
     computeAverage:   state.opts.computeAverage,
     generateGaussian: state.opts.generateGaussian
   })
+  $('cancel-processing').classList.add('hidden')
 
   if (result.error) {
     log('ERROR: ' + result.error, 'error')
@@ -680,6 +687,11 @@ async function runProcessing () {
 }
 
 $('retry-processing').addEventListener('click', () => goTo(4))
+$('cancel-processing').addEventListener('click', async () => {
+  $('cancel-processing').disabled = true
+  log('Cancelling …')
+  await window.monet.cancel?.('extraction')
+})
 
 $('next-5').addEventListener('click', () => {
   buildResultsView(state.lastResult)
@@ -1096,6 +1108,7 @@ function updateAseControls () {
   updateConvBtn()
   updatePlotControls()
   for (const id of ['cell-apply', 'cell-reset', 'cell-read', 'btn-ase-recheck']) $(id).disabled = aseState.busy
+  $('ase-cancel').disabled = !aseState.busy || !window.monet.cancel
   $('ase-mic').disabled = aseState.busy
 }
 
@@ -1153,6 +1166,11 @@ for (const [kind, chart] of Object.entries(charts)) {
   })
 }
 $('btn-clear-analyses').addEventListener('click', () => clearAllAnalyses())
+$('ase-cancel').addEventListener('click', async () => {
+  $('ase-cancel').disabled = true
+  setStatus('Cancelling the running calculation …')
+  await window.monet.cancel?.('ase')
+})
 
 async function runAse (kind, command) {
   if (aseState.busy) return { ok: false, error: 'Another ASE calculation is running.' }

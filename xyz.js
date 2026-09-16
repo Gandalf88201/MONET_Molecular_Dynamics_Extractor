@@ -2,6 +2,21 @@
 
 // Shared by the browser and Electron. Count complete frames, not comment tags.
 ;(function (root) {
+  const NUMERIC = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eEdD][+-]?\d+)?$/
+
+  // Number() is fast but also accepts 0x/0b/0o literals; those and any other
+  // unusual text take the strict regular-expression path.
+  function coordinate (value, fail) {
+    let number = +value
+    const second = value.charCodeAt(1)
+    if (number !== number || second === 120 || second === 88 || second === 98 || second === 66 || second === 111 || second === 79) {
+      if (!NUMERIC.test(value)) fail('Invalid numeric coordinate.')
+      number = Number(value.replace(/[dD]/, 'e'))
+    }
+    if (!Number.isFinite(number)) fail('Coordinates must be finite numbers.')
+    return number
+  }
+
   class Parser {
     constructor () {
       this.line = 0
@@ -23,6 +38,7 @@
         if (this.atomCount && count !== this.atomCount) fail('The number of atoms must stay constant across frames.')
         this.atomCount = count
         this.atoms = []
+        if (!this.elements) this.rawRow = []
         this.phase = 'comment'
       } else if (this.phase === 'comment') {
         this.comment = line // A blank comment is a valid, required header line.
@@ -49,20 +65,26 @@
         const fields = line.trim().split(/\s+/)
         const { element, position, required } = this.columns
         if (fields.length < required) fail('Incomplete atom row; expected element and x, y, z coordinates.')
-        if (!/^[A-Za-z]{1,3}$/.test(fields[element])) fail('Invalid element symbol.')
-        const coordinates = fields.slice(position, position + 3).map(value => {
-          if (!/^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eEdD][+-]?\d+)?$/.test(value)) fail('Invalid numeric coordinate.')
-          const number = Number(value.replace(/[dD]/, 'e'))
-          if (!Number.isFinite(number)) fail('Coordinates must be finite numbers.')
-          return number
-        })
-        const symbol = fields[element]
-        const normalized = symbol[0].toUpperCase() + symbol.slice(1).toLowerCase()
         const index = this.atoms.length + 1
-        if (this.elements && this.elements[index - 1] !== normalized) fail('Atom order/elements must stay constant across frames.')
-        this.atoms.push({ index, element: normalized, x: coordinates[0], y: coordinates[1], z: coordinates[2] })
+        const symbol = fields[element]
+        if (!this.elements) this.rawRow.push(symbol)
+        let normalized
+        // Fast path: the raw symbol matches the first frame, which was fully validated.
+        if (this.rawElements && this.rawElements[index - 1] === symbol) normalized = this.elements[index - 1]
+        else {
+          if (!/^[A-Za-z]{1,3}$/.test(symbol)) fail('Invalid element symbol.')
+          normalized = symbol[0].toUpperCase() + symbol.slice(1).toLowerCase()
+          if (this.elements && this.elements[index - 1] !== normalized) fail('Atom order/elements must stay constant across frames.')
+        }
+        const x = coordinate(fields[position], fail)
+        const y = coordinate(fields[position + 1], fail)
+        const z = coordinate(fields[position + 2], fail)
+        this.atoms.push({ index, element: normalized, x, y, z })
         if (this.atoms.length === this.atomCount) {
-          if (!this.elements) this.elements = this.atoms.map(atom => atom.element)
+          if (!this.elements) {
+            this.elements = this.atoms.map(atom => atom.element)
+            this.rawElements = this.rawRow || null
+          }
           const frame = { index: this.configCount++, comment: this.comment, atoms: this.atoms }
           this.phase = 'count'
           return frame

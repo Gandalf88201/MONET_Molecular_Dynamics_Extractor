@@ -29,11 +29,18 @@ async function main () {
   const cross = await fetch(origin + '/api/check', { method: 'POST', headers: { 'X-Monet-Token': token, Origin: 'https://example.com' }, body: '{}' })
   assert.equal(cross.status, 403); checks++
   let file = new File([fileText], 'water.XYZ')
-  let downloaded
+  const download = async result => {
+    assert.match(result.downloadURL, /^\/api\/download\/[^?]+\?token=/)
+    const response = await fetch(origin + result.downloadURL)
+    assert.equal(response.status, 200)
+    return Buffer.from(await response.arrayBuffer())
+  }
+  const downloaded = { text: async () => (await download(lastResult)).toString('utf8') }
+  let lastResult
   const context = {
     window: {}, MonetXYZ: require('../xyz.js'), File, Blob, TextEncoder, TextDecoder, AbortController, atob, setTimeout, clearTimeout,
     fetch: (route, options) => fetch(origin + route, options),
-    URL: { createObjectURL (blob) { downloaded = blob; return 'blob:test' }, revokeObjectURL () {} },
+    URL: { createObjectURL () { throw new Error('Launcher mode must not build results in page memory.') }, revokeObjectURL () {} },
     document: {
       querySelector: () => ({ content: token }), body: { appendChild () {} },
       createElement () {
@@ -44,6 +51,8 @@ async function main () {
   }
   vm.runInNewContext(fs.readFileSync(path.join(root, 'browser-bridge.js'), 'utf8'), context)
   const api = context.window.monet
+  const rawRun = api.aseRun
+  api.aseRun = async command => (lastResult = await rawRun(command))
   const status = await api.aseCheck()
   assert.equal(status.ok, true, JSON.stringify(status)); checks++
   const name = await api.selectFile()
@@ -68,8 +77,32 @@ async function main () {
     result = await api.aseRun({ filename: name, frame_step: 1, ...command })
     assert.equal(result.ok, false, JSON.stringify(command)); checks++
   }
-  const processed = await api.processTrajectory({ filePath: name, atomCount: 3, selectedAtoms: [1, 3], frequency: 1, computeAverage: false, generateGaussian: false })
-  assert.equal(processed.success, true); checks++
+  // Launcher mode: scan, frame and extraction run in Python on the uploaded copy.
+  assert.deepEqual(JSON.parse(JSON.stringify(await api.analyzeFile(name))), { atomCount: 3, configCount: 2, format: 'XYZ', filePath: name }); checks++
+  assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame(name, 1)).atoms[0])), { index: 1, element: 'O', x: .1, y: 0, z: 0 }); checks++
+  assert.match((await api.readFrame(name, 5)).error, /outside/); checks++
+  const events = []
+  api.onProgress(event => events.push(event))
+  const processed = await api.processTrajectory({ filePath: name, atomCount: 3, selectedAtoms: [1, 3], frequency: 1, computeAverage: true, generateGaussian: true })
+  assert.equal(processed.success, true, JSON.stringify(processed)); assert.equal(processed.sampledFrames, 2); checks++
+  assert.ok(events.some(event => event.status === 'done')); checks++
+  const zipped = await download({ downloadURL: processed.downloadURL })
+  const temp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'monet-int-'))
+  fs.writeFileSync(path.join(temp, 'results.zip'), zipped)
+  require('node:child_process').execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import zipfile, sys
+with zipfile.ZipFile(sys.argv[1]) as z:
+ assert z.testzip() is None
+ names = set(z.namelist())
+ assert len(names) == 10, names
+ text = z.read('3-AVERAGE_STRUCTURE/GEO-AVERAGE.xyz').decode().splitlines()
+ assert int(text[0]) == 3 and abs(float(text[2].split()[1]) - 0.05) < 1e-9
+ assert '%chk=s0.chk' in z.read('2-SAMPLED_CONFIGURATIONS/conf1/sing.dat').decode()
+ full = z.read('1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz').decode()
+ assert full.splitlines()[:3] == ['2', 'frame 0', 'O  0.0000000  0.0000000  0.0000000'], full
+`, path.join(temp, 'results.zip')]); checks++
+  fs.rmSync(temp, { recursive: true, force: true })
+  assert.equal((await fetch(origin + processed.downloadURL.replace(/token=.*/, 'token=wrong'))).status, 403); checks++
   result = await api.aseRun({ action: 'bonds', filename: 'MONET-results/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz', pairs: [[0, 1]], frame_step: 1 })
   assert.equal(result.ok, true, JSON.stringify(result)); checks++
   // A separately selected conversion file must not replace a loaded input with the same name.
@@ -177,8 +210,30 @@ async function main () {
   result = await api.aseRun({ action: 'pdd', filename: periodicName, indices: [0,1], cell, mic: true, nbins: 10, rmax: 2 })
   assert.equal(result.counts.reduce((sum, value) => sum+value, 0), 1); checks++
   // Negative backend path injection: request paths cannot be used to read local files.
-  const forbidden = await fetch(origin + '/api/run', { method: 'POST', headers: { 'X-Monet-Token': token, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'rmsd', filename: '/etc/passwd' }) })
+  const post = (route, body) => fetch(origin + route, { method: 'POST', headers: { 'X-Monet-Token': token, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const forbidden = await post('/api/run', { action: 'rmsd', filename: '/etc/passwd' })
   assert.equal(forbidden.status, 400); checks++
+  assert.equal((await post('/api/run', { action: 'rmsd', file_id: '../../etc/passwd' })).status, 400); checks++
+  // Irregular layouts (blank lines between frames) use the tolerant indexer; broken files report the JS messages.
+  file = new File(['\n2\na\nH 0 0 0\nH 0 0 .74\n\n\n2\nb\nH 0 0 0\nH 0 0 .8\n\n'], 'gaps.xyz'); const gapsName = await api.selectFile()
+  assert.equal((await api.analyzeFile(gapsName)).configCount, 2); checks++
+  result = await api.aseRun({ action: 'bonds', filename: gapsName, pairs: [[0, 1]] })
+  assert.deepEqual(result.series['0-1'], [.74, .8]); checks++
+  for (const [text, pattern] of [['2\n\nH 0 0 0', /Incomplete/], ['2\n\nH 0 0 0\nH 0 0 1\n3\n\n', /constant/], ['1\n\nH 0x10 0 0\n', /numeric/], ['2\n\nH 0 0 0\nH 0 0 1\n2\n\nH 0 0 0\nC 0 0 1\n', /elements/]]) {
+    file = new File([text], 'broken.xyz'); const brokenName = await api.selectFile()
+    assert.match((await api.analyzeFile(brokenName)).error + (await api.processTrajectory({ filePath: brokenName, atomCount: 2, selectedAtoms: [1], frequency: 1 })).error, pattern, text); checks++
+  }
+  // Cancelling a running job stops its Python process.
+  const bigFrames = Array.from({ length: 4000 }, (_, i) => `3\nframe ${i}\n` + 'C 0 0 0\nH 0 0 1.1\nH 0 1 0\n'.repeat(1)).join('')
+  file = new File([bigFrames], 'long.xyz'); const longName = await api.selectFile()
+  const pending = api.aseRun({ action: 'angles', filename: longName, triplets: Array.from({ length: 200 }, () => [1, 0, 2]) })
+  await new Promise(resolve => setTimeout(resolve, 400))
+  await api.cancel('ase')
+  result = await pending
+  assert.equal(result.ok, false); assert.equal(result.cancelled, true, JSON.stringify(result)); checks++
+  await api.releaseFile(longName)
+  result = await api.aseRun({ action: 'rmsd', filename: longName })
+  assert.equal(result.ok, false); checks++
   console.log(`PASS: ${checks} live integration checks with ASE ${status.ase_version}.`)
 }
 main().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => child.kill())

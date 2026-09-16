@@ -11,7 +11,10 @@ Protocol
            followed by exactly one {"type":"result",...}
            or           {"type":"error","message":"..."}
 """
-import sys, json, traceback, math
+import sys, os, json, traceback, math
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import monet_io
 
 try:
     import numpy as np
@@ -61,16 +64,46 @@ def _apply_geometry(atoms, cmd):
     return atoms
 
 
-def _load_images(filename, frame_step=1, max_frames=None, cmd=None):
-    """Generator: yield (frame_index, Atoms) respecting frame_step."""
+_TRAJECTORIES = {}
+
+
+def _trajectory(filename):
+    """Indexed XYZ/extXYZ access, or None for other formats (read through ASE)."""
+    if filename not in _TRAJECTORIES:
+        _TRAJECTORIES[filename] = (monet_io.XYZTrajectory(filename, progress=lambda m, p: prog(m, p * .1))
+                                   if monet_io.is_xyz(filename) else None)
+    return _TRAJECTORIES[filename]
+
+
+def _first_atoms(filename, cmd):
+    traj = _trajectory(filename)
+    atoms = next(traj.atoms([0]))[1] if traj else ase.io.read(filename, index=0)
+    return _apply_geometry(atoms, cmd)
+
+
+def _load_images(filename, frame_step=1, max_frames=None, cmd=None, label='Frame'):
+    """Generator: yield (frame_index, Atoms) every frame_step frames, reporting progress."""
     if not isinstance(frame_step, int) or frame_step < 1:
         raise ValueError('Frame step must be a positive integer.')
+    traj = _trajectory(filename)
+    if traj is not None:
+        frames = traj.frame_indices(frame_step)
+        if max_frames:
+            frames = frames[:max_frames]
+        total = max(len(frames), 1)
+        for k, (i, atoms) in enumerate(traj.atoms(frames)):
+            yield i, _apply_geometry(atoms, cmd or {})
+            if k % 250 == 249:
+                prog(f'{label} {i:,} ({k + 1:,}/{total:,}) …', 10 + 88 * (k + 1) / total)
+        return
     count = 0
     for i, atoms in enumerate(ase.io.iread(filename)):
         if i % frame_step != 0:
             continue
         yield i, _apply_geometry(atoms, cmd or {})
         count += 1
+        if count % 250 == 0:
+            prog(f'{label} {i:,} …')
         if max_frames and count >= max_frames:
             break
 
@@ -88,7 +121,7 @@ def action_read_info(cmd):
     filename = cmd["filename"]
     prog("Reading structure …", 5)
     try:
-        atoms = _apply_geometry(ase.io.read(filename, index=0), cmd)
+        atoms = _first_atoms(filename, cmd)
         pos   = atoms.get_positions().tolist()
         syms  = list(atoms.get_chemical_symbols())
         prog("Done", 100)
@@ -104,6 +137,50 @@ def action_read_info(cmd):
         )
     except Exception:
         err(traceback.format_exc())
+
+
+def _require_xyz(filename):
+    traj = _trajectory(filename)
+    if traj is None:
+        raise ValueError('MONET needs an XYZ or extended XYZ trajectory here. Import other formats first.')
+    return traj
+
+
+def action_scan(cmd):
+    """Index an XYZ trajectory (cached) and report its size; needs only numpy."""
+    traj = _require_xyz(cmd['filename'])
+    prog('Trajectory indexed', 100)
+    ok(**traj.info())
+
+
+def action_frame(cmd):
+    """Atoms of one frame for the viewer: [{index, element, x, y, z}] with 1-based MONET IDs."""
+    traj = _require_xyz(cmd['filename'])
+    index = cmd.get('index', 0)
+    if type(index) is not int or not 0 <= index < traj.nframes:
+        raise ValueError('Frame index is outside the trajectory.')
+    positions = traj.positions([index])[0]
+    symbols = traj.symbols_list()
+    ok(atoms=[{'index': i + 1, 'element': symbols[i], 'x': float(x), 'y': float(y), 'z': float(z)}
+              for i, (x, y, z) in enumerate(positions.tolist())])
+
+
+def action_extract(cmd):
+    """Core MONET extraction (every frame for selected atoms, sampled configurations, average)."""
+    traj = _require_xyz(cmd['filename'])
+    out_dir = cmd['output_dir']
+    atom_count = cmd.get('atom_count')
+    if atom_count is not None and atom_count != traj.natoms:
+        raise ValueError('Atom count changed. Load the trajectory again.')
+    prog('Reading trajectory …', 0)
+    summary = monet_io.extract(
+        traj, out_dir, cmd.get('selected') or [], cmd.get('frequency'),
+        compute_average=bool(cmd.get('compute_average')), generate_gaussian=bool(cmd.get('generate_gaussian')),
+        options=cmd.get('history'), progress=lambda message, pct: prog(message, pct * .9))
+    if cmd.get('zip'):
+        monet_io.zip_tree(out_dir, cmd['zip'], progress=lambda message, pct: prog(message, 90 + pct * .1))
+    prog(f"Extracted {summary['totalFrames']:,} frames · {summary['sampledFrames']:,} sampled configurations", 100)
+    ok(**summary)
 
 
 def action_rmsd(cmd):
@@ -168,8 +245,6 @@ def action_pdd(cmd):
                     d = float(atoms.get_distance(i, j, mic=cmd.get('mic', False)))
                     all_dists.append(d)
             n_frames += 1
-            if n_frames % 50 == 0:
-                prog(f"Frame {fi} …", min(80, n_frames * 0.5))
 
         if not all_dists:
             return err("No distances found (check element filter).")
@@ -195,16 +270,12 @@ def action_bonds(cmd):
     try:
         series  = {f"{p[0]}-{p[1]}": [] for p in pairs}
         raw_idx = []
-        n       = 0
         for fi, atoms in _load_images(filename, frame_step, cmd=cmd):
             _validate_groups(pairs, 2, len(atoms))
             for p in pairs:
                 key = f"{p[0]}-{p[1]}"
                 series[key].append(float(atoms.get_distance(p[0], p[1], mic=cmd.get('mic', False))))
             raw_idx.append(fi)
-            n += 1
-            if n % 100 == 0:
-                prog(f"Frame {fi} …", min(90, n * 0.3))
 
         prog("Done", 100)
         ok(series=series, frame_indices=raw_idx)
@@ -223,16 +294,12 @@ def action_angles(cmd):
     try:
         series  = {f"{t[0]}-{t[1]}-{t[2]}": [] for t in triplets}
         raw_idx = []
-        n       = 0
         for fi, atoms in _load_images(filename, frame_step, cmd=cmd):
             _validate_groups(triplets, 3, len(atoms))
             for t in triplets:
                 key = f"{t[0]}-{t[1]}-{t[2]}"
                 series[key].append(_bond_angle(atoms, t, cmd))
             raw_idx.append(fi)
-            n += 1
-            if n % 100 == 0:
-                prog(f"Frame {fi} …", min(90, n * 0.3))
 
         prog("Done", 100)
         ok(series=series, frame_indices=raw_idx)
@@ -251,16 +318,12 @@ def action_dihedrals(cmd):
     try:
         series  = {f"{q[0]}-{q[1]}-{q[2]}-{q[3]}": [] for q in quads}
         raw_idx = []
-        n       = 0
         for fi, atoms in _load_images(filename, frame_step, cmd=cmd):
             _validate_groups(quads, 4, len(atoms))
             for q in quads:
                 key = f"{q[0]}-{q[1]}-{q[2]}-{q[3]}"
                 series[key].append(_angle_value(float(atoms.get_dihedral(*q, mic=cmd.get('mic', False))), cmd))
             raw_idx.append(fi)
-            n += 1
-            if n % 100 == 0:
-                prog(f"Frame {fi} …", min(90, n * 0.3))
 
         prog("Done", 100)
         ok(series=series, frame_indices=raw_idx)
@@ -314,8 +377,6 @@ def action_average(cmd):
                 ref = atoms.copy()
             all_pos.append(atoms.get_positions())
             n += 1
-            if n % 200 == 0:
-                prog(f"Frame {fi} …", min(80, n * 0.05))
 
         avg = ref.copy()
         avg.set_positions(np.mean(all_pos, axis=0))
@@ -365,7 +426,7 @@ def action_molecule(cmd):
     """Connected first-frame component using ASE covalent radii and image offsets."""
     if not _require_ase(): return
     from ase.neighborlist import neighbor_list, natural_cutoffs
-    atoms = _apply_geometry(ase.io.read(cmd['filename'], index=0), cmd)
+    atoms = _first_atoms(cmd['filename'], cmd)
     seed = cmd.get('seed')
     _validate_groups([[seed]], 1, len(atoms))
     if not cmd.get('mic', False):
@@ -439,6 +500,9 @@ def validate_command(cmd):
 
 ACTIONS = {
     "check":     action_check,
+    "scan":      action_scan,
+    "frame":     action_frame,
+    "extract":   action_extract,
     "read_info": action_read_info,
     "molecule":  action_molecule,
     "rmsd":      action_rmsd,

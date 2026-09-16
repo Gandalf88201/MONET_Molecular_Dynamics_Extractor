@@ -23,7 +23,7 @@ for (const [name, text, format] of [
 ]) {
   assert.deepEqual(parse(text), { atomCount: 3, configCount: 2, format }, name); checks++
 }
-for (const text of ['', '0\n\n', '2\nmissing atom\nH 0 0 0', '1\n\nH NaN 0 0', '1\n\nH 1x 0 0', source + '2\n\nH 0 0 0\nH 1 0 0', source.replace('H -0.657', 'C -0.657')]) {
+for (const text of ['', '0\n\n', '1\n\nH 0x10 0 0', '1\n\nH 0b1 0 0', 'Infinity', '1\n\nH Infinity 0 0', '2\nmissing atom\nH 0 0 0', '1\n\nH NaN 0 0', '1\n\nH 1x 0 0', source + '2\n\nH 0 0 0\nH 1 0 0', source.replace('H -0.657', 'C -0.657')]) {
   assert.throws(() => parse(text)); checks++
 }
 const extended = new XYZ.Parser()

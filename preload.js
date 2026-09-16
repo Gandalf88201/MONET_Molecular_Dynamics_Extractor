@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('monet', {
   readFrame:         (fp, idx, atoms) => ipcRenderer.invoke('read-frame', fp, idx, atoms),
   processTrajectory: opts             => ipcRenderer.invoke('process-trajectory', opts),
   onProgress:        cb               => ipcRenderer.on('progress', (_, d) => cb(d)),
+  cancel:            scope            => ipcRenderer.invoke('cancel', scope),
 
   // ── ASE Python bridge ────────────────────────────────────────────────────
   aseCheck:          ()               => ipcRenderer.invoke('ase-check'),

@@ -821,3 +821,4 @@ code { font-family: var(--font) }
 .theme-toggle:hover { border-color: var(--blue) }
 .theme-toggle:focus-visible, .btn:focus-visible, .vtab:focus-visible, .ase-stab:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px }
 body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-color .2s, color .2s }
+.ase-global-actions { padding: 6px 10px 0; flex-shrink: 0; }
