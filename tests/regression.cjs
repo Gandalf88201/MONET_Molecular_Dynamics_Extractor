@@ -31,6 +31,41 @@ let frame
 for (const line of ['1', 'Properties=charge:R:1:species:S:1:pos:R:3', '0 cl 1D-2 .5 -2e0']) frame = extended.push(line) || frame
 assert.deepEqual(frame.atoms[0], { index: 1, element: 'Cl', x: .01, y: .5, z: -2 }); checks++
 
+// Circular statistics used for the legends of angle plots.
+const model = require('../ase-model.js')
+const stat = (values, range) => model.seriesStats(values, range)
+assert.ok(Math.abs(stat([1, 2, 3]).mean - 2) < 1e-12 && Math.abs(stat([1, 2, 3]).std - 1) < 1e-12); checks++
+assert.ok(Math.abs(stat([350, 10], '360').mean) < 1e-9 && stat([350, 10], '360').std < 11); checks++
+assert.ok(Math.abs(stat([175, 5], 'fold180').mean) < 1e-9); checks++
+assert.ok(Math.abs(stat([85, -85], 'signed90').mean + 90) < 1e-9); checks++
+assert.ok(Math.abs(stat([170, 10], 'natural').mean - 90) < 1e-12); checks++
+assert.equal(stat([NaN]), null); checks++
+const hist = model.histogram([0.5, 1.5, 1.6], 2, 0, 2)
+assert.deepEqual(hist.density, [1 / 3, 2 / 3]); checks++
+
+// Grid bond search equals the brute-force result and scales to large systems.
+{
+  const { findBonds } = require('../viewer.js')
+  let seed = 7
+  const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+  const elements = ['C', 'H', 'O', 'N']
+  const atoms = Array.from({ length: 400 }, (_, i) => ({ index: i + 1, element: elements[i % 4], x: random() * 12, y: random() * 12, z: random() * 12 }))
+  const cov = { C: 0.76, H: 0.31, O: 0.66, N: 0.71 }
+  const brute = []
+  for (let a = 0; a < atoms.length; a++) for (let b = a + 1; b < atoms.length; b++) {
+    const d = Math.hypot(atoms[a].x - atoms[b].x, atoms[a].y - atoms[b].y, atoms[a].z - atoms[b].z)
+    if (d < (cov[atoms[a].element] + cov[atoms[b].element]) * 1.3 && d > 0.1) brute.push(`${a}-${b}`)
+  }
+  const grid = findBonds(atoms)
+  const pairs = []
+  for (let k = 0; k < grid.length; k += 2) pairs.push(`${grid[k]}-${grid[k + 1]}`)
+  assert.deepEqual(pairs.sort(), brute.sort()); checks++
+  const big = Array.from({ length: 15000 }, (_, i) => ({ index: i + 1, element: elements[i % 4], x: (i % 25) * 1.4, y: (Math.floor(i / 25) % 25) * 1.4, z: Math.floor(i / 625) * 1.4 }))
+  const started = Date.now()
+  const bigBonds = findBonds(big)
+  assert.ok(Date.now() - started < 3000, `grid bond search took ${Date.now() - started} ms`); assert.ok(bigBonds.length > 0); checks++
+}
+
 async function run () {
   // Exercise the real browser adapter with a DOM file-input stub and native File/Blob.
   let chosenFile = new File([source], 'water.XYZ'), chosenEvent = 'change'

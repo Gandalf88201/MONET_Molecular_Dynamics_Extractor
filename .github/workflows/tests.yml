@@ -32,5 +32,6 @@ jobs:
           node tests/qm-parity.cjs
           node tests/formats.cjs
           node tests/analysis.cjs
+          node tests/mdanalysis.cjs
           node tests/ase-integration.cjs
           node tests/ase-ui.cjs

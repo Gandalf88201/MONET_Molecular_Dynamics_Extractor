@@ -14,6 +14,7 @@ import re
 import numpy as np
 
 import monet_io
+import monet_mda
 
 BOHR = 0.529177210903  # Å
 
@@ -34,8 +35,29 @@ FORMATS = {
     'traj': 'ASE trajectory',
     'cif': 'CIF',
     'gaussian-out': 'Gaussian output',
+    **{key: value[0] for key, value in monet_mda.FORMATS.items()},
 }
-NEEDS_REFERENCE = {'qe-cp-pos', 'cp2k-dcd', 'cpmd-trajectory'}
+NEEDS_REFERENCE = {'qe-cp-pos', 'cp2k-dcd', 'cpmd-trajectory'} | {k for k, v in monet_mda.FORMATS.items() if v[2]}
+EXTRA_PROPERTIES = (('resname', 'S'), ('resid', 'I'), ('atomname', 'S'))
+
+
+def ase_readable():
+    """All formats ASE can read, as [(name, description)]."""
+    from ase.io.formats import ioformats
+    return sorted((name, fmt.description) for name, fmt in ioformats.items() if fmt.can_read)
+
+
+def valid_format(fmt):
+    if fmt in FORMATS:
+        return True
+    if isinstance(fmt, str) and fmt.startswith('ase:'):
+        return fmt[4:] in dict(ase_readable())
+    return False
+
+
+def _is_cp2k_dcd(path):
+    with open(path, 'rb') as fh:
+        return b'CP2K' in fh.read(300)
 ASE_FORMATS = {'vasp-xdatcar', 'vasp-out', 'vasp-xml', 'vasp', 'espresso-out', 'qbox',
                'cp2k-dcd', 'lammps-dump-text', 'traj', 'cif', 'gaussian-out'}
 # ASE 3.29 returns Qbox positions and cells without unit conversion (Qbox writes bohr).
@@ -54,7 +76,12 @@ def detect(path, name=None):
     if base.startswith(('poscar', 'contcar')) or base.endswith(('.vasp', '.poscar')):
         return 'vasp'
     if base.endswith('.dcd'):
-        return 'cp2k-dcd'
+        return 'cp2k-dcd' if _is_cp2k_dcd(path) else 'mda-dcd'
+    extension = os.path.splitext(base)[1]
+    if extension in monet_mda.EXTENSIONS:
+        return monet_mda.EXTENSIONS[extension]
+    if extension in ('.tpr', '.psf', '.prmtop', '.parm7', '.top', '.itp'):
+        raise ValueError('This is a topology file: load the trajectory (XTC, TRR, DCD …) and add the topology as the reference structure.')
     if base.endswith('.pos'):
         return 'qe-cp-pos'
     if base.endswith('.traj'):
@@ -91,7 +118,12 @@ def _reference_symbols(path):
         raise ValueError('This format has no element names: add a reference structure (e.g. the first frame as XYZ) with the same atom order.')
     if monet_io.is_xyz(path):
         return monet_io.XYZTrajectory(path, use_cache=False).symbols_list()
-    return read(path, index=0).get_chemical_symbols()
+    try:
+        return read(path, index=0).get_chemical_symbols()
+    except Exception:
+        if monet_mda.available():
+            return monet_mda._elements(monet_mda._require().Universe(path))
+        raise
 
 
 def _chunks(fh, size=32 << 20):
@@ -169,10 +201,13 @@ def _read_blocks(path, rows_per_block):
 
 
 def read_qe_cp(path, symbols, cell_file=None, cell_vectors='rows'):
-    """cp.x .pos (bohr) with an optional .cel file (bohr)."""
+    """cp.x .pos (bohr) with an optional .cel file (bohr) or a structure file with one cell (Å)."""
+    constant = None
+    if cell_file and cell_file_kind(cell_file) == 'structure':
+        constant, cell_file = read_constant_cell(cell_file), None
     cells = _read_blocks(cell_file, 3) if cell_file else None
     for header, positions in _read_blocks(path, len(symbols)):
-        lattice = None
+        lattice = constant
         if cells is not None:
             try:
                 cell_header, lattice = next(cells)
@@ -205,6 +240,76 @@ def read_cp2k_cell(path):
     return cells, order
 
 
+_CIF_CELL = re.compile(r'^\s*_cell_(length_a|length_b|length_c|angle_alpha|angle_beta|angle_gamma)\s+([-+0-9.eE]+)', re.M)
+
+
+def cell_file_kind(path):
+    """'cp2k' for per-step CP2K .cell tables, 'cel' for cp.x blocks, otherwise 'structure' (CIF, POSCAR, PDB …)."""
+    base = os.path.basename(path).lower()
+    if base.endswith('.cell'):
+        return 'cp2k'
+    if base.endswith('.cel'):
+        return 'cel'
+    with open(path, errors='replace') as fh:
+        for line in fh:
+            fields = line.split()
+            if not fields or fields[0].startswith('#'):
+                continue
+            try:
+                [float(v) for v in fields]
+            except ValueError:
+                return 'structure'
+            if len(fields) >= 11:
+                return 'cp2k'
+            # cp.x blocks start with "step time"; a lone number is an XYZ atom count.
+            return 'cel' if len(fields) == 2 else 'structure'
+    raise ValueError(f'The cell file {os.path.basename(path)} is empty.')
+
+
+def read_constant_cell(path):
+    """One 3x3 lattice (Å) from a CIF or any ASE-readable structure; a along x, b in the xy plane."""
+    from ase.geometry import cellpar_to_cell
+    name = os.path.basename(path)
+    with open(path, errors='replace') as fh:
+        text = fh.read()
+    if '_cell_length_a' in text:
+        # Read the metric directly: disordered or symmetry-expanded CIF atoms are irrelevant here.
+        values = dict((key, float(value)) for key, value in _CIF_CELL.findall(text))
+        keys = ('length_a', 'length_b', 'length_c', 'angle_alpha', 'angle_beta', 'angle_gamma')
+        missing = [f'_cell_{key}' for key in keys if key not in values]
+        if missing:
+            raise ValueError(f'{name}: missing {", ".join(missing)}.')
+        cellpar = [values[key] for key in keys]
+    else:
+        import ase.io
+        try:
+            atoms = ase.io.read(path, index=0)
+        except Exception as error:
+            raise ValueError(f'Could not read a cell from {name}: {error}') from None
+        if atoms.cell.rank != 3:
+            raise ValueError(f'{name} contains no complete cell (three lattice vectors).')
+        return atoms.cell.array
+    if min(cellpar[:3]) <= 0 or not all(0 < angle < 180 for angle in cellpar[3:]):
+        raise ValueError(f'{name}: invalid cell parameters {cellpar}.')
+    try:
+        lattice = cellpar_to_cell(cellpar)
+    except Exception as error:
+        raise ValueError(f'{name}: the cell angles do not describe a valid cell ({error}).') from None
+    if not np.isfinite(lattice).all() or abs(np.linalg.det(lattice)) < 1e-6:
+        raise ValueError(f'{name}: the cell angles do not describe a valid cell.')
+    return lattice
+
+
+def read_cell_source(path):
+    """(per-step cells, step order) for CP2K .cell tables, or (None, constant 3x3 lattice)."""
+    kind = cell_file_kind(path)
+    if kind == 'cp2k':
+        return read_cp2k_cell(path)
+    if kind == 'cel':
+        raise ValueError('cp.x .cel files can only be combined with cp.x .pos trajectories.')
+    return None, read_constant_cell(path)
+
+
 def read_orca(path):
     """Every 'CARTESIAN COORDINATES (ANGSTROEM)' block of an ORCA output (optimisations, scans, MD)."""
     with open(path, errors='replace') as fh:
@@ -226,9 +331,12 @@ def read_orca(path):
 
 def _xyz_frames(path, cell_file):
     traj = monet_io.XYZTrajectory(path)
-    cells, order = read_cp2k_cell(cell_file) if cell_file else (None, None)
+    cells, order = read_cell_source(cell_file) if cell_file else (None, None)
+    constant = order if cells is None and order is not None else None
     for frame, positions, comment in traj.iter_frames(range(traj.nframes)):
         lattice, _ = traj.cell(comment)
+        if constant is not None:
+            lattice = constant
         step = None
         match = re.search(rb'\bi\s*=\s*(\d+)', comment)
         if match:
@@ -244,9 +352,21 @@ def _xyz_frames(path, cell_file):
 
 
 def frames(path, fmt, name=None, reference=None, cell_file=None, cell_vectors='rows'):
-    """Yield (symbols, positions Å, lattice or None, pbc, step) for each frame."""
+    """Yield (symbols, positions Å, lattice or None, pbc, step[, extra]) for each frame."""
     if fmt == 'auto':
         fmt = detect(path, name)
+    if fmt in monet_mda.FORMATS:
+        yield from monet_mda.frames(path, fmt, reference)
+        return
+    if fmt.startswith('ase:'):
+        import ase.io
+        if not valid_format(fmt):
+            raise ValueError(f'ASE cannot read the format {fmt[4:]}.')
+        for step, atoms in enumerate(ase.io.iread(path, index=':', format=fmt[4:])):
+            periodic = atoms.cell.rank == 3
+            yield (atoms.get_chemical_symbols(), atoms.get_positions(), atoms.cell.array if periodic else None,
+                   atoms.pbc.tolist() if periodic and atoms.pbc.any() else None, step)
+        return
     if fmt == 'xyz':
         symbols = monet_io.XYZTrajectory(path).symbols_list()
         for positions, lattice, step in _xyz_frames(path, cell_file):
@@ -255,8 +375,13 @@ def frames(path, fmt, name=None, reference=None, cell_file=None, cell_vectors='r
     if fmt in ('cpmd-trajectory', 'qe-cp-pos'):
         symbols = _reference_symbols(reference)
         source = read_cpmd_trajectory(path, symbols) if fmt == 'cpmd-trajectory' else read_qe_cp(path, symbols, cell_file, cell_vectors)
-        cells = read_cp2k_cell(cell_file) if cell_file and fmt == 'cpmd-trajectory' else None
+        cells = read_cell_source(cell_file) if cell_file and fmt == 'cpmd-trajectory' else None
+        constant = None
+        if cells is not None and cells[0] is None:
+            constant, cells = cells[1], None
         for k, (positions, lattice, step) in enumerate(source):
+            if constant is not None:
+                lattice = constant
             if cells is not None:
                 lattice = cells[0].get(step, cells[0][cells[1][min(k, len(cells[1]) - 1)]])
             yield symbols, positions, lattice, None, step
@@ -275,8 +400,6 @@ def frames(path, fmt, name=None, reference=None, cell_file=None, cell_vectors='r
     kwargs = {}
     if fmt == 'cp2k-dcd':
         kwargs['ref_atoms'] = ase.io.read(reference, index=0) if reference else None
-        if kwargs['ref_atoms'] is None:
-            _reference_symbols(None)
     scale = BOHR if fmt in BOHR_FORMATS else 1.0
     for step, atoms in enumerate(ase.io.iread(path, index=':', format=fmt, **kwargs)):
         periodic = atoms.cell.rank == 3
@@ -297,18 +420,26 @@ def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_f
     symbols0 = None
     size = max(os.path.getsize(path), 1)
     with open(output, 'w', buffering=8 << 20) as fh:
-        for symbols, positions, lattice, pbc, step in frames(path, detected, name, reference, cell_file, cell_vectors):
+        for symbols, positions, lattice, pbc, step, *rest in frames(path, detected, name, reference, cell_file, cell_vectors):
             positions = np.asarray(positions, dtype=float)
             if natoms is None:
                 natoms, symbols0 = len(symbols), list(symbols)
-                if any(symbol == 'X' for symbol in symbols0):
-                    raise ValueError('Element names are missing: add a reference structure.')
-                row = ''.join(f'{symbol} %.8f %.8f %.8f\n' for symbol in symbols0)
+                unknown = all(symbol == 'X' for symbol in symbols0)
+                if any(symbol == 'X' for symbol in symbols0) and not unknown:
+                    raise ValueError('Some element names are missing: add a reference structure.')
+                extra = rest[0] if rest else None
+                properties = 'species:S:1:pos:R:3'
+                columns = [[''] * natoms]
+                if extra:
+                    # Topology labels travel as extra extended-XYZ columns (used by MDAnalysis selections).
+                    properties += ''.join(f':{key}:{kind}:1' for key, kind in EXTRA_PROPERTIES)
+                    columns = [[' ' + ' '.join(str(extra[key][i]).replace('%', '%%') for key, _ in EXTRA_PROPERTIES) for i in range(natoms)]]
+                row = ''.join(f'{symbol} %.8f %.8f %.8f{columns[0][i]}\n' for i, symbol in enumerate(symbols0))
             elif list(symbols) != symbols0:
                 raise ValueError(f'Frame {count + 1}: atom count or order changed; MONET needs a constant atom list.')
             if not np.isfinite(positions).all():
                 raise ValueError(f'Frame {count + 1}: coordinates must be finite numbers.')
-            comment = f'Properties=species:S:1:pos:R:3 frame={count}'
+            comment = f'Properties={properties} frame={count}'
             if step is not None:
                 comment += f' source_step={step}'
             if lattice is not None:
@@ -322,4 +453,9 @@ def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_f
                 progress(f'Imported {count:,} frames …', None)
     if not count:
         raise ValueError('No frames were found in this file.')
-    return {'frames': count, 'natoms': natoms, 'source_format': detected, 'source_label': FORMATS.get(detected, detected)}
+    summary = {'frames': count, 'natoms': natoms, 'source_format': detected, 'source_label': FORMATS.get(detected, detected)}
+    if unknown:
+        summary['source_label'] += ' · no topology, atoms shown as X'
+        summary['warning'] = ('No topology was given: every atom is imported as element X (no names, masses or bonds). '
+                              'Distances, angles, RMSD and MSD work; add the topology for element-based analyses.')
+    return summary

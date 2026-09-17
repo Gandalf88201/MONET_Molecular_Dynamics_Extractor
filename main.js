@@ -332,7 +332,7 @@ ipcMain.handle('ase-import', async (event, name, options = {}) => {
       reference: options.reference || undefined, cell_file: options.cellFile || undefined, cell_vectors: options.cellVectors || 'rows'
     }, msg => event.sender.send('ase-progress', msg))
     if (!result.ok) return { error: result.message || result.error }
-    return { filePath: output, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label }
+    return { filePath: output, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label, warning: result.warning }
   } catch (e) {
     return { error: e.message }
   }
