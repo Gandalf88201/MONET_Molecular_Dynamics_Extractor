@@ -1,0 +1,13 @@
+# Conda environment for MONET (alternative to start_monet.command / start_monet.bat):
+#   conda env create -f environment.yml
+#   conda activate monet
+#   python start_monet.py
+name: monet
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pip
+  - pip:
+      # Same pinned versions as the launchers and the test workflow.
+      - -r requirements.txt

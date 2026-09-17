@@ -2,9 +2,28 @@
 
 MONET extracts configurations every N frames from molecular-dynamics trajectories, writes quantum-chemistry inputs for each sampled configuration and analyses the trajectory with ASE, MDAnalysis and MONET's own methods. It runs in a browser (with a local Python launcher) or as an Electron desktop app, in day or night mode (☀/☾ button in the title bar).
 
-## Start with ASE enabled (recommended)
+## Start MONET
 
-Use **Python 3.10 or newer**. Extract the entire ZIP and open a terminal in the MONET folder.
+MONET runs in your browser, with a small Python service on your own computer that provides ASE and MDAnalysis. There are no installers: download the code and start it with Python.
+
+1. Install **Python 3.10 or newer** (<https://www.python.org/downloads/>; on Windows tick *Add python.exe to PATH*), or use conda (below).
+2. Download MONET: on GitHub, **Code › Download ZIP** (or the ZIP of a release), and extract the whole folder.
+3. Start it:
+   - **macOS**: double-click `start_monet.command`. The first time, macOS may block a downloaded script: right-click it › **Open** › **Open**. If it does not run, open Terminal in the folder and type `bash start_monet.command`.
+   - **Windows**: double-click `start_monet.bat`. If SmartScreen appears, choose **More info › Run anyway**.
+   - **Linux**: run `./start_monet.command` in a terminal.
+
+The first start creates a private environment (`.venv`) in the MONET folder and installs ASE and MDAnalysis from `requirements.txt` (internet needed once, a few minutes). Later starts open MONET at once; the requirements are reinstalled only when `requirements.txt` changes, e.g. after downloading a new version. Arguments are passed on, e.g. `start_monet.command --port 8766`; set `MONET_PYTHON` to choose a particular Python.
+
+### With conda
+
+```sh
+conda env create -f environment.yml
+conda activate monet
+python start_monet.py
+```
+
+### Manual setup
 
 macOS / Linux, first-time setup:
 
@@ -368,28 +387,11 @@ npm install
 npm start
 ```
 
-Activate the Python environment before launching Electron so its Python bridge can find ASE. Desktop mode uses native dialogs and writes results to the selected directory.
+Activate the Python environment before launching Electron so its Python bridge can find ASE. Desktop mode uses native dialogs and writes results to the selected directory. It is meant for development: no packaged desktop installers are distributed, because the analyses need a Python environment anyway.
 
-## Changes in MONET 2.0
+## Changes
 
-- Day/night theme; plots and exports follow it.
-- Fast trajectory engine (frame index, selective parsing), launcher uploads/jobs with progress and cancel, single-pass desktop extraction.
-- Import of VASP, Quantum ESPRESSO (pw.x, cp.x), Qbox, ORCA, CP2K (DCD, `.cell`), CPMD `TRAJECTORY`, LAMMPS and more.
-- Per-configuration inputs for Gaussian, ORCA, Qbox, QE, VASP and CP2K from editable templates.
-- Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion, VDOS, unwrapping, autocorrelation with τ and sampling stride; CSV export.
-- Desktop Gaussian inputs now use a relative `%chk` file name, as the browser version always did.
-- Folded 0–180° angle range; mean ± std (circular for angles) in plot legends and a distribution view.
-- CIF/POSCAR/PDB files as a fixed cell for XYZ trajectories, and **Load cell from file** in the Crystal cell panel.
-- Topology-free import of XTC/TRR/DCD/NetCDF (atoms as X); remove buttons for every selected file.
-- Autocorrelation first; fitted plateau (optional offset c), validated decorrelation time t* and one-click uncorrelated trajectory that becomes the active one.
-- Distribution plots with fits below the RMSD/bond/angle/dihedral time series.
-- Trajectory player with live geometry and plot cursors; display and export wrapping of atoms or whole molecules into the cell.
-- Normalised circular ACF, folded (period 180°) dihedral ACF, half-run default lag range.
-- Gaussian, von Mises and two-Gaussian fits of distributions; correlation-corrected standard error of the mean and R in plot notes.
-- Dot-histogram and polar (half/full circle) distribution plots with custom radial values and reference angles.
-- Structure analysis step before extraction, collapsible workflow panel, larger ASE viewer; faster 3D viewers with five representation styles.
-- XTC/TRR/DCD/NetCDF/GRO/PDB via MDAnalysis, every ASE-readable format, MDAnalysis selections.
-- Separate ASE, MDAnalysis and custom-analysis tabs before MONET processing; ASE structure summary and coordination numbers; 19 MDAnalysis analyses; atom-identity check across MONET, ASE and MDAnalysis.
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Validation
 
@@ -414,6 +416,10 @@ node tests/ase-ui.cjs
 Current results (ASE 3.29.0, MDAnalysis 2.10.0, Python 3.14, Node 22): 48 regression, 20 QM-input parity, 38 format-import, 73 analysis, 65 MDAnalysis, 86 live launcher and 261 DOM/plot checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion). The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
 
 ## Citing and licences
+
+**How to cite MONET**: GitHub shows a *Cite this repository* button generated from [`CITATION.cff`](CITATION.cff). Please cite the software (with its version, or the Zenodo DOI of the release you used when available) and the article above, plus the libraries of the analyses you used, listed below.
+
+**MONET licence**: MIT, see [`LICENSE`](LICENSE).
 
 MONET calls ASE and MDAnalysis as separate, user-installed Python packages; it does not copy or modify their code. If results obtained with MONET are published, cite the libraries behind the analyses you used.
 
@@ -447,9 +453,9 @@ MONET calls ASE and MDAnalysis as separate, user-installed Python packages; it d
 | Electron (desktop app only) | MIT; bundles Chromium and Node.js under their own licences | desktop window |
 | jsdom, @napi-rs/canvas | MIT | test suites only, not shipped |
 
-MONET's own analyses (Kabsch RMSD and RMSD matrix, RDF, MSD/diffusion, VDOS, autocorrelation and decorrelation stride, fluctuations and trends, histogram fits, periodic wrapping) are implemented in this repository with NumPy/SciPy. For the decorrelation workflow, cite the study that introduced it: T. Francese, A. Kundu, F. Gygi, G. Galli, “Quantum simulations of thermally activated delayed fluorescence in an all-organic emitter”, *Phys. Chem. Chem. Phys.* **24**, 10101 (2022).
+MONET's own analyses (Kabsch RMSD and RMSD matrix, RDF, MSD/diffusion, VDOS, autocorrelation and decorrelation stride, fluctuations and trends, histogram fits, periodic wrapping) are implemented in this repository with NumPy/SciPy. For the decorrelation workflow, cite the study that introduced it: T. Francese, A. Kundu, F. Gygi, G. Galli, “Quantum simulations of thermally activated delayed fluorescence in an all-organic emitter”, *Phys. Chem. Chem. Phys.* **24**, 10101 (2022), doi:[10.1039/d2cp01147f](https://doi.org/10.1039/d2cp01147f).
 
-**Licence compatibility.** MONET is declared MIT in `package.json`. Using LGPL libraries as separately installed dependencies is compatible with MIT: MONET does not include their code, and users install and can replace them freely (`requirements.txt`). If MONET is ever distributed with Python, ASE and MDAnalysis bundled inside an installer, that installer must also ship the LGPL licence texts and these notices, point to the source code of the bundled versions, and leave the libraries replaceable (keeping them as ordinary Python packages satisfies this).
+**Licence compatibility.** MONET is distributed under the MIT licence. Using LGPL libraries as separately installed dependencies is compatible with MIT: MONET does not include their code, and users install and can replace them freely (`requirements.txt`). MONET is distributed as source code only, so no LGPL code is redistributed with it.
 
 ## Background (MONET v1)
 
