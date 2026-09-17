@@ -204,6 +204,8 @@ with zipfile.ZipFile(sys.argv[1]) as z:
   }
   result = await api.aseRun({ action: 'dihedrals', filename: torsionName, quads: [[0,1,2,3]], angle_range: 'signed90' })
   assert.deepEqual(result.series['0-1-2-3'], [-90,-90]); checks++
+  result = await api.aseRun({ action: 'dihedrals', filename: torsionName, quads: [[0,1,2,3]], angle_range: 'fold180' })
+  assert.deepEqual(result.series['0-1-2-3'], [90, 90]); checks++
   file = new File(['4\nWrapped torsion\nC 1 0 0\nC 0 0 0\nC 0 1 0\nH 10 1 1\n'], 'wrapped-torsion.xyz'); const wrappedName = await api.selectFile()
   result = await api.aseRun({ action: 'dihedrals', filename: wrappedName, quads: [[0,1,2,3]], cell, mic: true })
   assert.ok(Math.abs(result.series['0-1-2-3'][0] - 270) < 1e-8); checks++

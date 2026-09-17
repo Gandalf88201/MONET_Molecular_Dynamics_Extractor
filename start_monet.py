@@ -379,6 +379,19 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(200, {'ok': True, 'file_id': session.add_file(target, name), 'size': length})
 
 
+def open_browser(url):
+    """Open the default browser; failures are reported briefly instead of as AppleScript errors."""
+    try:
+        if sys.platform == 'darwin':
+            opened = subprocess.run(['open', url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+        else:
+            opened = webbrowser.open(url)
+    except OSError:
+        opened = False
+    if not opened:
+        print(f'Could not open a browser automatically; open {url} yourself.', flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--port', type=int, default=8765)
@@ -395,7 +408,7 @@ def main():
     print(f'MONET: {url}\nKeep this terminal open. Press Ctrl+C to stop.', flush=True)
     print(f'Session files: {server.session.dir} (removed on exit)', flush=True)
     if not args.no_browser:
-        webbrowser.open(url)
+        open_browser(url)
 
     def stop(*_):
         raise KeyboardInterrupt

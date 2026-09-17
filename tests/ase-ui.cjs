@@ -160,6 +160,23 @@ async function run () {
   assert.equal((await loadImage(Buffer.from(await pngBlob.arrayBuffer()))).width, 2400); checks++
   if (process.env.MONET_FOLDED_QA) fs.writeFileSync(process.env.MONET_FOLDED_QA, Buffer.from(await pngBlob.arrayBuffer()))
   if (process.env.MONET_CELL_QA) fs.writeFileSync(process.env.MONET_CELL_QA, canvasMap.get(canvas).toBuffer('image/png'))
+  // Folded 0-180: a torsion oscillating around 90 deg is drawn continuously (edge crossings, no gaps).
+  const chart = new w.MonetLineChart(w.document.createElement('canvas'))
+  const segments = []
+  chart.canvas.getContext = () => new Proxy({}, { get: (_, name) => name === 'measureText' ? () => ({ width: 10 }) : name === 'createLinearGradient' ? () => ({ addColorStop () {} }) : name === 'lineTo' || name === 'moveTo' ? (x, y) => segments.push([name, Math.round(y)]) : () => {} })
+  chart.data = { title: 't', xLabel: 'Frame', yLabel: 'y', labels: ['0', '1', '2', '3'], angleRange: 'signed90', datasets: [{ label: 'd', data: [80, 95, 85, 100] }] }
+  chart._render(chart.canvas, 600, 320)
+  const folded90 = segments.filter(([name]) => name === 'moveTo').length
+  segments.length = 0
+  chart.data = { ...chart.data, angleRange: 'fold180' }
+  chart._render(chart.canvas, 600, 320)
+  const folded180 = segments.filter(([name]) => name === 'moveTo').length
+  // 80, -85, 85, -80 crosses the ±90 edge three times; 80, 95, 85, 100 never crosses the 0/180 edge.
+  assert.equal(folded90 - folded180, 3, 'one re-entry per edge crossing, no breaks in 0-180 mode'); checks++
+  assert.ok(segments.some(([name, y]) => name === 'lineTo'), 'trace drawn'); checks++
+  el('dihedrals-range').value = 'fold180'; el('dihedrals-range').dispatchEvent(new w.Event('change'))
+  await click('btn-run-dihedrals')
+  assert.equal(latestCommand.angle_range, 'fold180'); checks++
   el('angles-range').value = '360'; el('angles-range').dispatchEvent(new w.Event('change'))
   assert.equal(el('angles-normal-row').classList.contains('hidden'), false); checks++
   await click('cell-reset'); assert.equal(w.testMonet.aseViewer.cell, null); checks++

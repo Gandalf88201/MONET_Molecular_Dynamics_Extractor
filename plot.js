@@ -23,6 +23,15 @@
   }
 
   function wrap90 (value) { return ((value + 90) % 180 + 180) % 180 - 90 }
+  function wrap180 (value) { return (value % 180 + 180) % 180 }
+
+  // Axis limits, wrap period and tick step for each angle convention.
+  const ANGLE_RANGES = {
+    natural: { min: 0, max: 180, period: null, step: 30 },
+    360: { min: 0, max: 360, period: 360, step: 60, wrap: value => (value % 360 + 360) % 360 },
+    signed90: { min: -90, max: 90, period: 180, step: 30, wrap: wrap90, label: 'Folded angle (°, −90 to +90, period 180°)' },
+    fold180: { min: 0, max: 180, period: 180, step: 30, wrap: wrap180, label: 'Folded angle (°, 0–180, period 180°)' }
+  }
 
   function formatTick (value, span) {
     if (value === 0) return '0'
@@ -125,11 +134,11 @@
       if (!this.data) return
       const { ctx, W, H, colors } = this._prepare(target, width, height, scale)
       const { labels, title, xLabel, source } = this.data
-      const signed = this.data.angleRange === 'signed90'
-      const angular = Boolean(this.data.angleRange || this.data.circular)
-      const period = signed ? 180 : 360
-      const datasets = signed ? this.data.datasets.map(series => ({ ...series, data: series.data.map(value => Number.isFinite(value) ? wrap90(value) : value) })) : this.data.datasets
-      const yLabel = signed ? 'Wrapped angle (°, period 180°)' : this.data.yLabel
+      const range = ANGLE_RANGES[this.data.angleRange] || (this.data.circular ? ANGLE_RANGES[360] : null)
+      const angular = Boolean(range)
+      const period = range?.period
+      const datasets = range?.wrap ? this.data.datasets.map(series => ({ ...series, data: series.data.map(value => Number.isFinite(value) ? range.wrap(value) : value) })) : this.data.datasets
+      const yLabel = range?.label || this.data.yLabel
       if (!datasets.length || !labels.length) return
       const colorOf = (series, i) => series.color || colors.series[(series.colorIndex ?? i) % colors.series.length]
 
@@ -152,7 +161,7 @@
         if (Number.isFinite(value)) { min = Math.min(min, value); max = Math.max(max, value) }
       }
       if (!Number.isFinite(min)) return
-      if (angular) { min = signed ? -90 : 0; max = signed ? 90 : this.data.angleRange === 'natural' ? 180 : 360 }
+      if (angular) { min = range.min; max = range.max }
       else {
         if (Number.isFinite(this.data.yMin)) min = Math.min(min, this.data.yMin)
         if (Number.isFinite(this.data.yMax)) max = Math.max(max, this.data.yMax)
@@ -165,8 +174,11 @@
       const y = value => pad.top + ph - (value - min) / (max - min) * ph
       ctx.lineWidth = 1
       ctx.font = '11px sans-serif'
-      for (let i = 0; i <= 5; i++) {
-        const value = min + i / 5 * (max - min), yy = y(value)
+      const ticks = angular
+        ? Array.from({ length: Math.round((max - min) / range.step) + 1 }, (_, i) => min + i * range.step)
+        : Array.from({ length: 6 }, (_, i) => min + i / 5 * (max - min))
+      for (const value of ticks) {
+        const yy = y(value)
         ctx.strokeStyle = colors.grid; ctx.beginPath(); ctx.moveTo(pad.left, yy); ctx.lineTo(W - pad.right, yy); ctx.stroke()
         ctx.fillStyle = colors.tick; ctx.textAlign = 'right'
         ctx.fillText(angular ? value.toFixed(0) : formatTick(value, max - min), pad.left - 8, yy + 4)
@@ -211,15 +223,25 @@
         let previous = null
         series.data.forEach((value, i) => {
           if (!Number.isFinite(value)) { previous = null; return }
-          // Do not draw a spurious full-range line over a 0/360° torsion wrap.
-          if (previous === null || (angular && this.data.angleRange !== 'natural' && Math.abs(value - previous) > period / 2)) ctx.moveTo(x(i), y(value))
-          else ctx.lineTo(x(i), y(value))
+          if (previous === null) ctx.moveTo(x(i), y(value))
+          else if (period && Math.abs(value - previous) > period / 2) {
+            // Periodic wrap: continue the trace to one edge and re-enter from the opposite edge.
+            const upward = value < previous
+            const unwrapped = value + (upward ? period : -period)
+            const edge = upward ? max : min
+            const xb = x(i - 1) + (edge - previous) / (unwrapped - previous) * (x(i) - x(i - 1))
+            ctx.lineTo(xb, y(edge))
+            ctx.moveTo(xb, y(upward ? min : max))
+            ctx.lineTo(x(i), y(value))
+          } else ctx.lineTo(x(i), y(value))
           previous = value
         })
         ctx.stroke()
         ctx.setLineDash([])
-        if (labels.length <= 60 && !series.dash) series.data.forEach((value, i) => {
+        if (!series.dash) series.data.forEach((value, i) => {
           if (!Number.isFinite(value)) return
+          const isolated = !Number.isFinite(series.data[i - 1]) && !Number.isFinite(series.data[i + 1])
+          if (labels.length > 60 && !isolated) return
           ctx.beginPath(); ctx.arc(x(i), y(value), 2.5, 0, Math.PI * 2); ctx.fill()
         })
       })

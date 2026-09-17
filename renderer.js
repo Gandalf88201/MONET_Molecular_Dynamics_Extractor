@@ -1558,7 +1558,7 @@ $('btn-run-dihedrals').addEventListener('click', async () => {
       label: MonetASEModel.seriesLabel(key, r.atomMapping), data, colorIndex: i
     }))
   })
-  setStatus(`Dihedral angles computed (${r.angleRange === 'signed90' ? '−90° to +90°, folded' : '0–360°'}).`)
+  setStatus(`Dihedral angles computed (${{ signed90: '−90° to +90°, folded', fold180: '0° to 180°, folded' }[r.angleRange] || '0–360°'}).`)
 })
 
 
