@@ -1567,7 +1567,12 @@ $('btn-run-dihedrals').addEventListener('click', async () => {
 // =============================================================================
 
 const TIME_UNITS = { fs: 1, au: 0.02418884326585747, ps: 1000 }
-const fmt = (value, digits = 3) => Number.isFinite(value) ? Number(value.toPrecision(digits)).toLocaleString('en-US', { maximumFractionDigits: 6 }) : '—'
+function fmt (value, digits = 3) {
+  if (!Number.isFinite(value)) return '—'
+  const size = Math.abs(value)
+  if (size && (size < 1e-3 || size >= 1e7)) return value.toExponential(digits - 1)
+  return Number(value.toPrecision(digits)).toLocaleString('en-US', { maximumFractionDigits: 6 })
+}
 
 // Returns { timestep (fs per MD step), stride (MD steps per saved frame), dt (fs per saved frame) } or null.
 function timeAxis () {

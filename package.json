@@ -1,6 +1,6 @@
 {
   "name": "monet-electron",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "MONET Molecular Dynamics Extractor \u2014 Desktop GUI with 3D molecular visualizer",
   "main": "main.js",
   "scripts": {
