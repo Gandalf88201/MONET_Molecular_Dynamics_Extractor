@@ -1,0 +1,8 @@
+.venv/
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.DS_Store
+._*
+package-lock.json

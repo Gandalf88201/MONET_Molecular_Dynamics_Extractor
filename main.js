@@ -3,6 +3,9 @@ const { app, BrowserWindow, ipcMain, dialog } = require('electron')
 const path    = require('path')
 const fs      = require('fs')
 const readline = require('readline')
+const XYZ = require('./xyz.js')
+const QM = require('./qm-inputs.js')
+const { finished } = require('stream/promises')
 const { spawn, execFile } = require('child_process')
 
 let mainWindow
@@ -37,11 +40,11 @@ app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) creat
 // ---------------------------------------------------------------------------
 ipcMain.handle('select-file', async () => {
   const r = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select XYZ Trajectory File',
+    title: 'Select Trajectory or Structure File',
     properties: ['openFile'],
     filters: [
-      { name: 'XYZ Trajectory', extensions: ['xyz'] },
-      { name: 'All Files',      extensions: ['*']   }
+      { name: 'All Files',      extensions: ['*']   },
+      { name: 'XYZ Trajectory', extensions: ['xyz', 'extxyz'] }
     ]
   })
   return r.canceled ? null : r.filePaths[0]
@@ -80,68 +83,46 @@ ipcMain.handle('process-trajectory', async (event, options) => {
 // analyzeTrajectoryFile
 //   Returns: { atomCount, configCount, format, filePath }
 // ---------------------------------------------------------------------------
+async function * trajectoryLines (filePath) {
+  const input = fs.createReadStream(filePath)
+  const rl = readline.createInterface({ input, crlfDelay: Infinity })
+  try { yield * rl } finally { rl.close(); input.destroy() }
+}
+
 async function analyzeTrajectoryFile (filePath) {
-  const rl = readline.createInterface({ input: fs.createReadStream(filePath), crlfDelay: Infinity })
+  const parser = new XYZ.Parser()
+  for await (const line of trajectoryLines(filePath)) parser.push(line)
+  return { ...parser.finish(), filePath }
+}
 
-  let lineNum     = 0
-  let atomCount   = 0
-  let configCount = 0
-  let format      = 'unknown'
-
-  for await (const line of rl) {
-    lineNum++
-    if (lineNum === 1) atomCount = parseInt(line.trim(), 10)
-
-    if      (line.includes('STEP ='))  { format = 'CPMD'; configCount++ }
-    else if (line.includes('STEP:'))   { format = 'CPMD'; configCount++ }
-    else if (/ i =/.test(line))        { format = 'CP2K'; configCount++ }
+async function readTrajectoryFrame (filePath, frameIndex) {
+  if (!Number.isInteger(frameIndex) || frameIndex < 0) throw new Error('Invalid frame index.')
+  for await (const frame of XYZ.frames(trajectoryLines(filePath))) {
+    if (frame.index === frameIndex) return { atoms: frame.atoms }
   }
-
-  return { atomCount, configCount, format, filePath }
+  throw new Error('Frame index is outside the trajectory.')
 }
 
 // ---------------------------------------------------------------------------
-// readTrajectoryFrame
-//   Returns: { atoms: [{index, element, x, y, z}] }
+// processTrajectory — single streaming pass (validation, extraction, average)
 // ---------------------------------------------------------------------------
-async function readTrajectoryFrame (filePath, frameIndex, atomCount) {
-  const frameSize = atomCount + 2
-  const startLine = frameIndex * frameSize   // 0-indexed line number
+let cancelExtraction = false
 
-  const rl = readline.createInterface({ input: fs.createReadStream(filePath), crlfDelay: Infinity })
-
-  const atoms        = []
-  let   absLine      = -1
-  let   frameLineNum = 0
-  let   inFrame      = false
-
-  for await (const line of rl) {
-    absLine++
-    if (absLine === startLine) inFrame = true
-    if (!inFrame) continue
-
-    frameLineNum++
-    if (frameLineNum === 1 || frameLineNum === 2) continue   // skip header lines
-
-    const parts = line.trim().split(/\s+/)
-    if (parts.length >= 4) {
-      atoms.push({
-        index:   atoms.length + 1,
-        element: parts[0],
-        x:       parseFloat(parts[1]),
-        y:       parseFloat(parts[2]),
-        z:       parseFloat(parts[3])
-      })
-    }
-    if (frameLineNum >= frameSize) break
-  }
-
-  return { atoms }
+async function writeText (stream, text) {
+  if (!stream.write(text)) await new Promise((resolve, reject) => {
+    const fail = error => { stream.off('drain', done); reject(error) }
+    const done = () => { stream.off('error', fail); resolve() }
+    stream.once('drain', done)
+    stream.once('error', fail)
+  })
 }
 
-// ---------------------------------------------------------------------------
-// processTrajectory — full pipeline
-// ---------------------------------------------------------------------------
+const atomRows = atoms => {
+  let text = ''
+  for (const a of atoms) text += `${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`
+  return text
+}
+
 async function processTrajectory (event, options) {
   const {
     filePath,
@@ -150,13 +131,19 @@ async function processTrajectory (event, options) {
     selectedAtoms,    // 1-indexed numbers
     frequency,
     computeAverage,
-    generateGaussian
+    generateGaussian,
+    configCount,
+    qm
   } = options
+  if (qm) QM.validate(qm)
 
-  const send      = msg => event.sender.send('progress', msg)
-  const frameSize = atomCount + 2
-  const selSet    = new Set(selectedAtoms.map(Number))
-  const selCount  = selSet.size
+  if (!Number.isInteger(frequency) || frequency < 1) throw new Error('Sampling frequency must be a positive integer.')
+  if (!selectedAtoms.length || selectedAtoms.some(id => !Number.isInteger(id) || id < 1 || id > atomCount)) {
+    throw new Error('Select valid atom IDs from the loaded trajectory.')
+  }
+  const send     = msg => event.sender.send('progress', msg)
+  const selected = [...new Set(selectedAtoms.map(Number))].sort((a, b) => a - b).map(id => id - 1)
+  cancelExtraction = false
 
   // Create directory tree
   const dirs = {
@@ -174,136 +161,89 @@ async function processTrajectory (event, options) {
   }
   fs.writeFileSync(path.join(dirs.history, 'run.json'), JSON.stringify(histLog, null, 2))
 
-  // Accumulators for average structure (all atoms, full trajectory)
-  const avgSum = Array.from({ length: atomCount }, () => ({ x: 0, y: 0, z: 0, element: '' }))
-  let avgFrameCount = 0
-
-  // Output streams
   const fullTrajPath = path.join(dirs.fullTraj, 'FULL_TRAJECTORY_EXTRACTED.xyz')
   const sampledPath  = path.join(dirs.sampled,  'SAMPLED_CONFIGURATIONS.xyz')
-  const ftStream     = fs.createWriteStream(fullTrajPath)
+  const ftStream     = fs.createWriteStream(fullTrajPath, { highWaterMark: 4 << 20 })
   const smStream     = fs.createWriteStream(sampledPath)
-
-  // Collected sampled frames for individual conf folders
-  const sampledFrames = []
+  const sums = computeAverage ? new Float64Array(atomCount * 3) : null
+  let elements = null
+  let frameIndex = 0
+  let sampledCount = 0
 
   send({ step: 'extraction', status: 'started', message: 'Reading trajectory …' })
 
-  const rl = readline.createInterface({ input: fs.createReadStream(filePath), crlfDelay: Infinity })
-
-  let lineInFrame      = 0
-  let frameIndex       = 0   // 0-indexed
-  let atomLineIndex    = 0   // 1-indexed within frame
-  let currentFrameAtoms = []
-
-  for await (const line of rl) {
-    lineInFrame++
-
-    if (lineInFrame === 1) {
-      // Start of new frame
-      currentFrameAtoms = []
-      atomLineIndex     = 0
-    } else if (lineInFrame === 2) {
-      // Comment / step header — ignore content
-    } else {
-      // Atom line
-      atomLineIndex++
-      const parts = line.trim().split(/\s+/)
-      if (parts.length >= 4) {
-        const atom = {
-          index:   atomLineIndex,
-          element: parts[0],
-          x:       parseFloat(parts[1]),
-          y:       parseFloat(parts[2]),
-          z:       parseFloat(parts[3])
-        }
-        currentFrameAtoms.push(atom)
-
-        if (computeAverage) {
-          avgSum[atomLineIndex - 1].x       += atom.x
-          avgSum[atomLineIndex - 1].y       += atom.y
-          avgSum[atomLineIndex - 1].z       += atom.z
-          avgSum[atomLineIndex - 1].element  = atom.element
+  try {
+    for await (const frame of XYZ.frames(trajectoryLines(filePath))) {
+      const atoms = frame.atoms
+      if (atoms.length !== atomCount) throw new Error('Atom count changed. Load the trajectory again.')
+      if (!elements) elements = atoms.map(a => a.element)
+      if (sums) {
+        for (let i = 0; i < atomCount; i++) {
+          sums[3 * i] += atoms[i].x; sums[3 * i + 1] += atoms[i].y; sums[3 * i + 2] += atoms[i].z
         }
       }
-    }
-
-    if (lineInFrame >= frameSize) {
-      // Frame complete
-      if (computeAverage) avgFrameCount++
-
-      const selAtoms = currentFrameAtoms.filter(a => selSet.has(a.index))
-
-      // Always write to full trajectory
-      ftStream.write(`${selCount}\n`)
-      ftStream.write(`frame ${frameIndex}\n`)
-      for (const a of selAtoms)
-        ftStream.write(`${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`)
+      const rows = atomRows(selected.map(i => atoms[i]))
+      const text = `${selected.length}\nframe ${frameIndex}\n${rows}`
+      await writeText(ftStream, text)
 
       // Write to sampled every `frequency` frames (include frame 0)
       if (frameIndex % frequency === 0) {
-        smStream.write(`${selCount}\n`)
-        smStream.write(`frame ${frameIndex}\n`)
-        for (const a of selAtoms)
-          smStream.write(`${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`)
-
-        sampledFrames.push({ frameIndex, atoms: selAtoms })
+        await writeText(smStream, text)
+        const confDir = path.join(dirs.sampled, `conf${++sampledCount}`)
+        fs.mkdirSync(confDir, { recursive: true })
+        fs.writeFileSync(path.join(confDir, `pos${sampledCount}.txt`), rows)
+        if (generateGaussian) writeGaussianInputs(confDir, rows)
+        if (qm) {
+          const atomsSel = selected.map(i => atoms[i])
+          const conf = { index: sampledCount, frame: frameIndex, symbols: atomsSel.map(a => a.element), positions: atomsSel.map(a => [a.x, a.y, a.z]), lattice: frame.lattice }
+          for (const file of QM.render(qm, conf)) {
+            const target = path.join(confDir, ...file.path.split('/'))
+            fs.mkdirSync(path.dirname(target), { recursive: true })
+            fs.writeFileSync(target, file.text)
+          }
+        }
       }
 
       frameIndex++
-      lineInFrame = 0
-
-      if (frameIndex % 200 === 0)
-        send({ step: 'extraction', status: 'progress', message: `Processed ${frameIndex} frames …`, frameIndex })
+      if (frameIndex % 500 === 0) {
+        if (cancelExtraction) throw new Error('Extraction cancelled.')
+        send({
+          step: 'extraction', status: 'progress', frameIndex,
+          message: `Processed ${frameIndex.toLocaleString()}${configCount ? ` / ${configCount.toLocaleString()}` : ''} frames …`,
+          percent: configCount ? 100 * frameIndex / configCount : undefined
+        })
+      }
     }
+    ftStream.end()
+    smStream.end()
+    await Promise.all([finished(ftStream), finished(smStream)])
+  } catch (error) {
+    ftStream.destroy()
+    smStream.destroy()
+    throw error
   }
-
-  ftStream.end()
-  smStream.end()
 
   send({
     step: 'extraction', status: 'done',
-    message: `Extracted ${frameIndex} frames · ${sampledFrames.length} sampled configurations`
+    message: `Extracted ${frameIndex} frames · ${sampledCount} sampled configurations`
   })
-
-  // -------------------------------------------------------------------
-  // Individual conf folders + pos files
-  // -------------------------------------------------------------------
-  send({ step: 'folders', status: 'started', message: 'Creating configuration folders …' })
-
-  for (let i = 0; i < sampledFrames.length; i++) {
-    const confDir = path.join(dirs.sampled, `conf${i + 1}`)
-    fs.mkdirSync(confDir, { recursive: true })
-
-    let posContent = ''
-    for (const a of sampledFrames[i].atoms)
-      posContent += `${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`
-
-    fs.writeFileSync(path.join(confDir, `pos${i + 1}.txt`), posContent)
-
-    if (generateGaussian) writeGaussianInputs(confDir, posContent)
-  }
-
-  send({ step: 'folders', status: 'done', message: `Created ${sampledFrames.length} conf folders` })
 
   // -------------------------------------------------------------------
   // Average structure (all atoms, full trajectory)
   // -------------------------------------------------------------------
-  if (computeAverage && avgFrameCount > 0) {
+  if (sums && frameIndex > 0) {
     send({ step: 'average', status: 'started', message: 'Computing average structure …' })
-
-    let avgXYZ = `${atomCount}\nAVERAGE (${avgFrameCount} frames)\n`
-    for (const a of avgSum)
-      avgXYZ += `${a.element}  ${(a.x / avgFrameCount).toFixed(7)}  ${(a.y / avgFrameCount).toFixed(7)}  ${(a.z / avgFrameCount).toFixed(7)}\n`
-
-    fs.writeFileSync(path.join(dirs.average, 'GEO-AVERAGE.xyz'), avgXYZ)
+    const average = elements.map((element, i) => ({
+      element, x: sums[3 * i] / frameIndex, y: sums[3 * i + 1] / frameIndex, z: sums[3 * i + 2] / frameIndex
+    }))
+    fs.writeFileSync(path.join(dirs.average, 'GEO-AVERAGE.xyz'), `${atomCount}\nAVERAGE (${frameIndex} frames)\n${atomRows(average)}`)
     send({ step: 'average', status: 'done', message: 'GEO-AVERAGE.xyz written' })
   }
 
   return {
     success:       true,
     totalFrames:   frameIndex,
-    sampledFrames: sampledFrames.length,
+    sampledFrames: sampledCount,
     outputDir
   }
 }
@@ -351,6 +291,13 @@ function detectPython () {
 }
 
 let _pythonBin = null   // cached after first detection
+const aseChildren = new Set()
+
+ipcMain.handle('cancel', async (_, scope) => {
+  if (scope === 'extraction') cancelExtraction = true
+  if (scope === 'ase') for (const child of aseChildren) child.kill()
+  return true
+})
 
 ipcMain.handle('ase-check', async () => {
   try {
@@ -374,6 +321,23 @@ ipcMain.handle('ase-run', async (event, command) => {
   }
 })
 
+ipcMain.handle('ase-import', async (event, name, options = {}) => {
+  try {
+    if (!_pythonBin) _pythonBin = await detectPython()
+    if (!_pythonBin) return { error: 'Python with ASE is required to import this format.' }
+    const folder = fs.mkdtempSync(path.join(require('os').tmpdir(), 'monet-import-'))
+    const output = path.join(folder, path.basename(name).replace(/\.[^.]*$/, '') + '.extxyz')
+    const result = await runAseBridge({
+      action: 'import', filename: name, output, format: options.format || 'auto', source_name: path.basename(name),
+      reference: options.reference || undefined, cell_file: options.cellFile || undefined, cell_vectors: options.cellVectors || 'rows'
+    }, msg => event.sender.send('ase-progress', msg))
+    if (!result.ok) return { error: result.message || result.error }
+    return { filePath: output, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label }
+  } catch (e) {
+    return { error: e.message }
+  }
+})
+
 ipcMain.handle('ase-select-output', async (_, defaultName) => {
   const r = await dialog.showSaveDialog(mainWindow, {
     title: 'Save converted file',
@@ -393,6 +357,10 @@ function runAseBridge (command, onProgress) {
   return new Promise((resolve, reject) => {
     const py = spawn(_pythonBin, [ASE_BRIDGE])
     let buf = ''
+    let killed = false
+    aseChildren.add(py)
+    const kill = py.kill.bind(py)
+    py.kill = signal => { killed = true; return kill(signal) }
 
     py.stdout.on('data', chunk => {
       buf += chunk.toString()
@@ -411,6 +379,8 @@ function runAseBridge (command, onProgress) {
     py.stderr.on('data', d => console.error('[ASE stderr]', d.toString().trim()))
     py.on('error', e  => resolve({ ok: false, error: e.message }))
     py.on('close', code => {
+      aseChildren.delete(py)
+      if (killed) { resolve({ ok: false, cancelled: true, error: 'Calculation cancelled.' }); return }
       // flush any remaining buffer
       if (buf.trim()) {
         try {
@@ -418,7 +388,7 @@ function runAseBridge (command, onProgress) {
           if (msg.type === 'result' || msg.type === 'error') { resolve(msg); return }
         } catch {}
       }
-      if (code !== 0) resolve({ ok: false, error: `Python exited with code ${code}` })
+      resolve({ ok: false, error: code !== 0 ? `Python exited with code ${code}` : 'Python returned no result.' })
     })
 
     py.stdin.write(JSON.stringify(command) + '\n')

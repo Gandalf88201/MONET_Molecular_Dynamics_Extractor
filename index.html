@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'" />
+  <title>MONET — Molecular Dynamics Extractor</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="theme.js"></script>
+</head>
+<body>
+
+<!-- ===== TITLE BAR ===== -->
+<header class="titlebar">
+  <div class="titlebar-logo">
+    <span class="logo-m">M</span><span class="logo-rest">ONET</span>
+  </div>
+  <div class="titlebar-sub">Molecular Dynamics Extractor &nbsp;·&nbsp; v 2.0.0</div>
+  <div class="titlebar-right">
+    <div class="ase-badge" id="ase-badge" title="ASE (Atomic Simulation Environment) status">
+      <span class="ase-dot" id="ase-dot"></span>
+      <span id="ase-badge-text">ASE …</span>
+    </div>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">☀ Day</button>
+    <div class="titlebar-author">Dr. T. Francese &nbsp;·&nbsp; Univ. of Chicago</div>
+  </div>
+</header>
+
+<!-- ===== MAIN LAYOUT ===== -->
+<div class="layout">
+
+  <!-- LEFT: workflow panel -->
+  <aside class="sidebar">
+    <nav class="steps-nav">
+      <div class="step-item active" data-step="1" id="nav-1">
+        <span class="step-num">01</span>
+        <span class="step-label">File Input</span>
+      </div>
+      <div class="step-item" data-step="2" id="nav-2">
+        <span class="step-num">02</span>
+        <span class="step-label">Analysis &amp; Sampling</span>
+      </div>
+      <div class="step-item" data-step="3" id="nav-3">
+        <span class="step-num">03</span>
+        <span class="step-label">Atom Selection</span>
+      </div>
+      <div class="step-item" data-step="4" id="nav-4">
+        <span class="step-num">04</span>
+        <span class="step-label">Options</span>
+      </div>
+      <div class="step-item" data-step="5" id="nav-5">
+        <span class="step-num">05</span>
+        <span class="step-label">Processing</span>
+      </div>
+      <div class="step-item" data-step="6" id="nav-6">
+        <span class="step-num">06</span>
+        <span class="step-label">Results</span>
+      </div>
+    </nav>
+
+    <!-- ── STEP 1: File Input ── -->
+    <section class="step-panel active" id="panel-1">
+      <h2 class="panel-title">Select Trajectory File</h2>
+      <p class="panel-desc">Load an <code>.xyz</code>/extended XYZ trajectory (CPMD, CP2K, ORCA, Qbox …) or another code's output. Other formats are imported through ASE (launcher or desktop app).</p>
+      <button class="btn btn-primary" id="btn-browse">Browse …</button>
+      <div id="file-display" class="file-info hidden">
+        <div class="file-path" id="file-path-text"></div>
+      </div>
+      <label class="field-label" for="inp-format">Input format</label>
+      <select class="field-input" id="inp-format">
+        <option value="auto">Auto-detect (XYZ is read directly)</option>
+        <option value="xyz">XYZ / extended XYZ (CPMD, CP2K, ORCA, Qbox …)</option>
+        <option value="vasp-xdatcar">VASP XDATCAR</option>
+        <option value="vasp-out">VASP OUTCAR</option>
+        <option value="vasp-xml">VASP vasprun.xml</option>
+        <option value="vasp">VASP POSCAR / CONTCAR</option>
+        <option value="espresso-out">Quantum ESPRESSO pw.x output</option>
+        <option value="qe-cp-pos">Quantum ESPRESSO cp.x .pos (+ .cel)</option>
+        <option value="qbox">Qbox output (.r / XML)</option>
+        <option value="orca-output">ORCA output</option>
+        <option value="cp2k-dcd">CP2K DCD</option>
+        <option value="cpmd-trajectory">CPMD TRAJECTORY</option>
+        <option value="lammps-dump-text">LAMMPS text dump</option>
+        <option value="traj">ASE trajectory (.traj)</option>
+        <option value="gaussian-out">Gaussian output</option>
+        <option value="cif">CIF</option>
+      </select>
+      <div class="aux-file" id="aux-reference">
+        <label class="field-label">Reference structure — element order</label>
+        <div class="dir-row">
+          <div class="dir-path" id="reference-path">Not selected</div>
+          <button class="btn btn-sm" id="btn-reference">Browse …</button>
+          <button class="btn btn-sm" id="btn-reference-clear" title="Remove reference">×</button>
+        </div>
+      </div>
+      <div class="aux-file" id="aux-cell">
+        <label class="field-label">Cell file — CP2K .cell or cp.x .cel (optional)</label>
+        <div class="dir-row">
+          <div class="dir-path" id="cell-file-path">Not selected</div>
+          <button class="btn btn-sm" id="btn-cell-file">Browse …</button>
+          <button class="btn btn-sm" id="btn-cell-file-clear" title="Remove cell file">×</button>
+        </div>
+        <select class="field-input hidden" id="inp-cell-vectors">
+          <option value="rows">cp.x .cel: rows are lattice vectors</option>
+          <option value="columns">cp.x .cel: columns are lattice vectors</option>
+        </select>
+      </div>
+      <p class="panel-desc" id="format-hint" aria-live="polite"></p>
+      <div class="step-nav-row">
+        <span></span>
+        <button class="btn btn-next" id="next-1" disabled>Next →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 2: Analysis & Sampling ── -->
+    <section class="step-panel" id="panel-2">
+      <h2 class="panel-title">Analysis &amp; Sampling</h2>
+      <div class="info-grid" id="file-stats">
+        <div class="info-item"><span class="info-label">Format</span><span class="info-value" id="stat-format">—</span></div>
+        <div class="info-item"><span class="info-label">Configurations</span><span class="info-value" id="stat-configs">—</span></div>
+        <div class="info-item"><span class="info-label">Atoms / frame</span><span class="info-value" id="stat-atoms">—</span></div>
+      </div>
+      <label class="field-label" for="inp-freq">Sampling frequency (every N-th frame)</label>
+      <input class="field-input" type="number" id="inp-freq" min="1" value="10" />
+      <div class="derived-info">
+        Sampled configurations: <strong id="sampled-count">—</strong>
+      </div>
+      <div class="step-nav-row">
+        <button class="btn btn-back" id="back-2">← Back</button>
+        <button class="btn btn-next" id="next-2" disabled>Next →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 3: Atom Selection ── -->
+    <section class="step-panel" id="panel-3">
+      <h2 class="panel-title">Atom Selection</h2>
+      <p class="panel-desc">
+        Click atoms in the 3D viewer <em>or</em> type IDs below.
+        Selected atoms are highlighted in gold.
+      </p>
+      <div class="atom-input-row">
+        <input class="field-input" type="text" id="inp-atom-ids"
+               placeholder="e.g. 1 5 12 23 44" />
+        <button class="btn btn-sm" id="btn-apply-ids">Apply</button>
+      </div>
+      <div class="selection-info">
+        Selected: <strong id="sel-count">0</strong> atoms
+        <button class="btn btn-sm btn-ghost" id="btn-clear-sel">Clear</button>
+      </div>
+      <div id="atom-table-wrapper">
+        <table class="atom-table" id="atom-table">
+          <thead><tr><th>ID</th><th>El</th><th>x</th><th>y</th><th>z</th><th>✓</th></tr></thead>
+          <tbody id="atom-table-body"></tbody>
+        </table>
+      </div>
+      <div class="step-nav-row">
+        <button class="btn btn-back" id="back-3">← Back</button>
+        <button class="btn btn-next" id="next-3" disabled>Next →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 4: Options ── -->
+    <section class="step-panel" id="panel-4">
+      <h2 class="panel-title">Processing Options</h2>
+
+      <label class="toggle-row">
+        <input type="checkbox" id="opt-average" checked />
+        <span class="toggle-label">Compute average structure<br>
+          <small>Generates <code>GEO-AVERAGE.xyz</code></small></span>
+      </label>
+
+      <fieldset class="qm-panel" id="gaussian-details">
+        <legend>Quantum-chemistry inputs per configuration</legend>
+        <div class="qm-codes">
+          <label><input type="checkbox" id="opt-gaussian" data-qm-code="gaussian" checked /> Gaussian</label>
+          <label><input type="checkbox" data-qm-code="orca" /> ORCA</label>
+          <label><input type="checkbox" data-qm-code="qbox" /> Qbox</label>
+          <label><input type="checkbox" data-qm-code="qe" /> QE pw.x</label>
+          <label><input type="checkbox" data-qm-code="vasp" /> VASP</label>
+          <label><input type="checkbox" data-qm-code="cp2k" /> CP2K</label>
+        </div>
+        <div class="qm-grid">
+          <label class="field-label">Charge<input class="field-input" id="qm-charge" type="number" step="1" value="0" /></label>
+          <label class="field-label">Multiplicities<input class="field-input" id="qm-mults" value="1 3" /></label>
+          <label class="field-label">Processors<input class="field-input" id="qm-nproc" type="number" min="1" step="1" value="6" /></label>
+          <label class="field-label">Memory<input class="field-input" id="qm-mem" value="4gb" /></label>
+          <label class="field-label">Method<input class="field-input" id="qm-method" value="b3lyp" /></label>
+          <label class="field-label">Basis set<input class="field-input" id="qm-basis" value="6-31+g(d,p)" /></label>
+          <label class="field-label">Vacuum (Å)<input class="field-input" id="qm-padding" type="number" min="0" step="0.5" value="10" /></label>
+        </div>
+        <p class="panel-desc">One file per multiplicity (1 → sing, 3 → trip …). Gaussian files stay in <code>confN/</code>; other codes use <code>confN/&lt;code&gt;/</code>. Periodic codes use the applied crystal cell, the trajectory lattice, or a box of extent + vacuum.</p>
+        <details class="qm-templates">
+          <summary>Edit templates</summary>
+          <div class="ase-ctrl-row">
+            <select class="field-input" id="qm-template-file"></select>
+            <button class="btn btn-sm" id="qm-template-reset">Reset</button>
+          </div>
+          <textarea class="field-input qm-template-text" id="qm-template-text" spellcheck="false" rows="12"></textarea>
+          <p class="panel-desc">Placeholders: {charge} {mult} {state} {tag} {chk} {index} {frame} {nproc} {mem} {maxcore} {method} {basis} {coords} {nat} {ntyp} {nspin} {unpaired} {delta_spin} {uks} {cell_ang} {cell_note} {qbox_cell} {qbox_species} {qbox_atoms} {qe_species} {qe_magnetization} {vasp_species} {vasp_counts} {vasp_coords} {cp2k_cell} {cp2k_kinds}. Templates are kept for this session.</p>
+        </details>
+        <p class="panel-desc" id="qm-status" aria-live="polite"></p>
+      </fieldset>
+
+      <label class="field-label" style="margin-top:1.2rem">Output directory</label>
+      <div class="dir-row">
+        <div class="dir-path" id="output-dir-text">Not selected</div>
+        <button class="btn btn-sm" id="btn-output-dir">Browse …</button>
+      </div>
+
+      <div class="step-nav-row">
+        <button class="btn btn-back" id="back-4">← Back</button>
+        <button class="btn btn-next" id="next-4" disabled>Run →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 5: Processing ── -->
+    <section class="step-panel" id="panel-5">
+      <h2 class="panel-title">Processing</h2>
+      <div class="progress-wrap">
+        <div class="progress-bar"><div class="progress-fill" id="prog-fill"></div></div>
+        <div class="progress-label" id="prog-label">Starting …</div>
+      </div>
+      <button class="btn btn-sm hidden" id="cancel-processing">Cancel extraction</button>
+      <div class="log-box" id="log-box"></div>
+      <a class="btn btn-next hidden" id="download-results" download="MONET-results.zip">Download results ZIP</a>
+      <button class="btn btn-back hidden" id="retry-processing">← Back to options</button>
+      <div class="step-nav-row">
+        <span></span>
+        <button class="btn btn-next hidden" id="next-5">Results →</button>
+      </div>
+    </section>
+
+    <!-- ── STEP 6: Results ── -->
+    <section class="step-panel" id="panel-6">
+      <h2 class="panel-title">Complete!</h2>
+      <div class="result-summary" id="result-summary"></div>
+      <div class="result-tree" id="result-tree"></div>
+      <div class="step-nav-row">
+        <button class="btn btn-back btn-ghost" id="back-6">New Run</button>
+        <button class="btn btn-next" id="open-ase-btn"
+                title="Open ASE Analysis panel">ASE Analysis →</button>
+      </div>
+    </section>
+
+  </aside>
+
+  <!-- RIGHT: viewer + ASE panel -->
+  <main class="viewer-area">
+
+    <!-- Tab bar -->
+    <div class="viewer-tabbar">
+      <button class="vtab active" data-vtab="view3d">3D View</button>
+      <button class="vtab" data-vtab="ase" id="vtab-ase">
+        ASE Analysis
+        <span class="ase-tab-badge" id="ase-tab-badge">✓</span>
+      </button>
+    </div>
+
+    <!-- ── 3D Viewer tab ── -->
+    <div class="vtab-content active" id="vtab-content-view3d">
+      <div class="viewer-header">
+        <span id="viewer-title">3D Molecular Viewer</span>
+        <span class="viewer-hint">Drag to rotate · Scroll to zoom · Click atom to select</span>
+      </div>
+      <canvas id="mol-canvas"></canvas>
+      <div class="viewer-overlay" id="viewer-overlay">
+        <div class="overlay-msg">Load a trajectory file to begin</div>
+      </div>
+    </div>
+
+    <!-- ── ASE Analysis tab ── -->
+    <div class="vtab-content" id="vtab-content-ase">
+
+      <div class="info-box" id="ase-connection">Checking ASE connection …</div>
+      <button class="btn btn-sm" id="btn-ase-recheck">Recheck ASE connection</button>
+      <div class="info-box" id="analysis-source">Load an XYZ file and click Next to begin analysis.</div>
+
+      <details class="ase-cell-panel">
+        <summary>Crystal cell and periodic boundaries</summary>
+        <p class="panel-desc">Choose the lattice metric (crystal system), then enter a, b, c in Å and α, β, γ in degrees. Crystal habit alone does not determine the unit cell. Coordinates stay Cartesian: a along x, b in xy, c with positive z. No symmetry expansion or rescaling is performed.</p>
+        <label class="field-label" for="cell-system">Crystal system / setting</label>
+        <select class="field-input" id="cell-system">
+          <option value="triclinic">Triclinic / custom</option><option value="monoclinic">Monoclinic (unique b)</option>
+          <option value="orthorhombic">Orthorhombic</option><option value="tetragonal">Tetragonal</option>
+          <option value="hexagonal">Hexagonal / trigonal (hexagonal axes)</option><option value="rhombohedral">Trigonal (rhombohedral axes)</option>
+          <option value="cubic">Cubic</option>
+        </select>
+        <div class="cell-grid">
+<label class="field-label">a (Å)<input class="field-input" id="cell-a" type="number" step="any" value="10" /></label>
+<label class="field-label">b (Å)<input class="field-input" id="cell-b" type="number" step="any" value="10" /></label>
+<label class="field-label">c (Å)<input class="field-input" id="cell-c" type="number" step="any" value="10" /></label>
+<label class="field-label">α = ∠(b,c)<input class="field-input" id="cell-alpha" type="number" step="any" value="90" /></label>
+<label class="field-label">β = ∠(a,c)<input class="field-input" id="cell-beta" type="number" step="any" value="90" /></label>
+<label class="field-label">γ = ∠(a,b)<input class="field-input" id="cell-gamma" type="number" step="any" value="90" /></label>
+</div>
+        <div class="ase-ctrl-row">Periodic directions:
+          <label><input type="checkbox" id="cell-pbc-a" checked /> a</label>
+          <label><input type="checkbox" id="cell-pbc-b" checked /> b</label>
+          <label><input type="checkbox" id="cell-pbc-c" checked /> c</label>
+        </div>
+        <div class="ase-ctrl-row">
+          <button class="btn btn-sm" id="cell-apply">Apply cell</button>
+          <button class="btn btn-sm" id="cell-read">Read cell from XYZ</button>
+          <button class="btn btn-sm" id="cell-reset">Use source cell</button>
+        </div>
+        <p class="panel-desc" id="cell-status" aria-live="polite">No manual cell. Source lattice/PBC are used when present.</p>
+      </details>
+      <label class="ase-append-label"><input type="checkbox" id="ase-mic" checked /> Use minimum-image distances and angles in periodic directions (requires cell/PBC)</label>
+      <div class="ase-time-row">
+        <strong>Time axis</strong>
+        <label>MD time step <input class="field-input field-input-sm" id="md-timestep" type="number" min="0" step="any" placeholder="set" /></label>
+        <select class="field-input field-input-sm" id="md-timestep-unit"><option value="fs">fs</option><option value="au">a.u.</option><option value="ps">ps</option></select>
+        <label>MD steps per saved frame <input class="field-input field-input-sm" id="md-stride" type="number" min="1" step="1" value="1" /></label>
+        <span id="md-dt-info" aria-live="polite">Set the MD time step used in your simulation (needed for MSD, VDOS and autocorrelation).</span>
+      </div>
+      <div class="ase-workspace">
+      <aside class="ase-reference">
+
+        <div class="ase-molecule-toolbar">
+          <strong>ASE molecule · first frame</strong>
+          <button class="btn btn-sm" id="ase-fit-view">Fit view</button>
+        </div>
+        <canvas id="ase-mol-canvas" aria-label="ASE molecular viewer: click atoms to select; drag to rotate; scroll to zoom"></canvas>
+        <p class="panel-desc">Click atoms in order · Right-click an atom to select its molecule · Drag to rotate · Scroll to zoom</p>
+        <div id="ase-context-menu" class="ase-context-menu hidden">
+          <button class="btn btn-sm" id="ase-select-molecule">Select molecule from atom</button>
+        </div>
+        <label class="field-label">Molecule bond cutoff × covalent radii
+          <input class="field-input field-input-sm" id="ase-bond-scale" type="number" value="1.2" min="0.5" max="2" step="0.05" />
+        </label>
+        <p class="panel-desc">Molecules are inferred from first-frame connectivity; adjust the cutoff for unusual bonds. Molecule selection uses graph order, not a torsion path: pick ordered atoms individually for angles.</p>
+        <div class="ase-pick-header">Selected in order: <strong id="ase-picked-count">0</strong>
+          <button class="btn btn-sm" id="ase-clear-selection" disabled>Clear selection</button>
+        </div>
+        <div id="ase-picked-atoms" class="ase-picked-atoms" aria-live="polite">No atoms selected.</div>
+
+        <label class="field-label" for="ase-selection-target">Use selection for</label>
+        <select class="field-input" id="ase-selection-target">
+          <option value="rmsd">RMSD — selected atoms</option>
+          <option value="pdd">Pair distances — selected atoms</option>
+          <option value="bonds">Bond lengths — groups of 2</option>
+          <option value="angles">Bond angles — groups of 3</option>
+          <option value="dihedrals">Dihedrals — groups of 4</option>
+          <option value="rmsdmatrix">RMSD matrix — selected atoms</option>
+          <option value="rdf">RDF — selected atoms</option>
+          <option value="msd">MSD / diffusion — selected atoms</option>
+          <option value="vdos">VDOS — selected atoms</option>
+          <option value="acf">Autocorrelation — atom groups</option>
+        </select>
+        <label class="ase-append-label"><input type="checkbox" id="ase-append-group" /> Append to existing atom groups</label>
+        <button class="btn btn-sm btn-accent" id="ase-use-selection" disabled>Use selection</button>
+        <p class="panel-desc" id="ase-selection-hint">Choose atoms, use the selection, then click Compute in the analysis panel.</p>
+      <details class="ase-atom-list" open>
+        <summary>Atoms in the active ASE trajectory — <span id="ase-atom-count">0</span></summary>
+        <p class="panel-desc">Use the same MONET IDs as in the viewer. Coordinates below are from the first frame (Å).</p>
+        <div class="ase-atom-scroll"><table class="atom-table">
+          <thead><tr><th>MONET ID</th><th>ASE index</th><th>Element</th><th>x (Å)</th><th>y (Å)</th><th>z (Å)</th></tr></thead>
+          <tbody id="ase-atom-body"></tbody>
+        </table></div>
+        <p class="panel-desc" id="ase-atom-match">No trajectory loaded.</p>
+      </details>
+      </aside>
+      <section class="ase-analysis-work">
+      <div class="ase-plot-actions ase-global-actions">
+        <button class="btn btn-sm" id="btn-clear-analyses" disabled>Clear all analyses</button>
+        <button class="btn btn-sm" id="ase-cancel" disabled>Cancel running calculation</button>
+      </div>
+      <!-- ASE sub-tabs -->
+      <div class="ase-subtabbar">
+        <button class="ase-stab active" data-stab="rmsd">RMSD</button>
+        <button class="ase-stab" data-stab="pdd">Pair Distances</button>
+        <button class="ase-stab" data-stab="bonds">Bond Lengths</button>
+        <button class="ase-stab" data-stab="angles">Bond Angles</button>
+        <button class="ase-stab" data-stab="dihedrals">Dihedral Angles</button>
+        <button class="ase-stab" data-stab="rmsdmatrix">RMSD Matrix</button>
+        <button class="ase-stab" data-stab="rdf">RDF</button>
+        <button class="ase-stab" data-stab="msd">MSD / Diffusion</button>
+        <button class="ase-stab" data-stab="vdos">VDOS</button>
+        <button class="ase-stab" data-stab="acf">Autocorrelation</button>
+        <button class="ase-stab" data-stab="convert">Convert</button>
+      </div>
+
+      <!-- RMSD sub-panel -->
+      <div class="ase-subpanel active" id="ase-sub-rmsd">
+        <label class="field-label" for="rmsd-atoms">Atoms for RMSD — MONET IDs (blank = all)</label>
+        <input class="field-input" id="rmsd-atoms" placeholder="Use the molecular viewer or enter IDs" />
+        <div class="ase-ctrl-row">
+          <label class="field-label">Frame step (1 = every frame)</label>
+          <input class="field-input field-input-sm" type="number" id="rmsd-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-rmsd">Compute RMSD</button>
+        </div>
+        <div class="ase-ctrl-row">
+          <label><input type="checkbox" id="rmsd-align" /> Kabsch alignment (remove translation and rotation)</label>
+          <label><input type="checkbox" id="rmsd-unwrap" /> Unwrap PBC</label>
+          <label class="field-label" for="rmsd-reference">Reference frame</label>
+          <input class="field-input field-input-sm" type="number" id="rmsd-reference" min="0" placeholder="first" />
+        </div>
+        <div class="ase-prog-row hidden" id="rmsd-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="rmsd-prog-fill"></div></div>
+          <span id="rmsd-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-rmsd" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-rmsd" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-rmsd" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-rmsd"></canvas>
+        <div class="chart-placeholder" id="chart-rmsd-ph">
+          Run RMSD to see the time evolution vs. frame 0
+        </div>
+      </div>
+
+      <!-- Pair-distance distribution sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-pdd">
+        <label class="field-label" for="pdd-atoms">Atoms for pair distances — MONET IDs (blank = all)</label>
+        <input class="field-input" id="pdd-atoms" placeholder="Use the molecular viewer or enter IDs" />
+        <div class="ase-ctrl-row">
+          <label class="field-label">R<sub>max</sub> (Å)</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-rmax" value="8" step="0.5" min="1" />
+          <label class="field-label">Bins</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-bins" value="80" min="10" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="pdd-step" value="5" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-pdd">Compute</button>
+        </div>
+        <div class="ase-ctrl-row">
+          <label class="field-label">Element pair (blank = all; C N = C–N only)</label>
+          <input class="field-input" type="text" id="pdd-elements"
+                 placeholder="e.g.  C N  (space-separated)" />
+        </div>
+        <div class="ase-prog-row hidden" id="pdd-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="pdd-prog-fill"></div></div>
+          <span id="pdd-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-pdd" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-pdd" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-pdd" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-pdd"></canvas>
+        <div class="chart-placeholder" id="chart-pdd-ph">
+          Pair-distance counts from 0.5 Å to Rmax across sampled frames
+        </div>
+      </div>
+
+      <!-- Bond lengths sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-bonds">
+        <div class="ase-ctrl-row">
+          <label class="field-label">MONET atom ID pairs (e.g. 1 2  1 3)</label>
+          <input class="field-input" type="text" id="bonds-pairs"
+                 placeholder="1 2  1 3" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="bonds-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-bonds">Compute</button>
+        </div>
+        <div class="ase-prog-row hidden" id="bonds-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="bonds-prog-fill"></div></div>
+          <span id="bonds-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-bonds" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-bonds" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-bonds" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-bonds"></canvas>
+        <div class="chart-placeholder" id="chart-bonds-ph">
+          Bond-length evolution over the extracted trajectory
+        </div>
+      </div>
+
+      <!-- Bond angles sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-angles">
+        <div class="ase-ctrl-row">
+          <label class="field-label">MONET atom ID triplets (e.g. 2 1 3; middle ID is the vertex)</label>
+          <input class="field-input" type="text" id="angles-triplets"
+                 placeholder="2 1 3" />
+          <label class="field-label">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="angles-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-angles">Compute</button>
+        </div>
+<div class="ase-ctrl-row"><label class="field-label" for="angles-range">Angle range</label><select class="field-input" id="angles-range"><option value="natural">Bond angle: 0–180°</option><option value="360">0–360°</option><option value="signed90">−90° to +90° (folded, modulo 180°)</option></select></div>
+<label class="field-label hidden" id="angles-normal-row">Reference normal x y z (Cartesian, selects orientation for 0–360°)
+          <input class="field-input" id="angles-normal" value="0 0 1" /></label>
+        <p class="panel-desc">0–360° retains the spatial angle magnitude and uses the reference normal to choose direction; an in-plane normal is rejected. Folded mode maps the usual 0–180° bond angle modulo 180°.</p>
+        <div class="ase-prog-row hidden" id="angles-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="angles-prog-fill"></div></div>
+          <span id="angles-prog-label">—</span>
+        </div>
+
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-angles" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-angles" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-angles" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-angles"></canvas>
+        <div class="chart-placeholder" id="chart-angles-ph">
+          Bond-angle evolution over the extracted trajectory
+        </div>
+      </div>
+
+      <div class="ase-subpanel" id="ase-sub-dihedrals">
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="dihedrals-quads">Four MONET atom IDs in bond order (e.g. 1 2 3 4)</label>
+          <input class="field-input" type="text" id="dihedrals-quads" placeholder="1 2 3 4" />
+          <label class="field-label" for="dihedrals-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="dihedrals-step" value="1" min="1" />
+          <button class="btn btn-sm btn-accent" id="btn-run-dihedrals">Compute dihedrals</button>
+        </div>
+        <p class="panel-desc">Torsion about the middle bond, in ASE's 0–360° convention. Periodic-image correction is optional in Crystal cell. Collinear groups have undefined dihedrals.</p>
+<div class="ase-ctrl-row"><label class="field-label" for="dihedrals-range">Angle range</label><select class="field-input" id="dihedrals-range"><option value="360">0–360°</option><option value="signed90">−90° to +90° (folded, modulo 180°)</option></select></div>
+<p class="panel-desc">Folded mode maps torsions modulo 180° into [−90°, +90°); +90° is represented by −90°. Opposite orientations become equivalent. Change the range, then recompute.</p>
+        <div class="ase-prog-row hidden" id="dihedrals-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="dihedrals-prog-fill"></div></div>
+          <span id="dihedrals-prog-label">—</span>
+        </div>
+
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-dihedrals" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-dihedrals" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-dihedrals" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-dihedrals"></canvas>
+        <div class="chart-placeholder" id="chart-dihedrals-ph">Dihedral-angle evolution over the active trajectory</div>
+      </div>
+
+
+      <!-- Pairwise RMSD matrix -->
+      <div class="ase-subpanel" id="ase-sub-rmsdmatrix">
+        <label class="field-label" for="rmsdmatrix-atoms">Atoms — MONET IDs (blank = all)</label>
+        <input class="field-input" id="rmsdmatrix-atoms" placeholder="Use the molecular viewer or enter IDs" />
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="rmsdmatrix-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="rmsdmatrix-step" value="10" min="1" />
+          <label class="field-label" for="rmsdmatrix-max">Max frames</label>
+          <input class="field-input field-input-sm" type="number" id="rmsdmatrix-max" value="500" min="2" max="3000" />
+          <label><input type="checkbox" id="rmsdmatrix-align" checked /> Kabsch alignment</label>
+          <label><input type="checkbox" id="rmsdmatrix-unwrap" /> Unwrap PBC</label>
+          <button class="btn btn-sm btn-accent" id="btn-run-rmsdmatrix">Compute matrix</button>
+        </div>
+        <p class="panel-desc">Low off-diagonal RMSD means the trajectory revisits earlier states; blocks along the diagonal show distinct basins. Use a frame step close to the decorrelation stride to compare non-correlated configurations.</p>
+        <div class="ase-prog-row hidden" id="rmsdmatrix-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="rmsdmatrix-prog-fill"></div></div>
+          <span id="rmsdmatrix-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-rmsdmatrix" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-rmsdmatrix" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-rmsdmatrix" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas chart-square" id="chart-rmsdmatrix"></canvas>
+        <div class="chart-placeholder" id="chart-rmsdmatrix-ph">Pairwise RMSD between analysed frames</div>
+      </div>
+
+      <!-- Radial distribution function -->
+      <div class="ase-subpanel" id="ase-sub-rdf">
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="rdf-elements">Element pair (blank = all; O H = O–H)</label>
+          <input class="field-input" id="rdf-elements" placeholder="e.g. O O" />
+        </div>
+        <label class="field-label" for="rdf-atoms">Restrict to atoms — MONET IDs (blank = all)</label>
+        <input class="field-input" id="rdf-atoms" placeholder="optional" />
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="rdf-rmax">R<sub>max</sub> (Å)</label>
+          <input class="field-input field-input-sm" type="number" id="rdf-rmax" min="0.1" step="0.1" placeholder="max" />
+          <label class="field-label" for="rdf-bins">Bins</label>
+          <input class="field-input field-input-sm" type="number" id="rdf-bins" value="200" min="10" />
+          <label class="field-label" for="rdf-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="rdf-step" value="1" min="1" />
+          <label class="field-label" for="rdf-plot">Plot</label>
+          <select class="field-input field-input-sm rdf-plot" id="rdf-plot"><option value="g">g(r)</option><option value="n">n(r)</option></select>
+          <button class="btn btn-sm btn-accent" id="btn-run-rdf">Compute RDF</button>
+        </div>
+        <p class="panel-desc" id="rdf-info">Normalised g(r) with minimum-image distances; needs a periodic cell. R<sub>max</sub> is limited to half the smallest cell width. n(r) is the running coordination number.</p>
+        <div class="ase-prog-row hidden" id="rdf-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="rdf-prog-fill"></div></div>
+          <span id="rdf-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-rdf" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-rdf" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-rdf" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-rdf"></canvas>
+        <div class="chart-placeholder" id="chart-rdf-ph">Radial distribution function</div>
+      </div>
+
+      <!-- MSD and diffusion -->
+      <div class="ase-subpanel" id="ase-sub-msd">
+        <label class="field-label" for="msd-atoms">Atoms — MONET IDs (blank = all)</label>
+        <input class="field-input" id="msd-atoms" placeholder="Use the molecular viewer or enter IDs" />
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="msd-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="msd-step" value="1" min="1" />
+          <label class="field-label" for="msd-fit-start">Fit from (fs)</label>
+          <input class="field-input field-input-sm" type="number" id="msd-fit-start" min="0" step="any" placeholder="10%" />
+          <label class="field-label" for="msd-fit-end">to (fs)</label>
+          <input class="field-input field-input-sm" type="number" id="msd-fit-end" min="0" step="any" placeholder="50%" />
+          <label><input type="checkbox" id="msd-drift" checked /> Remove centre-of-geometry drift</label>
+          <button class="btn btn-sm btn-accent" id="btn-run-msd">Compute MSD</button>
+        </div>
+        <p class="panel-desc">Positions are unwrapped when a periodic cell is present; MSD is averaged over all time origins; D = slope / 6 from a linear fit in the chosen window.</p>
+        <div class="info-box hidden" id="msd-info"></div>
+        <div class="ase-prog-row hidden" id="msd-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="msd-prog-fill"></div></div>
+          <span id="msd-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-msd" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-msd" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-msd" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-msd"></canvas>
+        <div class="chart-placeholder" id="chart-msd-ph">Mean-square displacement vs lag time</div>
+      </div>
+
+      <!-- Vibrational density of states -->
+      <div class="ase-subpanel" id="ase-sub-vdos">
+        <label class="field-label" for="vdos-atoms">Atoms — MONET IDs (blank = all)</label>
+        <input class="field-input" id="vdos-atoms" placeholder="Use the molecular viewer or enter IDs" />
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="vdos-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="vdos-step" value="1" min="1" />
+          <label class="field-label" for="vdos-smooth">Smoothing (cm⁻¹)</label>
+          <input class="field-input field-input-sm" type="number" id="vdos-smooth" value="10" min="0" step="any" />
+          <label class="field-label" for="vdos-max">Up to (cm⁻¹)</label>
+          <input class="field-input field-input-sm" type="number" id="vdos-max" value="4000" min="10" step="any" />
+          <label><input type="checkbox" id="vdos-mass" checked /> Mass-weighted</label>
+          <button class="btn btn-sm btn-accent" id="btn-run-vdos">Compute VDOS</button>
+        </div>
+        <p class="panel-desc">Fourier transform of finite-difference velocities (Hann window), normalised to unit area. Save frames every MD step (or few steps) for accurate high frequencies; the Nyquist limit is shown after the calculation.</p>
+        <div class="info-box hidden" id="vdos-info"></div>
+        <div class="ase-prog-row hidden" id="vdos-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="vdos-prog-fill"></div></div>
+          <span id="vdos-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-vdos" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-vdos" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-vdos" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-vdos"></canvas>
+        <div class="chart-placeholder" id="chart-vdos-ph">Vibrational density of states</div>
+      </div>
+
+      <!-- Autocorrelation -->
+      <div class="ase-subpanel" id="ase-sub-acf">
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="acf-quantity">Quantity</label>
+          <select class="field-input field-input-sm acf-select" id="acf-quantity">
+            <option value="dihedral">Dihedral angle (4 IDs)</option>
+            <option value="angle">Bond angle (3 IDs)</option>
+            <option value="bond">Bond length (2 IDs)</option>
+            <option value="rmsd">RMSD vs first frame (IDs)</option>
+          </select>
+          <label class="field-label" for="acf-groups">MONET IDs (several groups are averaged)</label>
+          <input class="field-input" id="acf-groups" placeholder="1 2 3 4" />
+        </div>
+        <div class="ase-ctrl-row">
+          <label class="field-label" for="acf-step">Frame step</label>
+          <input class="field-input field-input-sm" type="number" id="acf-step" value="1" min="1" />
+          <label class="field-label" for="acf-maxlag">Max lag (fs)</label>
+          <input class="field-input field-input-sm" type="number" id="acf-maxlag" min="0" step="any" placeholder="all" />
+          <label class="field-label" for="acf-mode">Correlation</label>
+          <select class="field-input field-input-sm acf-select" id="acf-mode">
+            <option value="linear">Normalised fluctuations ⟨δx(0)δx(t)⟩/⟨δx²⟩</option>
+            <option value="circular">Circular ⟨cos[θ(t)−θ(0)]⟩ (angles)</option>
+          </select>
+          <label class="field-label" for="acf-fit">Fit exp(−t/τ) up to</label>
+          <select class="field-input field-input-sm acf-select" id="acf-fit">
+            <option value="zero">first zero crossing</option>
+            <option value="efold">3 × first 1/e crossing</option>
+            <option value="all">whole lag range</option>
+          </select>
+          <label class="field-label" for="acf-bins">Distribution bins</label>
+          <input class="field-input field-input-sm" type="number" id="acf-bins" value="60" min="2" />
+          <button class="btn btn-sm btn-accent" id="btn-run-acf">Compute ACF</button>
+        </div>
+        <p class="panel-desc">Dihedrals are unwrapped across 0/360° before the linear correlation. τ gives the decorrelation time: sampling configurations every ≥ τ yields statistically independent structures.</p>
+        <div class="info-box acf-result hidden" id="acf-result">
+          <div id="acf-tau-text"></div>
+          <div class="ase-ctrl-row">
+            <label class="field-label" for="acf-tau-manual">Use τ (fs)</label>
+            <input class="field-input field-input-sm" type="number" id="acf-tau-manual" min="0" step="any" placeholder="fit" />
+            <label class="field-label" for="acf-multiplier">× factor</label>
+            <input class="field-input field-input-sm" type="number" id="acf-multiplier" min="0.1" step="0.1" value="1" />
+            <strong id="acf-stride-text"></strong>
+            <button class="btn btn-sm btn-accent" id="acf-apply-stride" disabled>Use as sampling frequency</button>
+          </div>
+        </div>
+        <div class="ase-prog-row hidden" id="acf-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="acf-prog-fill"></div></div>
+          <span id="acf-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-acf" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-acf" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-acf" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-acf"></canvas>
+        <div class="chart-placeholder" id="chart-acf-ph">Autocorrelation function with exponential fit</div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-acfdist" disabled>Clear analysis</button>
+          <button class="btn btn-sm" id="download-acfdist" disabled>Download plot PNG</button>
+          <button class="btn btn-sm" id="csv-acfdist" disabled>Download data CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-acfdist"></canvas>
+        <div class="chart-placeholder" id="chart-acfdist-ph">Probability distribution of the selected quantity</div>
+      </div>
+
+      <!-- Format conversion sub-panel -->
+      <div class="ase-subpanel" id="ase-sub-convert">
+        <p class="panel-desc" style="padding:.6rem 0">
+          ASE supports 100+ file formats. Convert your trajectory or individual
+          structures to VASP POSCAR, CIF, extXYZ, Quantum ESPRESSO, LAMMPS …
+        </p>
+        <label class="field-label">Input file</label>
+        <div class="dir-row">
+          <div class="dir-path" id="conv-input-path">—</div>
+          <button class="btn btn-sm" id="btn-conv-input">Browse …</button>
+        </div>
+        <label class="field-label" style="margin-top:.8rem">Output format</label>
+        <select class="field-input" id="conv-format">
+          <option value="">Auto-detect from extension</option>
+          <option value="vasp">VASP POSCAR</option>
+          <option value="cif">CIF</option>
+          <option value="extxyz">Extended XYZ</option>
+          <option value="espresso-in">Quantum ESPRESSO input</option>
+          <option value="lammps-data">LAMMPS data</option>
+          <option value="aims">FHI-aims</option>
+          <option value="turbomole">Turbomole</option>
+          <option value="gaussian-in">Gaussian</option>
+          <option value="dftb">DFTB+</option>
+          <option value="json">ASE JSON</option>
+        </select>
+        <label class="toggle-row"><input type="checkbox" id="conv-first-frame" checked />
+          <span>Convert first frame only (required for single-structure formats)</span></label>
+<label class="ase-append-label"><input type="checkbox" id="conv-apply-cell" /> Apply the manual crystal cell above to this conversion input</label>
+        <p class="panel-desc">Crystal formats may require cell data absent from plain XYZ. Quantum ESPRESSO also requires pseudopotential settings.</p>
+        <label class="field-label" style="margin-top:.8rem">Output file</label>
+        <div class="dir-row">
+          <div class="dir-path" id="conv-output-path">—</div>
+          <button class="btn btn-sm" id="btn-conv-output">Save as …</button>
+        </div>
+        <div style="margin-top:1rem">
+          <button class="btn btn-accent" id="btn-run-conv" disabled>Convert</button>
+        </div>
+        <div class="ase-prog-row hidden" id="conv-prog-row" style="margin-top:.8rem">
+          <div class="progress-bar"><div class="progress-fill" id="conv-prog-fill"></div></div>
+          <span id="conv-prog-label">—</span>
+        </div>
+        <a class="btn btn-next hidden" id="download-converted" download>Download converted file</a>
+        <div class="info-box" style="margin-top:1rem">
+          <strong>Unwrap the active trajectory</strong> — rebuilds continuous atom paths across periodic boundaries (needs a periodic cell) and saves an extended XYZ copy.
+          <div style="margin-top:.5rem"><button class="btn btn-sm btn-accent" id="btn-unwrap" disabled>Unwrap and download</button></div>
+        </div>
+        <div class="ase-prog-row hidden" id="unwrap-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="unwrap-prog-fill"></div></div>
+          <span id="unwrap-prog-label">—</span>
+        </div>
+        <a class="btn btn-next hidden" id="download-unwrapped" download>Download unwrapped trajectory</a>
+        <div id="conv-result" class="info-box hidden" style="margin-top:.8rem"></div>
+      </div>
+
+      </section><!-- .ase-analysis-work -->
+      </div><!-- .ase-workspace -->
+    </div><!-- #vtab-content-ase -->
+  </main>
+
+</div><!-- .layout -->
+
+<!-- ===== STATUS BAR ===== -->
+<footer class="statusbar">
+  <span id="status-msg">Ready</span>
+</footer>
+
+<script src="xyz.js"></script>
+<script src="qm-inputs.js"></script>
+<script src="browser-bridge.js"></script>
+<script src="ase-model.js"></script>
+<script src="plot.js"></script>
+<script src="renderer.js"></script>
+</body>
+</html>

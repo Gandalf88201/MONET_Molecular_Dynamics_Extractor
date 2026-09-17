@@ -9,10 +9,17 @@ contextBridge.exposeInMainWorld('monet', {
   readFrame:         (fp, idx, atoms) => ipcRenderer.invoke('read-frame', fp, idx, atoms),
   processTrajectory: opts             => ipcRenderer.invoke('process-trajectory', opts),
   onProgress:        cb               => ipcRenderer.on('progress', (_, d) => cb(d)),
+  cancel:            scope            => ipcRenderer.invoke('cancel', scope),
+  canImport:         true,
+  importFile:        (fp, options)    => ipcRenderer.invoke('ase-import', fp, options),
 
   // ── ASE Python bridge ────────────────────────────────────────────────────
   aseCheck:          ()               => ipcRenderer.invoke('ase-check'),
   aseRun:            cmd              => ipcRenderer.invoke('ase-run', cmd),
   aseSelectOutput:   name             => ipcRenderer.invoke('ase-select-output', name),
-  onAseProgress:     cb               => ipcRenderer.on('ase-progress', (_, d) => cb(d)),
+  onAseProgress: cb => {
+    const listener = (_, data) => cb(data)
+    ipcRenderer.on('ase-progress', listener)
+    return () => ipcRenderer.removeListener('ase-progress', listener)
+  },
 })
