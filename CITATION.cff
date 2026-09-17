@@ -1,0 +1,82 @@
+cff-version: 1.2.0
+message: >-
+  If you use MONET, please cite the software and the article that introduced its
+  decorrelation workflow, and the libraries behind the analyses you used
+  (ASE, MDAnalysis; see "Citing and licences" in README.md).
+type: software
+title: "MONET: Molecular Dynamics Extractor"
+abstract: >-
+  Extracts configurations from molecular-dynamics trajectories, writes
+  quantum-chemistry inputs for each sampled configuration and analyses the
+  trajectory with ASE, MDAnalysis and its own methods (autocorrelation and
+  decorrelation stride, pairwise RMSD, RDF, MSD, VDOS, fluctuations and trends).
+authors:
+  - family-names: Francese
+    given-names: Tommaso
+    affiliation: University of Chicago
+version: 2.0.0
+license: MIT
+repository-code: "https://github.com/Gandalf88201/MONET_Molecular_Dynamics_Extractor"
+keywords:
+  - molecular dynamics
+  - first-principles molecular dynamics
+  - trajectory analysis
+  - ASE
+  - MDAnalysis
+preferred-citation:
+  type: article
+  authors:
+    - family-names: Francese
+      given-names: Tommaso
+    - family-names: Kundu
+      given-names: Arpan
+    - family-names: Gygi
+      given-names: Francois
+    - family-names: Galli
+      given-names: Giulia
+  title: "Quantum simulations of thermally activated delayed fluorescence in an all-organic emitter"
+  journal: "Physical Chemistry Chemical Physics"
+  volume: 24
+  start: 10101
+  year: 2022
+  doi: "10.1039/d2cp01147f"
+references:
+  - type: article
+    authors:
+      - family-names: Hjorth Larsen
+        given-names: Ask
+      - name: "et al."
+    title: "The atomic simulation environment—a Python library for working with atoms"
+    journal: "Journal of Physics: Condensed Matter"
+    volume: 29
+    start: 273002
+    year: 2017
+    doi: "10.1088/1361-648X/aa680e"
+  - type: conference-paper
+    authors:
+      - family-names: Gowers
+        given-names: Richard J.
+      - name: "et al."
+    title: "MDAnalysis: A Python package for the rapid analysis of molecular dynamics simulations"
+    collection-title: "Proceedings of the 15th Python in Science Conference"
+    start: 98
+    end: 105
+    year: 2016
+    doi: "10.25080/Majora-629e541a-00e"
+  - type: article
+    authors:
+      - family-names: Michaud-Agrawal
+        given-names: Naveen
+      - family-names: Denning
+        given-names: Elizabeth J.
+      - family-names: Woolf
+        given-names: Thomas B.
+      - family-names: Beckstein
+        given-names: Oliver
+    title: "MDAnalysis: A toolkit for the analysis of molecular dynamics simulations"
+    journal: "Journal of Computational Chemistry"
+    volume: 32
+    start: 2319
+    end: 2327
+    year: 2011
+    doi: "10.1002/jcc.21787"

@@ -1,0 +1,28 @@
+name: release
+
+# Push a tag (v2.0.0, or a named tag such as monet-pub) to publish a GitHub release
+# for the version in CITATION.cff (source ZIP included by GitHub).
+# With the repository enabled in Zenodo, each release is archived and receives a DOI.
+on:
+  push:
+    tags: ['v*', 'monet-*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Release notes from CHANGELOG.md
+        run: |
+          version=$(sed -n 's/^version: *//p' CITATION.cff)
+          awk -v v="$version" '$0 ~ "^## " v "( |$)" {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
+          test -s notes.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
+          case "$GITHUB_REF_NAME" in v*) test "${GITHUB_REF_NAME#v}" = "$version" || { echo "Tag and CITATION.cff version ($version) differ"; exit 1; } ;; esac
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --title "MONET $VERSION ($GITHUB_REF_NAME)" --notes-file notes.md --verify-tag

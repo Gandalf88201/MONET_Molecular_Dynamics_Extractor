@@ -11,6 +11,7 @@ contextBridge.exposeInMainWorld('monet', {
   onProgress:        cb               => ipcRenderer.on('progress', (_, d) => cb(d)),
   cancel:            scope            => ipcRenderer.invoke('cancel', scope),
   canImport:         true,
+  listFormats:       ()               => ipcRenderer.invoke('ase-run', { action: 'formats' }),
   importFile:        (fp, options)    => ipcRenderer.invoke('ase-import', fp, options),
 
   // ── ASE Python bridge ────────────────────────────────────────────────────

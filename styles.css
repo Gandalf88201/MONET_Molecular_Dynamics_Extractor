@@ -849,3 +849,71 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .acf-result { color: var(--text); }
 .acf-result strong { color: var(--green); }
 #acf-tau-text { margin-bottom: 4px; }
+.plot-view { display: inline-flex; align-items: center; gap: 4px; font-size: .74rem; color: var(--text-dim); }
+.plot-view-select { width: auto !important; }
+.plot-view input[type="text"] { width: 7em; }
+.dist-options:not(.ase-plot-actions) { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
+.dist-options textarea { font-family: var(--mono, monospace); font-size: .75rem; resize: vertical; }
+.dist-options.hidden { display: none; }
+
+/* ── Collapsible workflow panel and larger ASE viewer ── */
+.sidebar { transition: width .18s ease; }
+.sidebar-rail { display: none; }
+.layout.sidebar-collapsed .sidebar { width: 46px; overflow: hidden; }
+.layout.sidebar-collapsed .sidebar > :not(.sidebar-rail) { display: none !important; }
+.layout.sidebar-collapsed .sidebar-rail { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 10px 0; height: 100%; }
+.rail-step { writing-mode: vertical-rl; transform: rotate(180deg); font-size: .72rem; color: var(--text-dim); letter-spacing: 1px; }
+.rail-continue { writing-mode: vertical-rl; transform: rotate(180deg); padding: 12px 6px; margin-top: auto; }
+.sidebar-toggle { background: transparent; border: none; border-right: 1px solid var(--border); color: var(--text-dim); font-size: 1rem; padding: 0 12px; cursor: pointer; }
+.sidebar-toggle:hover { color: var(--text); background: var(--bg3); }
+.analysis-hints { margin-left: 1.1rem; display: flex; flex-direction: column; gap: 4px; }
+.view-style { display: inline-flex; align-items: center; gap: 5px; font-size: .72rem; margin-left: auto; margin-right: 12px; }
+.view-style-select { width: auto !important; padding: 3px 6px; }
+.ase-header { display: flex; align-items: stretch; gap: 6px; padding: 6px 10px 0; flex-shrink: 0; }
+.ase-header #analysis-source { flex: 1; padding: 5px 10px; }
+.ase-connection-details { flex-shrink: 0; padding: 2px 12px; font-size: .74rem; }
+.ase-connection-details summary { cursor: pointer; color: var(--text-dim); }
+.ase-molecule-toolbar strong { margin-right: auto; }
+.ase-reference[data-size="compact"] #ase-mol-canvas { height: 280px; min-height: 280px; }
+.ase-reference[data-size="large"] #ase-mol-canvas { height: 52vh; min-height: 320px; }
+.ase-reference[data-size="full"] #ase-mol-canvas { height: calc(100vh - 230px); min-height: 360px; }
+.layout.sidebar-collapsed .ase-reference { width: 48%; max-width: none; }
+
+/* Trajectory player (ASE viewer) */
+.player { display: flex; flex-direction: column; gap: 6px; margin: 6px 0 4px; padding: 6px 8px; border: 1px solid var(--border, rgba(127,127,127,.3)); border-radius: 6px; }
+.player-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.player-row input[type="range"] { flex: 1 1 140px; min-width: 120px; }
+.player-row .field-input-sm[type="number"] { width: 4.5em; }
+.player-play { min-width: 5.5em; }
+.player-frame { font-family: var(--mono, monospace); font-size: .75rem; color: var(--text-dim); white-space: nowrap; }
+.player-live { font-family: var(--mono, monospace); font-size: .78rem; min-height: 1.1em; }
+
+.time-mirror { padding: 4px 0 6px; border-bottom: 1px dashed var(--border, rgba(127,127,127,.3)); margin-bottom: 6px; }
+.field-missing { outline: 2px solid var(--danger, #d64545) !important; outline-offset: 1px; }
+
+.acf-plateau { margin-top: 8px; padding: 8px 10px; border-left: 3px solid var(--accent, #c8102e); background: color-mix(in srgb, var(--accent, #c8102e) 6%, transparent); }
+.acf-plateau p { margin: 4px 0 6px; }
+.dist-chart-actions { margin-top: 14px; }
+
+/* Analysis groups: only the sub-tabs of the chosen module are shown */
+.ase-stab.group-hidden { display: none; }
+.module-intro { margin: 2px 0 6px; }
+.result-tables table { border-collapse: collapse; margin: 6px 0 12px; font-size: .78rem; width: 100%; }
+.result-tables th, .result-tables td { border-bottom: 1px solid var(--border, rgba(127,127,127,.25)); padding: 3px 8px; text-align: left; vertical-align: top; }
+.result-tables th { color: var(--text-dim); font-weight: 600; }
+.result-tables caption { text-align: left; font-weight: 600; padding: 4px 0; }
+.result-tables .mismatch td { color: var(--danger, #d64545); }
+.mda-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 6px 12px; margin: 4px 0 8px; }
+.mda-fields .mda-wide { grid-column: 1 / -1; }
+.mda-fields label { display: flex; flex-direction: column; gap: 2px; }
+.mda-fields .pick-row { display: flex; gap: 4px; }
+.mda-fields .pick-row .field-input { flex: 1; }
+.topology-ok { border-left: 3px solid var(--ok, #2e9b5f); }
+.topology-bad { border-left: 3px solid var(--danger, #d64545); }
+
+.fluct-table { max-height: 320px; overflow: auto; }
+.fluct-table th { cursor: pointer; user-select: none; white-space: nowrap; }
+.fluct-table tbody tr { cursor: pointer; }
+.fluct-table tbody tr.active td { background: var(--accent-soft, rgba(77,157,224,.18)); }
+.fluct-table .trend-flag { color: var(--danger, #d64545); font-weight: 600; }
+.matrix-style .field-input:not(.field-input-sm) { min-width: 220px; flex: 1; }

@@ -287,10 +287,47 @@ class XYZTrajectory:
             self._parse(0)
         return list(self.symbols)
 
+    def atom_properties(self):
+        """Extra per-atom extended-XYZ columns (resname, resid, atomname) from the first frame."""
+        if not self.properties:
+            return {}
+        fields = self.properties.split(':')
+        wanted, col = {}, 0
+        for i in range(0, len(fields), 3):
+            name, kind, width = fields[i], fields[i + 1], int(fields[i + 2])
+            if name in ('resname', 'resid', 'atomname') and width == 1:
+                wanted[name] = (col, kind)
+            col += width
+        if not wanted:
+            return {}
+        with open(self.path, 'rb') as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            parts = self._block(mm, 0).split(b'\n', 2)
+            table = self._tokens(parts[2], 0)
+        return {name: [int(v) if kind == 'I' else v.decode('utf-8', 'replace') for v in table[:, column]]
+                for name, (column, kind) in wanted.items()}
+
     def frame_indices(self, step=1, start=0, stop=None):
         if not isinstance(step, int) or step < 1:
             raise ValueError('Frame step must be a positive integer.')
         return range(start, self.nframes if stop is None else min(stop, self.nframes), step)
+
+    def write_frames(self, indices, output):
+        """Copy the given frames byte for byte (atom rows and lattice kept), tagging each comment
+        with source_frame=<index in this file>; an existing tag (from an earlier subsampling) is kept,
+        so it always refers to the original trajectory."""
+        count = 0
+        with open(self.path, 'rb') as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm, open(output, 'wb') as out:
+            for frame in indices:
+                block = self._block(mm, frame)
+                head, comment, rest = block.split(b'\n', 2)
+                comment = comment.rstrip(b'\r')
+                if not re.search(rb'\bsource_frame=\S+', comment):
+                    comment += b' source_frame=%d' % frame
+                out.write(head.rstrip(b'\r') + b'\n' + comment + b'\n' + rest)
+                if not rest.endswith(b'\n'):
+                    out.write(b'\n')
+                count += 1
+        return count
 
     def _block(self, mm, frame):
         return mm[self.offsets[frame]:self.offsets[frame + 1]]
@@ -397,11 +434,16 @@ class XYZTrajectory:
             return None, None
         from ase.io.extxyz import key_val_str_to_dict
         info = key_val_str_to_dict(comment.decode('utf-8', 'replace'))
-        lattice = info.get('Lattice')
-        if lattice is None:
+        # Extended XYZ lists a1 a2 a3 as rows. ASE's key_val_str_to_dict returns them as columns
+        # (order='F'), so the nine numbers are read here directly, as in the JavaScript engine.
+        match = re.search(rb'\bLattice="([^"]+)"', comment)
+        if match is None or info.get('Lattice') is None:
+            return None, None
+        lattice = np.array(match.group(1).split(), dtype=float)
+        if lattice.size != 9:
             return None, None
         pbc = info.get('pbc', [True, True, True])
-        return np.array(lattice, dtype=float).reshape(3, 3), [bool(v) for v in np.atleast_1d(pbc)]
+        return lattice.reshape(3, 3), [bool(v) for v in np.atleast_1d(pbc)]
 
     def atoms(self, frames, indices=None):
         """Yield (frame_index, ase.Atoms) — used by the ASE analyses."""

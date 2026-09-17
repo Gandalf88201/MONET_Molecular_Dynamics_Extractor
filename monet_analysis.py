@@ -196,11 +196,13 @@ def vdos(positions, dt, masses=None, smooth_cm=0.0):
 
 # ── autocorrelation ──────────────────────────────────────────────────────────
 
-def autocorrelation(series, mode='linear', max_lag=None):
+def autocorrelation(series, mode='linear', max_lag=None, period=360.0):
     """Normalised autocorrelation of one or more series (groups, N).
 
     linear:   C(m) = <dx(t) dx(t+m)> / <dx^2>, averaged over time origins and groups.
-    circular: C(m) = <cos(x(t+m) - x(t))> for angles in degrees (not mean-subtracted).
+    circular: the same for the unit vector z = exp(2 pi i x / period) of angles in degrees,
+              C(m) = Re<dz*(t) dz(t+m)> / <|dz|^2> with dz = z - <z>. Removing <z> makes C decay
+              to zero (the raw <cos[x(t+m) - x(t)]> only decays to R^2 for a confined angle).
     """
     x = np.atleast_2d(np.asarray(series, dtype=float))
     n = x.shape[1]
@@ -209,10 +211,14 @@ def autocorrelation(series, mode='linear', max_lag=None):
     max_lag = n - 1 if max_lag is None else int(min(max_lag, n - 1))
     counts = n - np.arange(n)
     if mode == 'circular':
-        radians = np.radians(x)
+        radians = 2 * np.pi * x / period
         parts = [np.cos(radians), np.sin(radians)]
-        total = sum(_autocorrelation_sum(p.T).T for p in parts)  # (groups, N)
-        acf = (total / counts).mean(axis=0)
+        parts = [p - p.mean(axis=1, keepdims=True) for p in parts]
+        raw = sum(_autocorrelation_sum(p.T).T for p in parts) / counts  # (groups, N)
+        variance = raw[:, :1]
+        if np.any(variance <= 1e-15):
+            raise ValueError('A selected angle is constant; its autocorrelation is undefined.')
+        acf = (raw / variance).mean(axis=0)
     else:
         dx = x - x.mean(axis=1, keepdims=True)
         raw = _autocorrelation_sum(dx.T).T / counts
@@ -223,11 +229,12 @@ def autocorrelation(series, mode='linear', max_lag=None):
     return acf[:max_lag + 1]
 
 
-def correlation_time(lags, acf, fit_until='zero'):
+def correlation_time(lags, acf, fit_until='zero', model='exp'):
     """Fit C(t) = exp(-t/tau) (as in the MONET reference workflow) and integrate C(t).
 
     fit_until: 'zero' (first zero crossing), 'efold' (first C < 1/e ... x3 of it), or 'all'.
-    Returns tau_fit, its standard error, tau_int and the fitted window.
+    model: 'exp' or 'exp_offset', C(t) = (1 - c) exp(-t/tau) + c with an asymptotic plateau c.
+    Returns tau_fit, its standard error, tau_int, the plateau and the fitted window.
     """
     from scipy.optimize import curve_fit
     lags = np.asarray(lags, dtype=float)
@@ -245,14 +252,83 @@ def correlation_time(lags, acf, fit_until='zero'):
     t, c = lags[:end], acf[:end]
     tau_int = float(np.sum((acf[:zero][1:] + acf[:zero][:-1]) / 2 * np.diff(lags[:zero]))) if zero > 1 else float('nan')
     guess = tau_int if math.isfinite(tau_int) and tau_int > 0 else max(t[-1], 1e-9) / 2
+    plateau, plateau_error = 0.0, 0.0
     try:
-        (tau,), covariance = curve_fit(lambda s, tau: np.exp(-s / tau), t, c, p0=[guess],
-                                       bounds=(1e-12, np.inf), maxfev=20000)
+        if model == 'exp_offset':
+            tail = float(np.mean(c[len(c) // 2:]))
+            (tau, plateau), covariance = curve_fit(lambda s, tau, off: (1 - off) * np.exp(-s / tau) + off, t, c,
+                                                   p0=[guess, min(max(tail, -0.5), 0.9)],
+                                                   bounds=([1e-12, -1.0], [np.inf, 0.999]), maxfev=20000)
+            plateau_error = float(np.sqrt(covariance[1, 1])) if np.isfinite(covariance).all() else float('nan')
+        else:
+            (tau,), covariance = curve_fit(lambda s, tau: np.exp(-s / tau), t, c, p0=[guess],
+                                           bounds=(1e-12, np.inf), maxfev=20000)
         error = float(np.sqrt(covariance[0, 0])) if np.isfinite(covariance).all() else float('nan')
     except (RuntimeError, ValueError):
-        tau, error = float('nan'), float('nan')
-    return {'tau_fit': float(tau), 'tau_fit_error': error, 'tau_int': tau_int,
+        tau, error, plateau, plateau_error = float('nan'), float('nan'), float('nan'), float('nan')
+    return {'tau_fit': float(tau), 'tau_fit_error': error, 'tau_int': tau_int, 'plateau': float(plateau),
+            'plateau_error': plateau_error, 'fit_model': model,
             'fit_end': float(t[-1]), 'fit_points': int(end), 'decorrelated': bool(len(below))}
+
+
+def molecule_tree(symbols, positions, cell, pbc, mult=1.2):
+    """Bonded molecules (with periodic images) as a breadth-first forest: (depth levels, parents, labels)."""
+    from ase import Atoms
+    from ase.neighborlist import natural_cutoffs, neighbor_list
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import breadth_first_order, connected_components
+    n = len(symbols)
+    atoms = Atoms(symbols, positions=positions, cell=cell, pbc=pbc)
+    cutoffs = [0.0 if s == 'X' else c for s, c in zip(symbols, natural_cutoffs(atoms, mult=mult))]
+    i, j = neighbor_list('ij', atoms, cutoffs)
+    graph = coo_matrix((np.ones(len(i)), (i, j)), shape=(n, n)).tocsr()
+    count, labels = connected_components(graph, directed=False)
+    parent = np.full(n, -1)
+    depth = np.zeros(n, dtype=int)
+    seen = np.zeros(count, dtype=bool)
+    for root in range(n):
+        if seen[labels[root]]:
+            continue
+        seen[labels[root]] = True
+        order, predecessors = breadth_first_order(graph, root, directed=False, return_predecessors=True)
+        for atom in order[1:]:
+            parent[atom] = predecessors[atom]
+            depth[atom] = depth[parent[atom]] + 1
+    levels = [np.flatnonzero(depth == d) for d in range(1, depth.max() + 1)] if n else []
+    return levels, parent, labels
+
+
+def wrap_positions(positions, cells, mode='molecules', tree=None, center=None):
+    """Positions (F, n, 3) moved into their cells, as in pbc.js.
+
+    mode 'atoms' wraps every atom; 'molecules' first rebuilds molecules split by the boundary
+    (each atom follows its bonded parent by the minimum image), then shifts whole molecules so
+    their centroid lies inside the cell. `center` (atom indices) is moved to the cell centre first.
+    """
+    x = np.array(positions, dtype=float)
+    cells = np.asarray(cells, dtype=float)
+    for f in range(len(x)):
+        cell = cells[f]
+        inverse = np.linalg.inv(cell)
+        frame = x[f]
+        if mode == 'molecules' and tree is not None:
+            levels, parent, _ = tree
+            for level in levels:
+                delta = frame[level] - frame[parent[level]]
+                frac = delta @ inverse
+                frame[level] = frame[parent[level]] + (frac - np.round(frac)) @ cell
+        if center is not None and len(center):
+            frame += 0.5 * cell.sum(axis=0) - frame[center].mean(axis=0)
+        if mode == 'atoms':
+            frame -= np.floor(frame @ inverse) @ cell
+        elif mode == 'molecules':
+            labels = tree[2] if tree is not None else np.arange(len(frame))
+            count = labels.max() + 1
+            sums = np.zeros((count, 3))
+            np.add.at(sums, labels, frame)
+            centroids = sums / np.bincount(labels, minlength=count)[:, None]
+            frame -= (np.floor(centroids @ inverse) @ cell)[labels]
+    return x
 
 
 def unwrap_angles(series, period=360.0):
@@ -263,3 +339,177 @@ def unwrap_angles(series, period=360.0):
 def histogram_density(values, nbins, value_range=None):
     counts, edges = np.histogram(np.ravel(values), bins=nbins, range=value_range, density=True)
     return (edges[:-1] + edges[1:]) / 2, counts
+
+
+# ── fluctuations of atoms, bonds, angles and dihedrals ──────────────────────
+
+def _vectors(positions, cells, pbc, a, b):
+    """Displacements b - a (F, G, 3), minimum image when a periodic cell is given."""
+    d = positions[:, b] - positions[:, a]
+    if cells is None or pbc is None or not np.any(pbc):
+        return d
+    return np.array([minimum_image(d[f], cells[f], pbc) for f in range(len(d))])
+
+
+def geometry_series(positions, groups, cells=None, pbc=None):
+    """(F, G) distances (Å), angles or dihedrals (degrees, ASE 0–360 convention) of equally sized groups."""
+    positions = np.asarray(positions, dtype=float)
+    g = np.asarray(groups, dtype=int)
+    width = g.shape[1]
+    norm = lambda v: np.linalg.norm(v, axis=-1)
+    if width == 2:
+        return norm(_vectors(positions, cells, pbc, g[:, 0], g[:, 1]))
+    if width == 3:
+        u = _vectors(positions, cells, pbc, g[:, 1], g[:, 0])
+        v = _vectors(positions, cells, pbc, g[:, 1], g[:, 2])
+        cosine = np.sum(u * v, axis=-1) / (norm(u) * norm(v))
+        return np.degrees(np.arccos(np.clip(cosine, -1, 1)))
+    if width == 4:
+        v0 = _vectors(positions, cells, pbc, g[:, 0], g[:, 1])
+        v1 = _vectors(positions, cells, pbc, g[:, 1], g[:, 2])
+        v2 = _vectors(positions, cells, pbc, g[:, 2], g[:, 3])
+        n1 = v1 / norm(v1)[..., None]
+        v = -v0 + np.sum(v0 * n1, axis=-1)[..., None] * n1
+        w = v2 - np.sum(v2 * n1, axis=-1)[..., None] * n1
+        x = np.sum(v * w, axis=-1)
+        y = np.sum(np.cross(n1, v) * w, axis=-1)
+        return np.degrees(np.arctan2(y, x)) % 360.0
+    raise ValueError('Groups must have 2, 3 or 4 atoms.')
+
+
+def bonded_items(neighbours, kind, allowed=None, limit=5000):
+    """Bonds, angles or dihedrals of a bond graph (list of neighbour sets), each listed once."""
+    ok = (lambda *atoms: True) if allowed is None else (lambda *atoms: all(a in allowed for a in atoms))
+    items = []
+    n = len(neighbours)
+    for j in range(n):
+        near = sorted(neighbours[j])
+        if kind == 'bonds':
+            items += [[j, k] for k in near if k > j and ok(j, k)]
+        elif kind == 'angles':
+            items += [[i, j, k] for x, i in enumerate(near) for k in near[x + 1:] if ok(i, j, k)]
+        else:
+            for k in near:
+                if k <= j:
+                    continue
+                items += [[i, j, k, l] for i in sorted(neighbours[j]) if i != k
+                          for l in sorted(neighbours[k]) if l not in (j, i) and ok(i, j, k, l)]
+        if len(items) > limit:
+            raise ValueError(f'More than {limit} {kind} found: select a smaller set of atoms.')
+    return items
+
+
+def dominant_frequency(signal, dt):
+    """Frequency (1/time unit of dt) and share of power of the strongest non-zero Fourier component.
+
+    `signal` is (F,) or (F, k); the power of the k components is summed.
+    """
+    x = np.asarray(signal, dtype=float)
+    if x.ndim == 1:
+        x = x[:, None]
+    n = len(x)
+    if n < 8:
+        return math.nan, math.nan
+    t = np.arange(n)
+    # Remove the mean and the linear trend, then apply a Hann window.
+    coefficients = np.polyfit(t, x, 1)
+    x = x - (np.outer(t, coefficients[0]) + coefficients[1])
+    power = np.sum(np.abs(np.fft.rfft(x * np.hanning(n)[:, None], axis=0)) ** 2, axis=1)
+    power[0] = 0
+    total = power.sum()
+    if not total > 0:
+        return math.nan, math.nan
+    k = int(np.argmax(power))
+    return k / (n * dt), float(power[k] / total)
+
+
+def series_statistics(values, dt=1.0, period=None, blocks=5):
+    """Mean, spread, extremes, linear trend and dominant oscillation of every row (G, F).
+
+    Angles with a `period` use circular mean and SD; extremes and trend use the
+    series unwrapped around its circular mean. `dt` is the time between analysed
+    frames (slopes are per time unit of dt).
+    """
+    values = np.asarray(values, dtype=float)
+    frames = values.shape[1]
+    t = np.arange(frames) * dt
+    out = []
+    for row in values:
+        if period:
+            k = 2 * math.pi / period
+            s, c = np.sin(k * row).mean(), np.cos(k * row).mean()
+            mean = float(math.atan2(s, c) / k % period)
+            resultant = max(math.hypot(s, c), 1e-12)
+            std = float(math.sqrt(-2 * math.log(resultant)) / k)
+            centred = mean + (row - mean + period / 2) % period - period / 2
+            trend_signal = np.unwrap(row, period=period)
+        else:
+            mean = float(row.mean())
+            std = float(row.std(ddof=1)) if frames > 1 else 0.0
+            centred = trend_signal = row
+        if frames > 2:
+            (slope, intercept), cov = np.polyfit(t, trend_signal, 1, cov=True)
+            slope_error = float(math.sqrt(max(cov[0, 0], 0)))
+            fitted = slope * t + intercept
+            residual = np.sum((trend_signal - fitted) ** 2)
+            spread = np.sum((trend_signal - trend_signal.mean()) ** 2)
+            r2 = float(1 - residual / spread) if spread > 0 else 0.0
+        else:
+            slope, slope_error, r2 = 0.0, math.nan, 0.0
+        # Block averages: their scatter is a correlation-aware error of the mean.
+        # A trend is significant when the block means (which average out the fast oscillations)
+        # follow the line beyond three times the error of their own slope.
+        size = frames // blocks
+        significant = False
+        if size >= 2:
+            signal = trend_signal[:size * blocks]
+            means = signal.reshape(blocks, size).mean(axis=1)
+            residuals = (signal - (slope * t[:size * blocks] + intercept)).reshape(blocks, size).mean(axis=1)
+            block_sem = float(residuals.std(ddof=1) / math.sqrt(blocks))
+            centres = t[:size * blocks].reshape(blocks, size).mean(axis=1)
+            (block_slope, _), block_cov = np.polyfit(centres, means, 1, cov=True)
+            significant = abs(block_slope) > 3 * math.sqrt(max(block_cov[0, 0], 0)) and abs(slope) * t[-1] > 0.1 * max(std, 1e-12)
+        else:
+            block_sem = math.nan
+        half = frames // 2
+        drift = float(centred[half:].mean() - centred[:half].mean()) if half else 0.0
+        # A constant quantity has no oscillation (its spectrum is rounding noise).
+        flat = std <= 1e-9 * max(1.0, abs(mean))
+        frequency, share = (math.nan, math.nan) if flat else dominant_frequency(trend_signal, dt)
+        out.append({
+            'mean': mean, 'std': std, 'min': float(centred.min()), 'max': float(centred.max()),
+            'range': float(centred.max() - centred.min()),
+            'p5': float(np.percentile(centred, 5)), 'p95': float(np.percentile(centred, 95)),
+            'slope': float(slope), 'slope_error': slope_error, 'r2': r2,
+            'drift': drift, 'block_sem': block_sem,
+            'trend': bool(significant),
+            'frequency': frequency, 'frequency_share': share,
+        })
+    return out
+
+
+def atomic_fluctuations(positions, cells=None, pbc=None, align=True):
+    """Per-atom displacement from the average position.
+
+    Returns (|dev| series (n, F), RMSF (n,), deviations (F, n, 3)). Periodic
+    trajectories are unwrapped first; `align` removes global translation and
+    rotation (Kabsch on the analysed atoms, iterated once on the average).
+    """
+    x = np.asarray(positions, dtype=float)
+    if cells is not None and pbc is not None and np.any(pbc):
+        x, _ = unwrap(x, cells, pbc)
+    x = x - x.mean(axis=1, keepdims=True) if align else x
+    if align and x.shape[1] >= 3:
+        for _ in range(2):
+            reference = x.mean(axis=0)
+            reference = reference - reference.mean(axis=0)
+            H = np.einsum('fni,nj->fij', x, reference)
+            U, _, Vt = np.linalg.svd(H)
+            d = np.sign(np.linalg.det(np.einsum('fij,fjk->fik', U, Vt)))
+            U[:, :, -1] *= d[:, None]
+            R = np.einsum('fij,fjk->fik', U, Vt)
+            x = np.einsum('fni,fij->fnj', x, R)
+    deviation = x - x.mean(axis=0)
+    magnitude = np.linalg.norm(deviation, axis=2)
+    rmsf = np.sqrt(np.mean(magnitude ** 2, axis=0))
+    return magnitude.T, rmsf, deviation

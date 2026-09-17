@@ -23,16 +23,17 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
 
 ROOT = Path(__file__).resolve().parent
-STATIC = {'index.html', 'styles.css', 'theme.js', 'xyz.js', 'ase-model.js', 'plot.js', 'browser-bridge.js',
-          'qm-inputs.js', 'renderer.js', 'examples/water.XYZ'}
+STATIC = {'index.html', 'styles.css', 'theme.js', 'xyz.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'browser-bridge.js',
+          'qm-inputs.js', 'viewer.js', 'renderer.js', 'examples/water.XYZ'}
 FORMATS = {'xyz', 'extxyz', 'vasp', 'cif', 'espresso-in', 'lammps-data', 'aims', 'turbomole', 'gaussian-in', 'dftb', 'json'}
 ACTIONS = {'scan', 'frame', 'read_info', 'molecule', 'rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'convert', 'extract', 'import',
-           'rmsd_matrix', 'rdf', 'msd', 'vdos', 'unwrap', 'acf'}
-ALLOWED = {'indices', 'frame_step', 'nbins', 'rmax', 'elements', 'pairs', 'triplets', 'quads', 'format',
+           'rmsd_matrix', 'rdf', 'msd', 'vdos', 'unwrap', 'acf', 'mda_select', 'mda_rmsf', 'mda_rgyr', 'mda_hbonds', 'cell_file', 'wrap', 'frames', 'subsample', 'mda_run', 'mda_align', 'topology', 'ase_structure', 'ase_coordination', 'fluctuations'}
+ALLOWED = {'indices', 'quantity', 'groups', 'center', 'atom_ids', 'stride', 'start', 'fit_model', 'analysis', 'params', 'frame', 'symprec', 'frame_step', 'nbins', 'rmax', 'elements', 'pairs', 'triplets', 'quads', 'format',
            'first_frame_only', 'cell', 'pbc', 'mic', 'angle_range', 'angle_normal', 'seed', 'bond_scale',
            'index', 'selected', 'frequency', 'compute_average', 'generate_gaussian', 'atom_count', 'history', 'qm', 'source_name', 'cell_vectors',
            'align', 'unwrap', 'reference_index', 'max_frames', 'dt', 'fit_start', 'fit_end', 'remove_drift',
-           'by_element', 'mass_weighted', 'smooth_cm', 'max_cm', 'quantity', 'groups', 'max_lag', 'mode', 'fit_until'}
+           'by_element', 'mass_weighted', 'smooth_cm', 'max_cm', 'quantity', 'groups', 'max_lag', 'mode', 'fit_until',
+           'selection', 'donors', 'hydrogens', 'acceptors', 'd_a_cutoff', 'angle'}
 MAX_JOBS = 3
 MAX_JSON = 16 * 1024 * 1024
 CHUNK = 1024 * 1024
@@ -192,6 +193,14 @@ class Session:
             command.update(output_dir=str(workdir / 'MONET-results'), zip=str(workdir / 'MONET-results.zip'))
         if action == 'unwrap':
             command['output'] = str(workdir / 'unwrapped.extxyz')
+        if action == 'wrap':
+            command['output'] = str(workdir / 'wrapped.extxyz')
+        if action == 'subsample':
+            command['output'] = str(workdir / 'uncorrelated.extxyz')
+        if action == 'mda_align':
+            command['output'] = str(workdir / 'aligned.extxyz')
+        if action == 'mda_run' and command.get('analysis') == 'density':
+            command['output'] = str(workdir / 'density.dx')
         if action == 'import':
             command['output'] = str(workdir / 'imported.extxyz')
             for key, field in (('reference_id', 'reference'), ('cell_id', 'cell_file')):
@@ -208,6 +217,23 @@ class Session:
                 result['output'] = f'{stem}-unwrapped.extxyz'
                 result['download_id'] = self.add_download(workdir / 'unwrapped.extxyz', result['output'])
                 result['file_id'] = self.add_file(workdir / 'unwrapped.extxyz', result['output'])
+            elif action == 'mda_align':
+                stem = Path(safe_name(request.get('output') or 'trajectory')).stem
+                result['output'] = f'{stem}.extxyz' if stem.endswith('aligned') else f'{stem}-aligned.extxyz'
+                result['download_id'] = self.add_download(workdir / 'aligned.extxyz', result['output'])
+                result['file_id'] = self.add_file(workdir / 'aligned.extxyz', result['output'])
+            elif action == 'mda_run' and command.get('analysis') == 'density':
+                result['output'] = 'density.dx'
+                result['download_id'] = self.add_download(workdir / 'density.dx', 'density.dx')
+            elif action == 'subsample':
+                stem = Path(safe_name(request.get('output') or 'trajectory')).stem
+                result['output'] = f'{stem}.extxyz' if stem.endswith('uncorrelated') else f'{stem}-uncorrelated.extxyz'
+                result['download_id'] = self.add_download(workdir / 'uncorrelated.extxyz', result['output'])
+                result['file_id'] = self.add_file(workdir / 'uncorrelated.extxyz', result['output'])
+            elif action == 'wrap':
+                stem = Path(safe_name(request.get('output') or 'trajectory')).stem
+                result['output'] = f'{stem}-wrapped.extxyz'
+                result['download_id'] = self.add_download(workdir / 'wrapped.extxyz', result['output'])
             elif action == 'import':
                 stem = Path(safe_name(request.get('source_name') or 'trajectory')).stem
                 result['file_id'] = self.add_file(workdir / 'imported.extxyz', f'{stem}.extxyz')
@@ -330,6 +356,8 @@ class Handler(BaseHTTPRequestHandler):
                 result = self.wait(session.check())
             elif self.path == '/api/jobs':
                 result = {'ok': True, 'job_id': session.start(request).id}
+            elif self.path == '/api/formats':
+                result = self.wait(session.register(Job({'action': 'formats'})))
             elif self.path == '/api/run':
                 result = self.wait(session.start(request))
             elif self.path == '/api/release':

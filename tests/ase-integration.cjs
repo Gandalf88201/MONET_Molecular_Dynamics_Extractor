@@ -234,6 +234,9 @@ with zipfile.ZipFile(sys.argv[1]) as z:
   assert.equal((await api.analyzeFile(imported.filePath)).configCount, 2); checks++
   result = await api.aseRun({ action: 'bonds', filename: imported.filePath, pairs: [[0, 1]] })
   assert.ok(Math.abs(result.series['0-1'][1] - 2.2 * 0.529177210903) < 1e-7, JSON.stringify(result)); checks++
+  // Format list for the import menu.
+  const listed = await api.listFormats()
+  assert.equal(listed.ok, true); assert.ok(listed.ase.length > 50); checks++
   // Cancelling a running job stops its Python process.
   const bigFrames = Array.from({ length: 4000 }, (_, i) => `3\nframe ${i}\n` + 'C 0 0 0\nH 0 0 1.1\nH 0 1 0\n'.repeat(1)).join('')
   file = new File([bigFrames], 'long.xyz'); const longName = await api.selectFile()

@@ -254,7 +254,7 @@
       let key = `imported/${(files.get(name)?.name || name).replace(/\.[^./]*$/, '')}.extxyz`
       for (let copy = 2; remote.has(key); copy++) key = `imported-${copy}/${key.split('/').pop()}`
       remote.set(key, Promise.resolve(result.file_id))
-      return { filePath: key, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label }
+      return { filePath: key, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label, warning: result.warning }
     }),
     releaseFile: async name => {
       const pending = remote.get(name)
@@ -288,11 +288,21 @@
     onProgress: callback => { progress.add(callback); return () => progress.delete(callback) },
     onAseProgress: callback => { aseProgress.add(callback); return () => aseProgress.delete(callback) },
     aseCheck: () => request('/api/check', {}),
+    listFormats: () => request('/api/formats', {}),
     aseSelectOutput: async name => name.split(/[\\/]/).pop(),
     aseRun: async command => {
       try {
         if (!server) return { ok: false, error: desktopOnly }
-        const result = await serverRun(command)
+        // Player frames and cell look-ups run in the background: no status-bar progress.
+        const quiet = ['frames', 'cell_file', 'topology'].includes(command.action)
+        const result = await serverRun(command, 'ase', quiet ? () => {} : emitAse)
+        // Derived trajectories (uncorrelated subset, unwrapped copy) can become the active file.
+        if (result.ok && result.file_id) {
+          let key = `derived/${result.output || command.action + '.extxyz'}`
+          for (let copy = 2; remote.has(key); copy++) key = `derived-${copy}/${key.split('/').pop()}`
+          remote.set(key, Promise.resolve(result.file_id))
+          result.filePath = key
+        }
         if (result.ok && result.download_id) {
           result.downloadURL = downloadURL(result.download_id)
           result.output = command.output

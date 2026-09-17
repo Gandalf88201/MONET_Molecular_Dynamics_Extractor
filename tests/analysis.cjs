@@ -57,6 +57,15 @@ frames = []
 for th in np.radians(theta):
     frames.append([[1, 0, 0], [0, 0, 0], [0, 0, 1.5], [np.cos(th), np.sin(th), 1.5]])
 write('torsion-ou.xyz', ['C', 'C', 'C', 'C'], frames)
+# 6) six rigid waters scattered around a triclinic cell (molecules partly outside it)
+from ase.geometry import cellpar_to_cell
+cellw = cellpar_to_cell([10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371])
+wat = np.array([[0, 0, 0], [0.957, 0, 0], [-0.24, 0.927, 0]])
+origins = rng.uniform(-12, 30, (6, 3))
+write('waters.xyz', ['O', 'H', 'H'] * 6, [np.concatenate([wat + o + 0.2 * f for o in origins]) for f in range(3)])
+# The same torsion, randomly flipped by 180 deg in each frame (equivalent orientations of a symmetric group).
+flips = np.radians(theta + 180 * rng.integers(0, 2, len(theta)))
+write('torsion-flip.xyz', ['C', 'C', 'C', 'C'], [[[1, 0, 0], [0, 0, 0], [0, 0, 1.5], [np.cos(th), np.sin(th), 1.5]] for th in flips])
 `, temp])
 
 // Kabsch: rigid motion has zero aligned RMSD but a large raw RMSD.
@@ -131,7 +140,18 @@ near(r2.tau_fit / au, r.tau_fit, 1e-6 * r.tau_fit, 'unit scaling'); checks++
 const r3 = bridge({ action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, frame_step: 5, max_lag: 300 })
 near(r3.tau_fit, 40, 7, 'tau with frame step'); assert.equal(r3.lags[1], 5); checks++
 const circ = bridge({ action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, mode: 'circular', max_lag: 200, fit_until: 'efold' })
-assert.equal(circ.ok, true); assert.ok(circ.acf[200] > 0.9, 'circular ACF plateaus at <cos> > 0'); checks++
+assert.equal(circ.ok, true); near(circ.tau_fit, 40, 8, 'circular tau (mean-removed unit vector)'); assert.ok(Math.abs(circ.acf[200]) < 0.3, 'circular ACF decays'); checks++
+// Default lag range: half of the run.
+const half = bridge({ action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1 })
+assert.equal(half.lags.length - 1, Math.floor(half.n_frames / 2)); checks++
+// Folded dihedrals: 180° flips are ignored with period 180 and destroy the 0–360 correlation.
+const folded = bridge({ action: 'acf', filename: path.join(temp, 'torsion-flip.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, max_lag: 300, angle_range: 'fold180' })
+assert.equal(folded.ok, true, JSON.stringify(folded).slice(0, 300)); near(folded.tau_fit, 40, 6, 'folded tau'); near(folded.statistics[0].mean, 90, 2, 'folded mean'); assert.equal(folded.period, 180); checks++
+assert.ok(folded.distribution.x.at(-1) < 180); checks++
+const foldedCirc = bridge({ action: 'acf', filename: path.join(temp, 'torsion-flip.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, max_lag: 300, angle_range: 'fold180', mode: 'circular' })
+near(foldedCirc.tau_fit, 40, 8, 'folded circular tau'); checks++
+const unfolded = bridge({ action: 'acf', filename: path.join(temp, 'torsion-flip.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, max_lag: 300, mode: 'circular' })
+assert.ok(unfolded.tau_fit < 5, `flips decorrelate the 0–360° series: ${unfolded.tau_fit}`); checks++
 const bondAcf = bridge({ action: 'acf', filename: path.join(temp, 'diatomic.xyz'), quantity: 'bond', groups: [[0, 1]], dt: 0.5, max_lag: 100 })
 near(bondAcf.acf[Math.round(1e15 / (1000 * 2.99792458e10) / 0.5)], 1, 0.02, 'periodic bond ACF'); checks++
 for (const bad of [{ quantity: 'volume' }, { groups: [[0, 1]] }, { mode: 'circular', quantity: 'bond', groups: [[0, 1]] }, { dt: -1 }, { groups: [[0, 0, 1, 2]] }]) {
@@ -139,5 +159,134 @@ for (const bad of [{ quantity: 'volume' }, { groups: [[0, 1]] }, { mode: 'circul
   assert.equal(result.ok, false, JSON.stringify(bad)); assert.ok(!/Traceback/.test(result.message), result.message); checks++
 }
 
+// Fit with an asymptotic plateau: C(t) = (1 − c) exp(−t/τ) + c.
+const plateauFit = JSON.parse(execFileSync(python, ['-c', `
+import json, sys, numpy as np
+sys.path.insert(0, sys.argv[1])
+import monet_analysis
+t = np.arange(0, 300.0)
+acf = 0.7 * np.exp(-t / 20) + 0.3 + 0.002 * np.sin(t)
+print(json.dumps(monet_analysis.correlation_time(t, acf, 'all', 'exp_offset')))
+`, root]).toString())
+near(plateauFit.tau_fit, 20, 0.2, 'offset tau'); near(plateauFit.plateau, 0.3, 0.005, 'plateau c'); assert.equal(plateauFit.fit_model, 'exp_offset'); checks++
+r = bridge({ action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, max_lag: 300, fit_model: 'exp_offset', fit_until: 'all' })
+assert.equal(r.ok, true); near(r.tau_fit, 40, 8, 'offset tau on OU'); assert.ok(Math.abs(r.plateau) < 0.1); near(r.fit_curve.at(-1), r.plateau + (1 - r.plateau) * Math.exp(-300 / r.tau_fit), 1e-9, 'curve uses the plateau'); checks++
+assert.equal(bridge({ action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, fit_model: 'cubic' }).ok, false); checks++
+// Uncorrelated configurations: every stride-th frame, copied verbatim, source frame recorded.
+r = bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'sub.xyz'), stride: 2 })
+assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.n_frames, 2); assert.equal(r.last, 2); checks++
+const subLines = fs.readFileSync(path.join(temp, 'sub.xyz'), 'utf8').split('\n')
+const srcLines = fs.readFileSync(path.join(temp, 'waters.xyz'), 'utf8').split('\n')
+assert.match(subLines[1], /source_frame=0$/); assert.match(subLines[21], /frame=2 source_frame=2$/); assert.equal(subLines[22], srcLines[42]); checks++
+assert.equal(bridge({ action: 'scan', filename: path.join(temp, 'sub.xyz') }).configCount, 2); checks++
+// Subsampling a subsample keeps the index of the original trajectory (frame 1 of sub.xyz is frame 2).
+r = bridge({ action: 'subsample', filename: path.join(temp, 'sub.xyz'), output: path.join(temp, 'sub2.xyz'), stride: 1 })
+assert.equal(r.ok, true, JSON.stringify(r)); assert.match(fs.readFileSync(path.join(temp, 'sub2.xyz'), 'utf8').split('\n')[21], /frame=2 source_frame=2$/); checks++
+for (const bad of [{ stride: 0 }, { stride: 1.5 }, { stride: 3 }, { stride: 1, start: 9 }]) {
+  r = bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'bad.xyz'), ...bad })
+  assert.equal(r.ok, false, JSON.stringify(bad))
+}
+assert.match(bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'bad.xyz'), stride: 3 }).message, /shorter than the decorrelation time/); checks++
+
+// Wrapping into a triclinic cell: whole molecules keep their bonds, atoms end up inside the cell.
+const cellpar = [10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371]
+r = bridge({ action: 'wrap', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'wrapped.xyz'), cell: cellpar, pbc: [true, true, true], mode: 'molecules', center: [0, 1, 2] })
+assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.n_molecules, 6); assert.equal(r.n_frames, 3); checks++
+const check = execFileSync(python, ['-c', `
+import sys, json, numpy as np
+from ase.io import read
+out = []
+for a in read(sys.argv[1], ':'):
+    f = a.get_scaled_positions(wrap=False).reshape(6, 3, 3).mean(axis=1)
+    out.append({'inside': bool(((f >= 0) & (f < 1)).all()), 'oh': [a.get_distance(3 * m, 3 * m + 1) for m in range(6)], 'centre': f[0].tolist()})
+print(json.dumps(out))
+`, path.join(temp, 'wrapped.xyz')]).toString()
+for (const frame of JSON.parse(check)) {
+  assert.ok(frame.inside); frame.oh.forEach(d => near(d, 0.957, 1e-6, 'whole molecule')); frame.centre.forEach(v => near(v, 0.5, 1e-6, 'centred'))
+}
+checks++
+r = bridge({ action: 'wrap', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'wrapped-atoms.xyz'), cell: cellpar, pbc: [true, true, true], mode: 'atoms' })
+const inside = execFileSync(python, ['-c', `import sys; from ase.io import read; f = read(sys.argv[1]).get_scaled_positions(wrap=False); print(bool(((f > -1e-9) & (f < 1)).all()))`, path.join(temp, 'wrapped-atoms.xyz')]).toString().trim()
+assert.equal(r.ok, true); assert.equal(inside, 'True'); checks++
+r = bridge({ action: 'wrap', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'x.xyz'), mode: 'molecules' })
+assert.equal(r.ok, false); assert.match(r.message, /periodic cell/); checks++
+r = bridge({ action: 'wrap', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'x.xyz'), cell: cellpar, pbc: [true, true, true], mode: 'everything' })
+assert.equal(r.ok, false); checks++
+// Frames for the trajectory player; unreadable files give a short message.
+r = bridge({ action: 'frames', filename: path.join(temp, 'waters.xyz'), indices: [2, 0] })
+assert.equal(r.ok, true); assert.equal(r.nframes, 3); assert.equal(r.positions[0].length, 54); near(r.positions[0][0] - r.positions[1][0], 0.4, 1e-3, 'frame order'); assert.equal(r.cells[0], null); checks++
+r = bridge({ action: 'frames', filename: path.join(temp, 'waters.xyz'), indices: [3] })
+assert.equal(r.ok, false); checks++
+r = bridge({ action: 'bonds', filename: path.join(temp, 'missing.xyz'), pairs: [[0, 1]] })
+assert.equal(r.ok, false); assert.ok(!/Traceback|RecursionError/.test(r.message), r.message); checks++
+
+// Fluctuations: a four-atom chain across the cell boundary (oscillating bond, drifting bond, torsion around 180°)
+// and a water molecule; expected values come from ASE get_distance/get_angle/get_dihedral frame by frame.
+const expected = JSON.parse(execFileSync(python, ['-W', 'ignore', '-c', `
+import sys, json, numpy as np
+from ase import Atoms
+out = sys.argv[1]
+F, L = 200, 10.0
+frames = []
+for f in range(F):
+    b1 = 1.5 + 0.03 * np.sin(2 * np.pi * f / 20)       # period 20 frames
+    b2 = 1.5 + 0.0005 * f                                # slow drift
+    th = np.radians(110 + 2 * np.cos(2 * np.pi * f / 50))
+    phi = np.radians(180 + 25 * np.sin(2 * np.pi * f / 40))
+    p1 = np.zeros(3); p2 = np.array([b2, 0, 0]); p0 = b1 * np.array([np.cos(th), np.sin(th), 0])
+    p3 = p2 + 1.5 * np.array([-np.cos(th), np.sin(th) * np.cos(phi), np.sin(th) * np.sin(phi)])
+    chain = np.array([p0, p1, p2, p3]) + [9.2, 5, 5]
+    water = np.array([[0, 0, 0], [0.96, 0, 0], [-0.24, 0.93, 0]]) + [3, 3, 3]
+    pos = np.vstack([chain, water]) % L                  # atoms wrapped one by one
+    frames.append(pos)
+symbols = ['C', 'C', 'C', 'C', 'O', 'H', 'H']
+with open(f'{out}/chain.xyz', 'w') as fh:
+    for k, pos in enumerate(frames):
+        fh.write(f'7\\nLattice="{L} 0 0 0 {L} 0 0 0 {L}" Properties=species:S:1:pos:R:3 pbc="T T T" frame={k}\\n')
+        fh.write(''.join(f'{s} {x:.10f} {y:.10f} {z:.10f}\\n' for s, (x, y, z) in zip(symbols, pos)))
+atoms = [Atoms(symbols, positions=p, cell=[L] * 3, pbc=True) for p in frames]
+b1 = np.array([a.get_distance(0, 1, mic=True) for a in atoms])
+b2 = np.array([a.get_distance(1, 2, mic=True) for a in atoms])
+ang = np.array([a.get_angle(0, 1, 2, mic=True) for a in atoms])
+dih = np.array([a.get_dihedral(0, 1, 2, 3, mic=True) for a in atoms])
+r = np.radians(dih)
+res = np.hypot(np.sin(r).mean(), np.cos(r).mean())
+print(json.dumps({'b1': [b1.mean(), b1.std(ddof=1)], 'b2': [b2.mean(), b2.std(ddof=1)], 'angle': [ang.mean(), ang.std(ddof=1)],
+                  'dihedral': [float(np.degrees(np.arctan2(np.sin(r).mean(), np.cos(r).mean())) % 360), float(np.degrees(np.sqrt(-2 * np.log(res))))]}))
+`, temp]).toString())
+const chain = path.join(temp, 'chain.xyz')
+const byItem = (r, item) => r.statistics[r.items.findIndex(i => i.join() === item.join())]
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'bonds', mic: true, dt: 0.5 })
+assert.equal(r.ok, true, JSON.stringify(r)); assert.deepEqual(r.items, [[0, 1], [1, 2], [2, 3], [4, 5], [4, 6]]); assert.equal(r.periodic, true); checks++
+near(byItem(r, [0, 1]).mean, expected.b1[0], 1e-8, 'bond mean'); near(byItem(r, [0, 1]).std, expected.b1[1], 1e-8, 'bond SD'); checks++
+near(byItem(r, [1, 2]).mean, expected.b2[0], 1e-8, 'drifting bond mean'); checks++
+// Period 20 frames × 0.5 fs → 0.1 fs⁻¹; the oscillating bond has no trend, the drifting one has.
+near(byItem(r, [0, 1]).frequency, 0.1, 1e-9, 'dominant frequency'); assert.equal(byItem(r, [0, 1]).trend, false); checks++
+assert.equal(byItem(r, [1, 2]).trend, true); near(byItem(r, [1, 2]).slope, 0.0005 / 0.5, 1e-6, 'trend slope per fs'); near(byItem(r, [1, 2]).drift, 0.0005 * 100, 1e-6, 'drift between halves'); checks++
+// Rigid water bonds: zero spread, no frequency (null in JSON).
+assert.ok(byItem(r, [4, 5]).std < 1e-9); assert.equal(byItem(r, [4, 5]).frequency, null); assert.equal(r.series.length, 5); assert.equal(r.series[0].length, 200); checks++
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'bonds', mic: false, indices: [0, 1, 2, 3] })
+assert.deepEqual(r.items.map(String), ['0,1', '1,2', '2,3'].filter(k => r.items.map(String).includes(k))); assert.ok(r.items.length <= 3); assert.equal(r.periodic, false); assert.equal(r.dt, null); checks++
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'angles', mic: true })
+assert.equal(r.items.length, 3); near(byItem(r, [0, 1, 2]).mean, expected.angle[0], 1e-8, 'angle mean'); near(byItem(r, [0, 1, 2]).std, expected.angle[1], 1e-8, 'angle SD'); checks++
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'dihedrals', mic: true })
+assert.deepEqual(r.items, [[0, 1, 2, 3]]); checks++
+// Circular statistics for a torsion crossing 180°: extremes stay around the mean (no 0/360 jump).
+near(r.statistics[0].mean, expected.dihedral[0], 1e-8, 'circular mean'); near(r.statistics[0].std, expected.dihedral[1], 1e-8, 'circular SD'); checks++
+assert.ok(r.statistics[0].max - r.statistics[0].min < 60); assert.equal(r.statistics[0].trend, false); checks++
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'dihedrals', mic: true, groups: [[0, 1, 2, 3]], frame_step: 2 })
+assert.equal(r.n_frames, 100); assert.equal(r.series[0].length, 100); checks++
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'angles', groups: [[0, 1]] })
+assert.equal(r.ok, false); checks++
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'torsions' })
+assert.equal(r.ok, false); checks++
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'bonds', indices: [4], mic: true })
+assert.equal(r.ok, false); assert.match(r.message, /No bonds found/); checks++
+// Atoms: the water only translates and rotates rigidly → RMSF ≈ 0 after alignment; unwrapped chain atoms move.
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'atoms', indices: [4, 5, 6], mic: true })
+assert.ok(Math.max(...r.statistics.map(st => st.rmsf)) < 1e-6); checks++
+r = bridge({ action: 'fluctuations', filename: chain, quantity: 'atoms', indices: [0, 1, 2, 3], mic: true, align: false })
+assert.ok(r.statistics[3].rmsf > r.statistics[1].rmsf); assert.ok(r.statistics[3].rmsf < 2, 'unwrapped across the boundary'); checks++
+
 fs.rmSync(temp, { recursive: true, force: true })
-console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF).`)
+console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations).`)

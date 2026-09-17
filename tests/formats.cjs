@@ -97,7 +97,52 @@ assert.match(header[1], /^Lattice="10\.0000000000 /); assert.match(header[5], /^
 result = bridge({ action: 'bonds', filename: result.output, pairs: [[0, 1]], mic: true })
 assert.deepEqual(result.series['0-1'].map(v => Number(v.toFixed(6))), [1.1, 1.2]); checks++
 
-// CP2K DCD (binary) with a reference.
+// One fixed cell from a CIF (uncertainties, disorder, symmetry ignored) or from a POSCAR.
+const cif = write('crystal.cif', `data_1
+_symmetry_space_group_name_H-M   P-1
+_cell_length_a                   10.3528(16)
+_cell_length_b                   13.029(2)
+_cell_length_c                   21.211(3)
+_cell_angle_alpha                96.2968(18)
+_cell_angle_beta                 97.439(2)
+_cell_angle_gamma                98.371(2)
+loop_
+_atom_site_label
+_atom_site_type_symbol
+_atom_site_fract_x
+_atom_site_fract_y
+_atom_site_fract_z
+_atom_site_occupancy
+O1A O 0.2290(10) 0.6825(8) 0.3094(5) 0.341(2)
+O1B O 0.1965(18) 0.6982(9) 0.3133(6) 0.341(2)
+N2 N 0.6250(4) 0.8522(2) -0.15128(16) 1
+`)
+result = importFile(cp2kXyz, { cell_file: cif })
+assert.equal(result.ok, true, JSON.stringify(result)); checks++
+header = fs.readFileSync(result.output, 'utf8').split('\n')
+assert.match(header[1], /^Lattice="10\.3528000000 0\.0000000000 0\.0000000000 -1\.89679/); assert.match(header[5], /^Lattice="10\.3528000000 /); assert.match(header[1], /pbc="T T T"/); checks++
+const triclinic = result.output
+result = bridge({ action: 'read_info', filename: triclinic })
+assert.deepEqual(result.cellpar.map(v => Number(v.toFixed(4))), [10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371]); checks++
+// Triclinic minimum-image distance agrees with ASE (lattice rows must not be transposed).
+const far = write('far.xyz', '2\n\nC 0.2 0.3 0.4\nO 9.9 12.5 20.5\n')
+result = importFile(far, { cell_file: cif })
+const mic = bridge({ action: 'bonds', filename: result.output, pairs: [[0, 1]], mic: true }).series['0-1'][0]
+const expected = Number(execFileSync(python, ['-c', `import sys; from ase.io import read; print(read(sys.argv[1]).get_distance(0, 1, mic=True))`, result.output]).toString())
+assert.ok(close(mic, expected, 1e-6), `${mic} vs ${expected}`); assert.ok(mic < 5); checks++
+result = bridge({ action: 'cell_file', filename: cif })
+assert.deepEqual(result.cellpar.map(v => Number(v.toFixed(4))), [10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371]); checks++
+execFileSync(python, ['-c', `import sys; from ase.build import bulk; from ase.io import write; write(sys.argv[1], bulk('Si', cubic=True), format='vasp')`, path.join(temp, 'POSCAR')])
+result = importFile(cp2kXyz, { cell_file: path.join(temp, 'POSCAR') })
+assert.equal(result.ok, true, JSON.stringify(result)); assert.match(fs.readFileSync(result.output, 'utf8').split('\n')[1], /^Lattice="5\.43/); checks++
+result = importFile(cp2kXyz, { cell_file: write('broken.cif', 'data_x\n_cell_length_a 10\n_cell_length_b 10\n') })
+assert.equal(result.ok, false); assert.match(result.message, /missing _cell_length_c/); checks++
+result = importFile(cp2kXyz, { cell_file: write('flat.cif', 'data_x\n_cell_length_a 10\n_cell_length_b 10\n_cell_length_c 10\n_cell_angle_alpha 90\n_cell_angle_beta 90\n_cell_angle_gamma 180\n') })
+assert.equal(result.ok, false); assert.match(result.message, /invalid cell parameters/); checks++
+result = importFile(cp2kXyz, { cell_file: write('mol.xyz', '1\n\nH 0 0 0\n') })
+assert.equal(result.ok, false); assert.match(result.message, /no complete cell/); checks++
+
+// CP2K DCD (binary) with a reference; without one, atoms are imported as X.
 execFileSync(python, ['-c', `
 import sys, numpy as np
 from ase.io.cp2k import _HEADER_DTYPE
@@ -118,7 +163,7 @@ with open(sys.argv[1], 'wb') as fh:
         np.array([4 * natoms], 'i4').tofile(fh)
 `, path.join(temp, 'run.dcd')])
 result = importFile(path.join(temp, 'run.dcd'))
-assert.equal(result.ok, false); assert.match(result.message, /reference/); checks++
+assert.equal(result.ok, true, JSON.stringify(result)); assert.match(result.warning, /element X/); assert.equal(frame(result.output, 2)[0].element, 'X'); checks++
 result = importFile(path.join(temp, 'run.dcd'), { reference })
 assert.equal(result.ok, true, JSON.stringify(result)); assert.equal(result.frames, 3); checks++
 assert.ok(close(frame(result.output, 2)[1].z, 1.3, 1e-6)); assert.equal(frame(result.output, 2)[0].element, 'C'); checks++
@@ -132,4 +177,4 @@ result = bridge({ action: 'import', filename: qbox, output: path.join(temp, 'x.e
 assert.equal(result.ok, false); checks++
 
 fs.rmSync(temp, { recursive: true, force: true })
-console.log(`PASS: ${checks} format import checks (VASP, Qbox, ORCA, CPMD, cp.x, CP2K cell/DCD).`)
+console.log(`PASS: ${checks} format import checks (VASP, Qbox, ORCA, CPMD, cp.x, CP2K cell/DCD, CIF/POSCAR cells).`)

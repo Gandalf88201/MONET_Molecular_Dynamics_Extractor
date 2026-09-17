@@ -4,323 +4,8 @@
 // ── Molecular Viewer ─────────────────────────────────────────────────────────
 // =============================================================================
 
-const CPK = {
-  H:  '#e8e8e8', C:  '#404040', N:  '#3050f8', O:  '#ff0d0d',
-  S:  '#ffff30', P:  '#ff8000', F:  '#90e050', Cl: '#1ff01f',
-  Br: '#a62929', I:  '#940094', Fe: '#e06633', Cu: '#c88033',
-  Zn: '#7d80b0', Se: '#ffa100', Mg: '#228b22', Ca: '#3dff00',
-  Na: '#ab5cf2', K:  '#8f40d4'
-}
-const DEFAULT_COLOR = '#ff69b4'
-
-// Covalent radii in Å (used for bond detection)
-const COV = {
-  H: 0.31, C: 0.76, N: 0.71, O: 0.66, S: 1.05, P: 1.07,
-  F: 0.57, Cl: 1.02, Br: 1.20, I: 1.39, Fe: 1.32, Cu: 1.32,
-  default: 1.0
-}
-
-function atomColor   (el) { return CPK[el]  ?? DEFAULT_COLOR }
-function themeColor  (name, fallback) { return globalThis.MonetTheme ? MonetTheme.color(name, fallback) : fallback }
-function covalentRad (el) { return COV[el]  ?? COV.default   }
-
-function hexToRgb (hex) {
-  const n = parseInt(hex.slice(1), 16)
-  return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
-}
-
-function lighten (hex, f) {
-  const [r, g, b] = hexToRgb(hex)
-  const clamp = v => Math.max(0, Math.min(255, Math.round(v)))
-  return `rgb(${clamp(r+(255-r)*f)},${clamp(g+(255-g)*f)},${clamp(b+(255-b)*f)})`
-}
-
-function darken (hex, f) {
-  const [r, g, b] = hexToRgb(hex)
-  const clamp = v => Math.max(0, Math.min(255, Math.round(v)))
-  return `rgb(${clamp(r*(1-f))},${clamp(g*(1-f))},${clamp(b*(1-f))})`
-}
-
-// ─── 3D Math ──────────────────────────────────────────────────────────────────
-
-function rotY (x, y, z, a) {
-  const c = Math.cos(a), s = Math.sin(a)
-  return [x*c + z*s, y, -x*s + z*c]
-}
-
-function rotX (x, y, z, a) {
-  const c = Math.cos(a), s = Math.sin(a)
-  return [x, y*c - z*s, y*s + z*c]
-}
-
-// ─── MolecularViewer class ────────────────────────────────────────────────────
-
-class MolecularViewer {
-  constructor (canvas) {
-    this.canvas   = canvas
-    this.ctx      = canvas.getContext('2d')
-    this.atoms    = []
-    this.bonds    = []
-    this.selected = new Set()  // 1-indexed atom IDs
-    this.rotX     = 0.25
-    this.rotY     = -0.40
-    this.zoom     = 30
-    this.center   = [0, 0, 0]
-    this.dragging = false
-    this.lastMouse = null
-    this.onSelectionChange = null
-    this._wasDrag = false
-    this.showAllLabels = false
-    this.showSelectionOrder = false
-    this.cell = null
-
-    canvas.addEventListener('mousedown',   e => this._onMouseDown(e))
-    canvas.addEventListener('mousemove',   e => this._onMouseMove(e))
-    canvas.addEventListener('mouseup',     () => { this.dragging = false })
-    canvas.addEventListener('mouseleave',  () => { this.dragging = false })
-    canvas.addEventListener('wheel',       e => this._onWheel(e), { passive: false })
-    window.addEventListener('mouseup', () => { this.dragging = false })
-    canvas.addEventListener('click',       e => this._onClick(e))
-  }
-
-  loadAtoms (atoms) {
-    this.atoms = atoms
-    this.bonds = []
-    if (!atoms.length) { this.render(); return }
-
-    // Center
-    const cx = atoms.reduce((s,a) => s+a.x, 0) / atoms.length
-    const cy = atoms.reduce((s,a) => s+a.y, 0) / atoms.length
-    const cz = atoms.reduce((s,a) => s+a.z, 0) / atoms.length
-    this.center = [cx, cy, cz]
-
-    // Auto-zoom
-    const maxD = atoms.reduce((m, a) =>
-      Math.max(m, Math.hypot(a.x-cx, a.y-cy, a.z-cz)), 0) || 5
-    const minDim = Math.min(this.canvas.width, this.canvas.height)
-    this.zoom = (minDim * 0.38) / maxD
-
-    // Compute bonds
-    this.bonds = []
-    for (let i = 0; i < atoms.length; i++) {
-      for (let j = i+1; j < atoms.length; j++) {
-        const a = atoms[i], b = atoms[j]
-        const d = Math.hypot(a.x-b.x, a.y-b.y, a.z-b.z)
-        const threshold = (covalentRad(a.element) + covalentRad(b.element)) * 1.30
-        if (d < threshold) this.bonds.push([i, j])
-      }
-    }
-
-    this.render()
-  }
-
-  // Project a 3D point to 2D canvas coords + depth
-  _project (x, y, z) {
-    const [cx, cy, cz] = this.center
-    let px = x - cx, py = y - cy, pz = z - cz;
-    [px, py, pz] = rotY(px, py, pz, this.rotY);
-    [px, py, pz] = rotX(px, py, pz, this.rotX)
-    return {
-      sx: this.canvas.width  / 2 + px * this.zoom,
-      sy: this.canvas.height / 2 - py * this.zoom,
-      sz: pz
-    }
-  }
-
-  render () {
-    const { canvas, ctx, atoms, bonds, selected, zoom } = this
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-
-    // background gradient
-    const bg = ctx.createLinearGradient(0, 0, 0, canvas.height)
-    bg.addColorStop(0, themeColor('--canvas-bg', '#0d0d1a'))
-    bg.addColorStop(1, themeColor('--canvas-bg2', '#10101f'))
-    const selectColor = themeColor('--select', '#ffd700')
-    const selectRing = themeColor('--select-ring', '#fff')
-    const outline = themeColor('--atom-outline', 'rgba(0,0,0,0)')
-    const carbonBond = themeColor('--bond-carbon', '#666')
-    ctx.fillStyle = bg
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    if (!atoms.length) return
-
-    if (this.cell) {
-      const vertices = this.cellVertices().map(point => this._project(...point))
-      ctx.save(); ctx.strokeStyle = themeColor('--cell-line', '#54cbd8'); ctx.globalAlpha = .65; ctx.lineWidth = 1
-      for (let i = 0; i < 8; i++) for (const bit of [1, 2, 4]) if (!(i & bit)) {
-        ctx.beginPath(); ctx.moveTo(vertices[i].sx, vertices[i].sy); ctx.lineTo(vertices[i | bit].sx, vertices[i | bit].sy); ctx.stroke()
-      }
-      ctx.font = '12px monospace'; ctx.fillStyle = themeColor('--cell-label', '#8fe9f3')
-      for (const [i, label] of [[1, 'a'], [2, 'b'], [4, 'c']]) ctx.fillText(label, vertices[i].sx, vertices[i].sy)
-      ctx.restore()
-    }
-    // Project all atoms
-    const proj = atoms.map((a, i) => ({
-      ...a, i, ...this._project(a.x, a.y, a.z)
-    }))
-
-    // Sort back-to-front for painter's algorithm
-    const sorted = [...proj].sort((a, b) => a.sz - b.sz)
-
-    // Draw bonds
-    ctx.save()
-    ctx.lineWidth = 1.8
-    for (const [i, j] of bonds) {
-      const a = proj[i], b = proj[j]
-      const midx = (a.sx + b.sx) / 2
-      const midy = (a.sy + b.sy) / 2
-      const aColor = atomColor(a.element)
-      const bColor = atomColor(b.element)
-      ctx.beginPath(); ctx.moveTo(a.sx, a.sy); ctx.lineTo(midx, midy)
-      ctx.strokeStyle = aColor === '#404040' ? carbonBond : aColor
-      ctx.globalAlpha = 0.55
-      ctx.stroke()
-      ctx.beginPath(); ctx.moveTo(midx, midy); ctx.lineTo(b.sx, b.sy)
-      ctx.strokeStyle = bColor === '#404040' ? carbonBond : bColor
-      ctx.stroke()
-    }
-    ctx.restore()
-
-    // Draw atoms (back to front)
-    for (const a of sorted) {
-      const isSel = selected.has(a.index)
-      const baseR = covalentRad(a.element)
-      const r     = Math.max(4, baseR * zoom * 0.28)
-      const color = atomColor(a.element)
-
-      ctx.save()
-
-      if (isSel) {
-        ctx.shadowBlur  = 22
-        ctx.shadowColor = selectColor
-      }
-
-      // Sphere-like radial gradient
-      const hlx = a.sx - r * 0.35, hly = a.sy - r * 0.35
-      const grd = ctx.createRadialGradient(hlx, hly, r * 0.08, a.sx, a.sy, r)
-      grd.addColorStop(0,   lighten(color, 0.65))
-      grd.addColorStop(0.55, color)
-      grd.addColorStop(1,   darken(color, 0.45))
-
-      ctx.beginPath()
-      ctx.arc(a.sx, a.sy, r, 0, Math.PI * 2)
-      ctx.fillStyle = isSel ? selectColor : grd
-      ctx.fill()
-
-      if (isSel) {
-        ctx.lineWidth   = 2.5
-        ctx.strokeStyle = selectRing
-        ctx.stroke()
-        ctx.shadowBlur = 0
-      } else {
-        ctx.lineWidth   = 1
-        ctx.strokeStyle = outline
-        ctx.stroke()
-      }
-
-      // Label: always show atom ID (1-indexed), element on hover-like if selected
-      const fontSize = Math.max(9, Math.min(r * 0.72, 14))
-      ctx.font        = `bold ${fontSize}px monospace`
-      ctx.textAlign   = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.fillStyle   = isSel ? '#1a1a1a' : (r > 14 ? '#fff' : 'rgba(255,255,255,0.7)')
-      if (this.showAllLabels || isSel || r > 8)
-        ctx.fillText(a.index, a.sx, a.sy)
-      if (this.showSelectionOrder && isSel) {
-        ctx.font = 'bold 11px monospace'
-        ctx.fillStyle = themeColor('--gold', '#ffd700')
-        ctx.fillText(`#${[...selected].indexOf(a.index) + 1}`, a.sx + r + 12, a.sy - r - 5)
-      }
-
-      ctx.restore()
-    }
-  }
-
-  // Hit-test: find atom closest to click point
-  _hitTest (mx, my) {
-    let best = null, bestDepth = -Infinity
-    for (const a of this.atoms) {
-      const p = this._project(a.x, a.y, a.z)
-      const distance = Math.hypot(p.sx - mx, p.sy - my)
-      const radius = Math.max(4, covalentRad(a.element) * this.zoom * 0.28)
-      // Match painter order: the visible front atom receives the click.
-      if (distance <= radius && p.sz >= bestDepth) { best = a.index; bestDepth = p.sz }
-    }
-    return best
-  }
-
-  _onMouseDown (e) {
-    if (e.button !== 0) return
-    this._wasDrag = false
-    this.dragStart = { x: e.clientX, y: e.clientY }
-    this.dragging  = true
-    this.lastMouse = { x: e.clientX, y: e.clientY }
-  }
-
-  _onMouseMove (e) {
-    if (!this.dragging || !this.lastMouse) return
-    if (!this._wasDrag && Math.hypot(e.clientX - this.dragStart.x, e.clientY - this.dragStart.y) <= 4) return
-    this._wasDrag = true
-    const dx = e.clientX - this.lastMouse.x
-    const dy = e.clientY - this.lastMouse.y
-    this.rotY += dx * 0.008
-    this.rotX += dy * 0.008
-    this.lastMouse = { x: e.clientX, y: e.clientY }
-    this.render()
-  }
-
-  _onWheel (e) {
-    e.preventDefault()
-    const factor = e.deltaY > 0 ? 0.9 : 1.1
-    this.zoom = Math.max(2, Math.min(600, this.zoom * factor))
-    this.render()
-  }
-
-  _onClick (e) {
-    if (this._wasDrag) { this._wasDrag = false; return }
-    const rect  = this.canvas.getBoundingClientRect()
-    const mx    = (e.clientX - rect.left) * this.canvas.width / (rect.width || this.canvas.clientWidth || 1)
-    const my    = (e.clientY - rect.top) * this.canvas.height / (rect.height || this.canvas.clientHeight || 1)
-    const hit   = this._hitTest(mx, my)
-    if (hit !== null) {
-      if (this.selected.has(hit)) this.selected.delete(hit)
-      else                        this.selected.add(hit)
-      this.render()
-      this.onSelectionChange?.([...this.selected])
-    }
-  }
-
-  setSelected (ids) {
-    this.selected = new Set(ids.map(Number))
-    this.render()
-  }
-
-  cellVertices () {
-    return Array.from({ length: 8 }, (_, mask) => [0, 1, 2].map(axis =>
-      this.cell.reduce((sum, vector, i) => sum + (mask & (1 << i) ? vector[axis] : 0), 0)))
-  }
-
-  fitView () {
-    if (!this.atoms.length) return
-    const points = this.atoms.map(atom => [atom.x, atom.y, atom.z]).concat(this.cell ? this.cellVertices() : [])
-    const low = [Infinity, Infinity, Infinity], high = [-Infinity, -Infinity, -Infinity]
-    for (const point of points) for (let j = 0; j < 3; j++) {
-      low[j] = Math.min(low[j], point[j]); high[j] = Math.max(high[j], point[j])
-    }
-    this.center = low.map((v, j) => (v + high[j]) / 2)
-    const [cx, cy, cz] = this.center
-    const maxD = points.reduce((distance, point) => Math.max(distance, Math.hypot(point[0] - cx, point[1] - cy, point[2] - cz)), 0) || 1
-    this.zoom = Math.min(this.canvas.width, this.canvas.height) * .34 / maxD
-    this.render()
-  }
-
-  resize () {
-    const { canvas } = this
-    canvas.width  = canvas.clientWidth
-    canvas.height = canvas.clientHeight
-    this.render()
-  }
-}
+const { MolecularViewer, STYLES: VIEW_STYLES } = MonetViewer
+function themeColor (name, fallback) { return globalThis.MonetTheme ? MonetTheme.color(name, fallback) : fallback }
 
 // =============================================================================
 // ── App State ────────────────────────────────────────────────────────────────
@@ -363,16 +48,74 @@ function log (msg, type = 'info') {
 // ── Step navigation ──────────────────────────────────────────────────────────
 // =============================================================================
 
+// Workflow order: structure analysis (ASE/MDAnalysis) comes before the MONET extraction.
+const STEP_ORDER = ['1', 'analysis', '2', '3', '4', '5', '6']
+const STEP_NAMES = { 1: 'File input', analysis: 'Structure analysis', 2: 'Sampling', 3: 'Atom selection', 4: 'Options', 5: 'Processing', 6: 'Results' }
+
 function goTo (step) {
+  const position = STEP_ORDER.indexOf(String(step))
   $$('.step-panel').forEach(p => p.classList.remove('active'))
   $$('.step-item').forEach(n => {
     n.classList.remove('active', 'done')
-    const ns = parseInt(n.dataset.step, 10)
-    if (ns < step)  n.classList.add('done')
-    if (ns === step) n.classList.add('active')
+    const ns = STEP_ORDER.indexOf(n.dataset.step)
+    if (ns < position)  n.classList.add('done')
+    if (ns === position) n.classList.add('active')
   })
   $(`panel-${step}`).classList.add('active')
   state.step = step
+  $('rail-step').textContent = `${String(position + 1).padStart(2, '0')} · ${STEP_NAMES[step]}`
+  $('rail-continue').classList.toggle('hidden', step !== 'analysis')
+  if (step === 3) $('use-ase-selection').disabled = !aseState.pickedIds.length
+}
+
+// ── Collapsible workflow panel ──
+function setSidebarCollapsed (collapsed) {
+  const layout = document.querySelector('.layout')
+  if (layout.classList.contains('sidebar-collapsed') === collapsed) return
+  layout.classList.toggle('sidebar-collapsed', collapsed)
+  $('sidebar-toggle').textContent = collapsed ? '⇥' : '⇤'
+  $('sidebar-toggle').setAttribute('aria-pressed', String(collapsed))
+  // Canvases take their size from the new layout.
+  const refresh = () => { resizeCanvas(); redrawVisibleChart() }
+  if (window.requestAnimationFrame) requestAnimationFrame(refresh); else refresh()
+}
+$('sidebar-toggle').addEventListener('click', () => setSidebarCollapsed(!document.querySelector('.layout').classList.contains('sidebar-collapsed')))
+$('rail-expand').addEventListener('click', () => setSidebarCollapsed(false))
+
+// Analysis groups share one workspace (viewer, atom table, cell, time axis); each shows its own sub-tabs.
+const ANALYSIS_GROUPS = {
+  ase: 'ASE modules on the loaded trajectory: structure summary, geometry along the frames, coordination, conversion and wrapping.',
+  mda: 'MDAnalysis modules on the same trajectory: topology and atom-identity check, then RMSD/RMSF, PCA, hydrogen bonds, contacts, RDF, densities and more.',
+  custom: 'MONET analyses: autocorrelation (decorrelation time and uncorrelated configurations), Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion and VDOS.'
+}
+const lastSubtab = { ase: 'structure', mda: 'topology', custom: 'acf' }
+let activeGroup = 'custom'
+
+function showGroup (group, subtab) {
+  activeGroup = group
+  $$('.vtab').forEach(b => b.classList.toggle('active', b.dataset.vtab === group))
+  $$('.ase-stab').forEach(b => b.classList.toggle('group-hidden', b.dataset.group !== group))
+  $('module-intro').textContent = ANALYSIS_GROUPS[group]
+  const id = subtab || lastSubtab[group]
+  if (!document.querySelector('.ase-stab.active')?.matches(`[data-stab="${id}"]`)) selectSubtab(id)
+}
+
+function showViewerTab (id) {
+  const group = ANALYSIS_GROUPS[id] ? id : null
+  $$('.vtab').forEach(b => b.classList.toggle('active', b.dataset.vtab === id))
+  $$('.vtab-content').forEach(c => c.classList.remove('active'))
+  $(`vtab-content-${group ? 'ase' : id}`).classList.add('active')
+  // Analysis modules get the full width; the 3D view is used with the workflow steps.
+  setSidebarCollapsed(Boolean(group))
+  if (group) showGroup(group)
+  if (id === 'view3d') resizeCanvas()
+  else redrawVisibleChart()
+}
+
+function continueToExtraction () {
+  goTo(2)
+  showViewerTab('view3d')
+  setStatus('Choose the sampling frequency, then the atoms to extract.')
 }
 
 // =============================================================================
@@ -381,11 +124,14 @@ function goTo (step) {
 
 const canvas = $('mol-canvas')
 const viewer = new MolecularViewer(canvas)
+viewer.style = (() => { try { return localStorage.getItem('monet-view-style') || 'ball-stick' } catch { return 'ball-stick' } })()
 
+let viewerNeedsFit = false
 function resizeCanvas () {
   canvas.width  = canvas.clientWidth
   canvas.height = canvas.clientHeight
-  viewer.render()
+  if (viewerNeedsFit && canvas.width && canvas.height) { viewerNeedsFit = false; viewer.fitView() }
+  else viewer.render()
 }
 
 window.addEventListener('resize', resizeCanvas)
@@ -416,6 +162,9 @@ function syncSelectionUI () {
 // =============================================================================
 
 function clearTrajectory () {
+  state.fullTrajectory = null
+  state.derivedLabel = null
+  $('restore-full-trajectory')?.classList.add('hidden')
   state.fileInfo = null
   state.firstFrame = null
   state.selectedAtoms.clear()
@@ -423,6 +172,7 @@ function clearTrajectory () {
   updateAnalysisSource()
   if (typeof charts !== 'undefined') Object.values(charts).forEach(chart => chart.clear())
   $('next-2').disabled = true
+  for (const id of ['next-analysis', 'open-analysis', 'ase-continue']) $(id).disabled = true
   $('stat-format').textContent = '—'
   $('stat-configs').textContent = '—'
   $('stat-atoms').textContent = '—'
@@ -436,15 +186,22 @@ function clearTrajectory () {
 
 const FORMAT_HINTS = {
   auto: 'XYZ/extXYZ files are read directly; other files are recognised by name and content and imported.',
-  xyz: 'Read directly. Add a CP2K .cell file to attach a per-step lattice (NPT runs).',
+  xyz: 'Read directly. Add a CIF/POSCAR/PDB cell file for one fixed cell, or a CP2K .cell file for a per-step lattice (NPT runs).',
   'qe-cp-pos': 'cp.x positions in bohr. Needs a reference structure with the same atom order; add the .cel file for the cell.',
-  'cp2k-dcd': 'DCD has no element names: add a reference structure (e.g. the first frame as XYZ).',
+  'cp2k-dcd': 'DCD has no element names: add a reference structure (e.g. the first frame as XYZ); without it every atom is imported as X.',
   'cpmd-trajectory': 'CPMD TRAJECTORY (bohr). Needs a reference structure with the same atom order; restart markers are skipped.',
   qbox: 'Reads every MD iteration (<atomset>) from the Qbox output.',
   'espresso-out': 'Reads every ionic step of a pw.x relax/MD output.',
   'orca-output': 'Reads the geometries printed in the ORCA output. ORCA MD trajectories (.xyz) are read directly as XYZ.'
 }
-const REFERENCE_FORMATS = new Set(['qe-cp-pos', 'cp2k-dcd', 'cpmd-trajectory'])
+const REFERENCE_FORMATS = new Set(['qe-cp-pos', 'cp2k-dcd', 'cpmd-trajectory', 'mda-xtc', 'mda-trr', 'mda-dcd', 'mda-netcdf', 'mda-auto'])
+Object.assign(FORMAT_HINTS, {
+  'mda-xtc': 'Read with MDAnalysis. XTC stores only coordinates: add the topology (GRO, PDB, TPR …) to keep elements, residue and atom names. Without it, atoms are imported as X (geometry only).',
+  'mda-trr': 'Read with MDAnalysis; add the topology (GRO, PDB, TPR …), otherwise atoms are imported as X.',
+  'mda-dcd': 'CHARMM/NAMD DCD read with MDAnalysis; add the topology (PSF, PDB …), otherwise atoms are imported as X. CP2K DCD files are detected automatically.',
+  'mda-netcdf': 'AMBER NetCDF read with MDAnalysis; add the topology (PRMTOP, PDB …), otherwise atoms are imported as X.',
+  'mda-auto': 'MDAnalysis chooses the reader from the file extension; add a topology when the format has no atom names.'
+})
 const CELL_FORMATS = new Set(['auto', 'xyz', 'qe-cp-pos', 'cpmd-trajectory'])
 
 function updateFormatUI () {
@@ -452,9 +209,11 @@ function updateFormatUI () {
   state.source.format = format
   $('aux-reference').classList.toggle('hidden', !REFERENCE_FORMATS.has(format) && !state.source.reference)
   $('aux-cell').classList.toggle('hidden', !CELL_FORMATS.has(format) && !state.source.cellFile)
+  $('btn-reference-clear').disabled = !state.source.reference
+  $('btn-cell-file-clear').disabled = !state.source.cellFile
   $('inp-cell-vectors').classList.toggle('hidden', format !== 'qe-cp-pos')
   const canImport = Boolean(window.monet.canImport)
-  $('format-hint').textContent = (FORMAT_HINTS[format] || 'Imported with ASE into extended XYZ.') +
+  $('format-hint').textContent = (FORMAT_HINTS[format] || (format.startsWith('mda-') ? 'Read with MDAnalysis and imported into extended XYZ.' : 'Imported with ASE into extended XYZ.')) +
     (canImport ? '' : ' Only XYZ is available in this mode: run python3 start_monet.py to import other formats.')
 }
 $('inp-format').addEventListener('change', updateFormatUI)
@@ -477,9 +236,11 @@ for (const [kind, button, clear, label] of [['reference', 'btn-reference', 'btn-
     } catch (error) { setStatus('Could not open file: ' + error.message) }
   })
   $(clear).addEventListener('click', () => {
+    if (state.source[kind]) window.monet.releaseFile?.(state.source[kind])
     state.source[kind] = null
     $(label).textContent = 'Not selected'
     updateFormatUI()
+    setStatus(`${kind === 'reference' ? 'Reference structure' : 'Cell file'} removed.`)
   })
 }
 
@@ -508,9 +269,25 @@ $('btn-browse').addEventListener('click', async () => {
   }
 })
 
+$('btn-file-clear').addEventListener('click', () => {
+  releaseTrajectory()
+  clearTrajectory()
+  state.source.original = null
+  state.source.label = null
+  state.filePath = null
+  $('file-path-text').textContent = ''
+  $('file-display').classList.add('hidden')
+  $('next-1').disabled = true
+  goTo(1)
+  showViewerTab('view3d')
+  setStatus('Trajectory removed. Select another file.')
+})
+
 $('next-1').addEventListener('click', async () => {
-  goTo(2)
-  $('back-2').disabled = true
+  goTo('analysis')
+  $('back-analysis').disabled = true
+  $('next-analysis').disabled = true
+  $('open-analysis').disabled = true
   $('next-2').disabled = true
   setStatus('Analysing trajectory …')
   try {
@@ -529,6 +306,9 @@ $('next-1').addEventListener('click', async () => {
       if (imported.error) throw new Error(imported.error)
       state.filePath = imported.filePath
       state.source.label = imported.sourceLabel
+      state.source.warning = imported.warning || null
+    } else {
+      state.source.warning = null
     }
     const info = await window.monet.analyzeFile(state.filePath)
     if (info.error) throw new Error(info.error)
@@ -540,12 +320,83 @@ $('next-1').addEventListener('click', async () => {
     await loadFrameForViewer(0)
     updateSampledCount()
     updateAnalysisSource()
+    $('sampling-source').textContent = `Sampling ${info.configCount.toLocaleString()} configurations of ${state.filePath.split(/[\\/]/).pop()}.`
+    for (const id of ['next-analysis', 'open-analysis', 'ase-continue']) $(id).disabled = false
+    showViewerTab('ase')
+    setStatus(state.source.warning ? `Trajectory loaded. ${state.source.warning}` : 'Trajectory loaded. Analyse it in the ASE module, then continue to the extraction.')
   } catch (error) {
     clearTrajectory()
     setStatus('Error: ' + error.message)
   } finally {
-    $('back-2').disabled = false
+    $('back-analysis').disabled = false
   }
+})
+
+// Make another trajectory file (e.g. the uncorrelated configurations) the one MONET analyses and extracts.
+async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
+  if (typeof playerStop === 'function') playerStop()
+  const info = await window.monet.analyzeFile(path)
+  if (info.error) throw new Error(info.error)
+  if (!state.fullTrajectory) {
+    state.fullTrajectory = {
+      filePath: state.filePath, fileInfo: state.fileInfo, label: state.source.label,
+      lastResult: state.lastResult, mdStride: $('md-stride').value, frequency: $('inp-freq').value
+    }
+  }
+  state.lastResult = null
+  state.filePath = path
+  state.fileInfo = info
+  state.derivedLabel = label
+  // One saved frame of the new file spans `strideFactor` frames of the original run.
+  const stride = Number(state.fullTrajectory.mdStride) || 1
+  setTimeStride(stride * strideFactor)
+  $('inp-freq').value = 1
+  await showActiveTrajectory()
+  $('restore-full-trajectory').classList.remove('hidden')
+}
+
+function setTimeStride (value) {
+  const field = $('md-stride')
+  field.value = value
+  field.dispatchEvent(new Event('input'))
+}
+
+async function showActiveTrajectory () {
+  const info = state.fileInfo
+  $('stat-format').textContent = state.derivedLabel || (state.source.label ? `${state.source.label} → extXYZ` : info.format)
+  $('stat-configs').textContent = info.configCount.toLocaleString()
+  $('stat-atoms').textContent = info.atomCount.toLocaleString()
+  updateSampledCount()
+  await loadFrameForViewer(0)
+  updateAnalysisSource()
+  $('sampling-source').textContent = `Sampling ${info.configCount.toLocaleString()} configurations of ${state.filePath.split(/[\\/]/).pop()}${state.derivedLabel ? ` (${state.derivedLabel})` : ''}.`
+}
+
+$('restore-full-trajectory').addEventListener('click', async () => {
+  const full = state.fullTrajectory
+  if (!full) return
+  state.fullTrajectory = null
+  state.derivedLabel = null
+  state.filePath = full.filePath
+  state.fileInfo = full.fileInfo
+  state.lastResult = full.lastResult
+  setTimeStride(full.mdStride)
+  $('inp-freq').value = full.frequency
+  $('restore-full-trajectory').classList.add('hidden')
+  try {
+    await showActiveTrajectory()
+    setStatus('Back to the full trajectory.')
+  } catch (error) { setStatus('Could not reload the full trajectory: ' + error.message) }
+})
+
+$('back-analysis').addEventListener('click', () => { goTo(1); showViewerTab('view3d') })
+$('open-analysis').addEventListener('click', () => showViewerTab('ase'))
+for (const id of ['next-analysis', 'rail-continue', 'ase-continue']) $(id).addEventListener('click', continueToExtraction)
+$('use-ase-selection').addEventListener('click', () => {
+  if (!aseState.pickedIds.length) return
+  state.selectedAtoms = new Set(aseState.pickedIds)
+  syncSelectionUI()
+  setStatus(`${aseState.pickedIds.length} atoms from the ASE analysis selected for extraction.`)
 })
 
 // =============================================================================
@@ -565,7 +416,7 @@ function updateSampledCount () {
   $('sampled-count').textContent = n.toLocaleString()
 }
 
-$('back-2').addEventListener('click', () => goTo(1))
+$('back-2').addEventListener('click', () => { goTo('analysis'); showViewerTab('ase') })
 
 $('next-2').addEventListener('click', () => {
   const frequency = Number($('inp-freq').value)
@@ -590,6 +441,7 @@ async function loadFrameForViewer (frameIdx) {
 
   state.firstFrame = result.atoms
   viewer.loadAtoms(result.atoms)
+  viewerNeedsFit = true
   buildAtomTable(result.atoms)
   resizeCanvas()
   setStatus(`Frame ${frameIdx} loaded · ${result.atoms.length} atoms`)
@@ -626,7 +478,7 @@ function buildAtomTable (atoms) {
   }
 }
 
-function atomColor (el) { return CPK[el] ?? DEFAULT_COLOR }
+const atomColor = MonetViewer.atomColor
 
 // =============================================================================
 // ── Step 3 — Atom Selection ──────────────────────────────────────────────────
@@ -913,24 +765,33 @@ $('back-6').addEventListener('click', () => {
 // ── Viewer tab switching ─────────────────────────────────────────────────────
 // =============================================================================
 
-$$('.vtab').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const id = btn.dataset.vtab
-    $$('.vtab').forEach(b => b.classList.remove('active'))
-    $$('.vtab-content').forEach(c => c.classList.remove('active'))
-    btn.classList.add('active')
-    $(`vtab-content-${id}`).classList.add('active')
-    if (id === 'view3d') resizeCanvas()
-    else redrawVisibleChart()
-  })
-})
+$$('.vtab').forEach(btn => btn.addEventListener('click', () => showViewerTab(btn.dataset.vtab)))
+$('open-ase-btn').addEventListener('click', () => showViewerTab('ase'))
 
-$('open-ase-btn').addEventListener('click', () => {
-  $$('.vtab').forEach(b => b.classList.remove('active'))
-  $$('.vtab-content').forEach(c => c.classList.remove('active'))
-  $('vtab-ase').classList.add('active')
-  $('vtab-content-ase').classList.add('active')
-  redrawVisibleChart()
+// ── Representation style (shared preference) and ASE viewer size ──
+function stored (key, fallback) { try { return localStorage.getItem(key) || fallback } catch { return fallback } }
+function store (key, value) { try { localStorage.setItem(key, value) } catch {} }
+for (const [selectId, target] of [['view-style', () => viewer], ['ase-view-style', () => aseViewer]]) {
+  const select = $(selectId)
+  for (const [key, style] of Object.entries(VIEW_STYLES)) {
+    const option = document.createElement('option')
+    option.value = key
+    option.textContent = style.label
+    select.appendChild(option)
+  }
+  select.value = stored(`monet-${selectId}`, 'ball-stick')
+  select.addEventListener('change', () => {
+    target().setStyle(select.value)
+    store(`monet-${selectId}`, select.value)
+  })
+}
+$('ase-viewer-size').value = stored('monet-ase-viewer-size', 'large')
+document.querySelector('.ase-reference').dataset.size = $('ase-viewer-size').value
+$('ase-viewer-size').addEventListener('change', () => {
+  document.querySelector('.ase-reference').dataset.size = $('ase-viewer-size').value
+  store('monet-ase-viewer-size', $('ase-viewer-size').value)
+  aseViewerNeedsFit = true
+  resizeAseViewer()
 })
 
 function redrawVisibleChart () {
@@ -940,15 +801,26 @@ function redrawVisibleChart () {
 window.addEventListener('resize', redrawVisibleChart)
 
 // ASE sub-tab switching
+function selectSubtab (id) {
+  const btn = document.querySelector(`.ase-stab[data-stab="${id}"]`)
+  $$('.ase-stab').forEach(b => b.classList.remove('active'))
+  $$('.ase-subpanel').forEach(p => p.classList.remove('active'))
+  btn.classList.add('active')
+  $(`ase-sub-${id}`).classList.add('active')
+  lastSubtab[btn.dataset.group] = id
+  if (charts[id]?.data) charts[id]._render()
+  // The fluctuation colour map belongs to its own tab.
+  if (id === 'fluct') drawFluct()
+  else aseViewer.setOverlay(null)
+  if (selectionTargets[id]) { $('ase-selection-target').value = id; updateSelectionTarget() }
+}
 $$('.ase-stab').forEach(btn => {
   btn.addEventListener('click', () => {
-    const id = btn.dataset.stab
-    $$('.ase-stab').forEach(b => b.classList.remove('active'))
-    $$('.ase-subpanel').forEach(p => p.classList.remove('active'))
-    btn.classList.add('active')
-    $(`ase-sub-${id}`).classList.add('active')
-    if (charts[id]?.data) charts[id]._render()
-    if (selectionTargets[id]) { $('ase-selection-target').value = id; updateSelectionTarget() }
+    // A sub-tab of another module (e.g. from "Use selection") also switches the module tab.
+    if (btn.dataset.group !== activeGroup || !$('vtab-content-ase').classList.contains('active')) {
+      lastSubtab[btn.dataset.group] = btn.dataset.stab
+      showViewerTab(btn.dataset.group)
+    } else selectSubtab(btn.dataset.stab)
   })
 })
 
@@ -984,6 +856,7 @@ const aseState = {
 }
 
 const aseViewer = new MolecularViewer($('ase-mol-canvas'))
+aseViewer.style = stored('monet-ase-view-style', 'ball-stick')
 aseViewer.showAllLabels = true
 aseViewer.showSelectionOrder = true
 let aseViewerNeedsFit = true
@@ -1018,7 +891,12 @@ function syncAsePicks (ids) {
     row.setAttribute('aria-selected', String(picked))
   })
   $('ase-clear-selection').disabled = !aseState.pickedIds.length
+  $('use-ase-selection').disabled = !aseState.pickedIds.length
   $('ase-use-selection').disabled = !aseState.pickedIds.length
+  if (typeof player !== 'undefined') {
+    updateLive()
+    if ($('ase-center').checked) applyDisplay()
+  }
 }
 aseViewer.onSelectionChange = syncAsePicks
 $('ase-clear-selection').addEventListener('click', () => syncAsePicks([]))
@@ -1053,6 +931,10 @@ function invalidateCellAnalyses () {
   $('cell-status').textContent = aseState.cellParameters
     ? `Applied cell: ${aseState.cellParameters.join(', ')} (Å, °). PBC: ${aseState.cellPbc.map((on,i) => on ? 'abc'[i] : '').join('') || 'none'}.`
     : 'No manual cell. Source lattice/PBC are used when present.'
+  player.treeKey = null
+  applyDisplay()
+  updateLive()
+  if (aseState.cellParameters) $('cell-status').textContent += describeCellFit()
 }
 $('cell-apply').addEventListener('click', () => {
   try {
@@ -1086,7 +968,7 @@ $('cell-read').addEventListener('click', async () => {
     MonetASEModel.verifyAtoms(aseState.analysisAtoms, info)
     if (!info.cellpar || info.cellpar.slice(0, 3).some(v => v <= 0)) throw new Error('The active XYZ contains no complete cell. Enter the six parameters manually.')
     $('cell-system').value = 'triclinic'
-    info.cellpar.forEach((v, i) => { $(`cell-${cellFields[i]}`).value = v })
+    info.cellpar.forEach((v, i) => { $(`cell-${cellFields[i]}`).value = Number(v.toFixed(6)) })
     ;['a', 'b', 'c'].forEach((axis,i) => { $(`cell-pbc-${axis}`).checked = Boolean(info.pbc[i]) })
     updateCellPreset()
     aseState.cellParameters = null
@@ -1097,6 +979,339 @@ $('cell-read').addEventListener('click', async () => {
     $('cell-status').textContent = `Using source cell (${info.cellpar.map(v => Number(v.toFixed(5))).join(', ')}); original vector orientation retained. Apply cell would replace it with the standard orientation.`
   } catch (error) { $('cell-status').textContent = error.message; setStatus(error.message) }
   finally { aseState.busy = false; updateAseControls() }
+})
+
+$('cell-load-file').addEventListener('click', async () => {
+  if (aseState.busy || !aseState.available) return setStatus('Connect ASE first (python3 start_monet.py or the desktop app).')
+  let fp = null
+  try {
+    fp = await window.monet.selectFile()
+    if (!fp) return
+    aseState.busy = true; updateAseControls()
+    const info = await window.monet.aseRun({ action: 'cell_file', filename: fp })
+    if (!info.ok) throw new Error(info.message || info.error)
+    $('cell-system').value = 'triclinic'
+    info.cellpar.forEach((v, i) => { $(`cell-${cellFields[i]}`).value = Number(v.toFixed(6)) })
+    updateCellPreset()
+    const name = fp.split(/[\\/]/).pop()
+    if (aseState.analysisAtoms.length) {
+      aseState.cellParameters = MonetASEModel.cellParameters('triclinic', cellFields.map(field => $(`cell-${field}`).value))
+      aseState.cellPbc = ['a', 'b', 'c'].map(axis => $(`cell-pbc-${axis}`).checked)
+      invalidateCellAnalyses()
+      $('cell-status').textContent += ` Read from ${name}.${info.note ? ' ' + info.note : ''}`
+      setStatus(`Cell from ${name} applied.`)
+    } else {
+      $('cell-status').textContent = `Cell read from ${name}; load a trajectory, then press Apply cell.${info.note ? ' ' + info.note : ''}`
+    }
+  } catch (error) { $('cell-status').textContent = error.message; setStatus(error.message) }
+  finally {
+    if (fp) window.monet.releaseFile?.(fp)
+    aseState.busy = false; updateAseControls()
+  }
+})
+
+
+// =============================================================================
+// ── Trajectory player, cell display and live geometry (ASE viewer) ──────────
+// =============================================================================
+
+// `var`: other handlers check `typeof player` before this block has run.
+var player = {
+  index: 0, count: 0, playing: false, timer: null, token: 0,
+  cache: new Map(), cells: new Map(), raw: null, tree: null, treeKey: null, loading: null
+}
+const PLAYER_BUDGET = 3e7 // cached coordinates (numbers) kept in memory
+const CURSOR_KINDS = ['rmsd', 'bonds', 'angles', 'dihedrals', 'mda', 'coordination', 'fluctseries']
+
+function playerCount () {
+  if (state.lastResult?.success) return state.lastResult.totalFrames || state.fileInfo?.configCount || 0
+  return state.fileInfo?.configCount || 0
+}
+
+function playerAtomsByIndex () {
+  const n = aseState.analysisAtoms.length
+  const elements = new Array(n)
+  for (const atom of aseState.analysisAtoms) elements[atom.aseIndex] = atom.element
+  return elements
+}
+
+function firstFrameCoords () {
+  const coords = new Float64Array(3 * aseState.analysisAtoms.length)
+  for (const atom of aseState.analysisAtoms) {
+    coords[3 * atom.aseIndex] = atom.x; coords[3 * atom.aseIndex + 1] = atom.y; coords[3 * atom.aseIndex + 2] = atom.z
+  }
+  return coords
+}
+
+// Cell used for display and live geometry: manual cell, otherwise the lattice of the shown frame.
+function displayCell () {
+  if (aseState.cellParameters) return MonetASEModel.cellVectors(aseState.cellParameters)
+  return player.cells.get(player.index) || aseViewer.cell || null
+}
+
+function playerReset () {
+  playerStop()
+  player.token++
+  player.cache.clear()
+  player.cells.clear()
+  player.index = 0
+  player.count = playerCount()
+  player.tree = null
+  player.treeKey = null
+  player.raw = aseState.analysisAtoms.length ? firstFrameCoords() : null
+  if (player.raw) player.cache.set(0, player.raw)
+  $('player-slider').max = Math.max(0, player.count - 1)
+  $('player-slider').value = 0
+  updatePlayerControls()
+  updateFrameLabel()
+  updateLive()
+  // Pick up the lattice of the first frame (extended XYZ) without blocking the load.
+  if (player.raw && aseState.available && extractedTrajPath()) fetchFrames([0]).then(() => { if (player.index === 0) showFrame(0) }).catch(() => {})
+}
+
+function updatePlayerControls () {
+  const ready = Boolean(player.raw) && player.count > 0
+  const remote = ready && aseState.available && player.count > 1
+  for (const id of ['player-first', 'player-prev', 'player-next', 'player-last', 'player-play', 'player-slider']) $(id).disabled = !remote
+  $('player-play').textContent = player.playing ? '⏸ Stop' : '▶ Play'
+  $('player-play').setAttribute('aria-pressed', String(player.playing))
+  $('ase-wrap').disabled = !ready
+  $('ase-center').disabled = !ready
+  $('btn-wrap').disabled = !aseState.available || aseState.busy || !extractedTrajPath()
+}
+
+function updateFrameLabel () {
+  const last = Math.max(0, player.count - 1)
+  $('player-frame').textContent = `frame ${player.index} / ${last}`
+  $('ase-viewer-title').textContent = player.count > 1 ? `ASE molecule · frame ${player.index}` : 'ASE molecule · first frame'
+}
+
+function playerStep () { return Math.max(1, Math.floor(Number($('player-step').value) || 1)) }
+
+function evictFrames () {
+  const size = 3 * aseState.analysisAtoms.length || 1
+  while (player.cache.size * size > PLAYER_BUDGET && player.cache.size > 2) {
+    const oldest = player.cache.keys().next().value
+    if (oldest === player.index) { player.cache.delete(oldest); player.cache.set(oldest, player.raw); continue }
+    player.cache.delete(oldest)
+  }
+}
+
+async function fetchFrames (indices) {
+  const filename = extractedTrajPath()
+  const token = player.token
+  const wanted = indices.filter(i => !player.cache.has(i) || !player.cells.has(i))
+  if (!wanted.length || !filename) return
+  const r = await window.monet.aseRun({ action: 'frames', filename, indices: wanted })
+  if (token !== player.token) return
+  if (!r.ok) throw new Error(r.message || r.error)
+  if (r.natoms !== aseState.analysisAtoms.length) throw new Error('The trajectory changed; reload it.')
+  if (r.nframes && r.nframes !== player.count) {
+    player.count = r.nframes
+    $('player-slider').max = Math.max(0, player.count - 1)
+    updateFrameLabel()
+  }
+  r.indices.forEach((frame, k) => {
+    player.cache.set(frame, Float64Array.from(r.positions[k]))
+    if (r.cells[k]) player.cells.set(frame, r.cells[k])
+  })
+  evictFrames()
+}
+
+// Frames requested together: the target and the next ones along the playback direction.
+function batchFrom (start, direction = 1) {
+  const n = Math.max(1, aseState.analysisAtoms.length)
+  const size = Math.max(1, Math.min(200, Math.floor(4e5 / (3 * n))))
+  const step = playerStep() * direction
+  const out = []
+  for (let k = 0, i = start; k < size && i >= 0 && i < player.count; k++, i += step) out.push(i)
+  return out
+}
+
+async function goToFrame (frame, { direction = 1 } = {}) {
+  if (!player.raw || !player.count) return
+  frame = Math.max(0, Math.min(player.count - 1, Math.round(frame)))
+  if (!player.cache.has(frame)) {
+    if (!aseState.available) return setStatus('The trajectory player needs ASE (launcher or desktop app).')
+    try {
+      player.loading = frame
+      $('player-frame').textContent = `loading frame ${frame} …`
+      await fetchFrames(batchFrom(frame, direction))
+    } catch (error) {
+      playerStop()
+      setStatus('Trajectory player: ' + error.message)
+      return
+    } finally { player.loading = null }
+    if (!player.cache.has(frame)) return
+  }
+  showFrame(frame)
+}
+
+function showFrame (frame) {
+  player.index = frame
+  player.raw = player.cache.get(frame)
+  const cell = displayCell()
+  if (!aseState.cellParameters) {
+    const lattice = player.cells.get(frame)
+    if (lattice) aseViewer.cell = lattice
+  }
+  applyDisplay({ rebond: !player.playing || aseState.analysisAtoms.length < 3000, cell })
+  $('player-slider').value = frame
+  updateFrameLabel()
+  updateLive()
+  for (const kind of CURSOR_KINDS) {
+    const chart = charts[kind]
+    const frameAxis = chart?.data && !chart.data.type && /^Frame/.test(chart.data.xLabel || '')
+    if (chart?.setCursor) chart.setCursor(frameAxis ? String(frame) : null)
+  }
+}
+
+function moleculeTreeFor (cell) {
+  const key = `${JSON.stringify(cell)}|${$('ase-bond-scale').value}`
+  if (player.treeKey !== key) {
+    const coords = player.cache.get(0) || player.raw
+    player.tree = MonetPBC.moleculeTree(aseState.analysisAtoms.length,
+      MonetPBC.periodicBonds(playerAtomsByIndex(), coords, cell, Number($('ase-bond-scale').value) || 1.2))
+    player.treeKey = key
+  }
+  return player.tree
+}
+
+function applyDisplay ({ rebond = true, cell = displayCell() } = {}) {
+  if (!player.raw) return
+  const mode = $('ase-wrap').value
+  const centre = $('ase-center').checked
+  let coords = player.raw
+  if (cell && (mode !== 'none' || centre)) {
+    try {
+      const byId = new Map(aseState.analysisAtoms.map(atom => [atom.monetId, atom.aseIndex]))
+      const picked = aseState.pickedIds.map(id => byId.get(id)).filter(i => i !== undefined)
+      const center = centre ? (picked.length ? picked : aseState.analysisAtoms.map(atom => atom.aseIndex)) : null
+      coords = MonetPBC.wrapFrame(player.raw, cell, { mode, tree: mode === 'molecules' ? moleculeTreeFor(cell) : null, center })
+    } catch (error) { setStatus('Cell display: ' + error.message) }
+  } else if (mode !== 'none' || centre) {
+    setStatus('Cell display needs a periodic cell: apply one in “Crystal cell”, load it from a CIF, or use an extended XYZ with a lattice.')
+  }
+  const ordered = new Float64Array(3 * aseViewer.atoms.length)
+  aseViewer.atoms.forEach((atom, k) => {
+    ordered[3 * k] = coords[3 * atom.aseIndex]; ordered[3 * k + 1] = coords[3 * atom.aseIndex + 1]; ordered[3 * k + 2] = coords[3 * atom.aseIndex + 2]
+  })
+  aseViewer.updateCoordinates(ordered, { rebond })
+}
+
+// Distance / angle / dihedral of the picked atoms in the shown frame (minimum image when enabled).
+function updateLive () {
+  const box = $('ase-live')
+  const ids = aseState.pickedIds
+  if (!player.raw || ids.length < 2 || ids.length > 4) {
+    box.textContent = ids.length > 4 ? 'Select 2–4 atoms for a live distance, angle or dihedral.' : ''
+    return
+  }
+  const byId = new Map(aseState.analysisAtoms.map(atom => [atom.monetId, atom.aseIndex]))
+  const cell = aseState.mic ? displayCell() : null
+  const result = MonetPBC.geometry(player.raw, ids.map(id => byId.get(id)), cell)
+  const label = ids.join('–')
+  const text = {
+    distance: `d(${label}) = ${result.value.toFixed(4)} Å`,
+    angle: `∠(${label}) = ${result.value.toFixed(2)}°`,
+    dihedral: `φ(${label}) = ${result.value.toFixed(2)}° (0–360°)`
+  }[result.kind]
+  box.textContent = `Frame ${player.index}: ${text}${cell ? ' · minimum image' : ''}`
+}
+
+function playerStop () {
+  player.playing = false
+  clearTimeout(player.timer)
+  player.timer = null
+  updatePlayerControls()
+}
+
+async function playerTick () {
+  if (!player.playing) return
+  const started = performance.now()
+  let next = player.index + playerStep()
+  if (next >= player.count) {
+    if (!$('player-loop').checked) return playerStop()
+    next = 0
+  }
+  await goToFrame(next)
+  if (!player.playing) return
+  // Prefetch ahead so playback does not stall at the end of a batch.
+  const ahead = batchFrom(player.index + playerStep())
+  if (ahead.length && !player.cache.has(ahead[Math.min(ahead.length - 1, 3)]) && player.loading === null) fetchFrames(ahead).catch(() => {})
+  const delay = Math.max(0, 1000 / Number($('player-fps').value) - (performance.now() - started))
+  player.timer = setTimeout(playerTick, delay)
+}
+
+function playerToggle () {
+  if (player.playing) return playerStop()
+  if (!player.raw || player.count < 2) return
+  player.playing = true
+  updatePlayerControls()
+  playerTick()
+}
+
+$('player-play').addEventListener('click', playerToggle)
+$('player-first').addEventListener('click', () => { playerStop(); goToFrame(0) })
+$('player-last').addEventListener('click', () => { playerStop(); goToFrame(player.count - 1, { direction: -1 }) })
+$('player-next').addEventListener('click', () => { playerStop(); goToFrame(player.index + playerStep()) })
+$('player-prev').addEventListener('click', () => { playerStop(); goToFrame(player.index - playerStep(), { direction: -1 }) })
+$('player-slider').addEventListener('input', () => { playerStop(); goToFrame(Number($('player-slider').value)) })
+for (const id of ['ase-wrap', 'ase-center']) $(id).addEventListener('change', () => {
+  applyDisplay()
+  aseViewerNeedsFit = true
+  resizeAseViewer()
+})
+$('ase-bond-scale').addEventListener('change', () => { player.treeKey = null; applyDisplay() })
+$('ase-mol-canvas').addEventListener('keydown', event => {
+  if (event.key === ' ') { event.preventDefault(); playerToggle() }
+  if (event.key === 'ArrowRight') { event.preventDefault(); playerStop(); goToFrame(player.index + playerStep()) }
+  if (event.key === 'ArrowLeft') { event.preventDefault(); playerStop(); goToFrame(player.index - playerStep(), { direction: -1 }) }
+})
+$('ase-mol-canvas').tabIndex = 0
+// Click a time-series plot to show that frame (bound once the charts exist).
+function bindPlayerCharts () {
+  for (const kind of CURSOR_KINDS) {
+    const chart = charts[kind]
+    chart.canvas.addEventListener('click', event => {
+      if (!chart.data || chart.data.type || !/^Frame/.test(chart.data.xLabel || '')) return
+      const label = chart.labelAt(event.clientX)
+      if (label === null || label === undefined) return
+      playerStop()
+      goToFrame(Number(label))
+    })
+  }
+}
+
+// Diagnostic after a cell is set: share of first-frame atoms outside it.
+function describeCellFit () {
+  const cell = displayCell()
+  if (!cell || !player.raw) return ''
+  try {
+    const outside = MonetPBC.outsideFraction(player.cache.get(0) || player.raw, cell)
+    if (outside < 0.005) return ''
+    return ` ${Math.round(outside * 100)}% of the atoms lie outside this cell: choose “Cell display → wrap whole molecules” under the viewer (display only), or “Wrap and download” in Convert. If molecules still overlap after wrapping, the XYZ was written with other cell vectors: use the simulation cell (extended XYZ lattice, CP2K .cell) rather than the CIF metric.`
+  } catch { return '' }
+}
+
+$('btn-wrap').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load a trajectory first.')
+  const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+  const output = await window.monet.aseSelectOutput(`${stem}-wrapped.extxyz`)
+  if (!output) return
+  $('download-wrapped').classList.add('hidden')
+  const byId = new Map(aseState.analysisAtoms.map(atom => [atom.monetId, atom.aseIndex]))
+  const center = $('wrap-center').checked ? aseState.pickedIds.map(id => byId.get(id)) : null
+  if (center && !center.length) return setStatus('Select the atoms to centre in the viewer first.')
+  const r = await runAse('wrap', { action: 'wrap', filename, output, mode: $('wrap-mode').value, ...(center ? { center } : {}) })
+  if (!r.ok) return setStatus('Wrap error: ' + (r.message || r.error))
+  if (r.downloadURL) {
+    $('download-wrapped').href = r.downloadURL
+    $('download-wrapped').download = r.output || `${stem}-wrapped.extxyz`
+    $('download-wrapped').classList.remove('hidden')
+  }
+  setStatus(`Wrapped ${r.n_frames} frames${r.n_molecules ? ` (${r.n_molecules} molecules)` : ''}${r.output && !r.downloadURL ? ` → ${r.output}` : ''}.`)
 })
 
 let contextAtom = null
@@ -1154,6 +1369,11 @@ const selectionTargets = {
   rdf: { input: 'rdf-atoms', minimum: 1 },
   msd: { input: 'msd-atoms', minimum: 1 },
   vdos: { input: 'vdos-atoms', minimum: 1 },
+  fluct: {
+    get input () { return $('fluct-scope').value === 'groups' ? 'fluct-groups' : 'fluct-atoms' },
+    get width () { return $('fluct-scope').value === 'groups' ? FLUCT_WIDTH[$('fluct-quantity').value] : undefined },
+    minimum: 1
+  },
   acf: {
     input: 'acf-groups',
     get width () { return ACF_WIDTH[$('acf-quantity').value] },
@@ -1197,9 +1417,19 @@ const charts = {
   msd: new MonetLineChart('chart-msd', 'chart-msd-ph'),
   vdos: new MonetLineChart('chart-vdos', 'chart-vdos-ph'),
   acf: new MonetLineChart('chart-acf', 'chart-acf-ph'),
-  acfdist: new MonetLineChart('chart-acfdist', 'chart-acfdist-ph'),
+  rmsddist: new MonetLineChart('chart-rmsddist', 'chart-rmsddist-ph'),
+  bondsdist: new MonetLineChart('chart-bondsdist', 'chart-bondsdist-ph'),
+  anglesdist: new MonetLineChart('chart-anglesdist', 'chart-anglesdist-ph'),
+  dihedralsdist: new MonetLineChart('chart-dihedralsdist', 'chart-dihedralsdist-ph'),
+  mda: new MonetLineChart('chart-mda', 'chart-mda-ph'),
+  coordination: new MonetLineChart('chart-coordination', 'chart-coordination-ph'),
+  mdamatrix: new MonetHeatmapChart('chart-mdamatrix', 'chart-mdamatrix-ph'),
+  fluct: new MonetLineChart('chart-fluct', 'chart-fluct-ph'),
+  fluctseries: new MonetLineChart('chart-fluctseries', 'chart-fluctseries-ph'),
 }
-const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf']
+bindPlayerCharts()
+for (const [kind, chart] of Object.entries(charts)) if (chart.enableZoom && !kind.endsWith('dist')) chart.enableZoom()
+const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf', 'mda', 'structure', 'coordination', 'topology', 'fluct']
 const lastResults = {}
 
 // Wire up ASE progress listener (once)
@@ -1209,6 +1439,7 @@ window.monet.onAseProgress(msg => {
 
 function setAseProgress (fillId, labelId, rowId, pct, msg) {
   const row = $(rowId)
+  if (!row) return
   row.classList.remove('hidden')
   $(fillId).style.width  = (pct ?? 0) + '%'
   $(labelId).textContent = msg || ''
@@ -1238,7 +1469,7 @@ function updateAnalysisSource () {
   const atoms = aseState.analysisAtoms
   const name = extractedTrajPath()?.split(/[\\/]/).pop() || ''
   $('analysis-source').textContent = atoms.length
-    ? `Source: ${extracted ? 'extracted trajectory' : 'loaded XYZ'} · ${name} · ${atoms.length} atoms. Use MONET IDs in analysis inputs.`
+    ? `Source: ${extracted ? 'extracted trajectory' : state.derivedLabel ? state.derivedLabel : 'loaded XYZ'} · ${name} · ${atoms.length} atoms. Use MONET IDs in analysis inputs.`
     : 'Load an XYZ file and click Next to begin analysis.'
   $('ase-atom-count').textContent = atoms.length
   const body = $('ase-atom-body')
@@ -1254,7 +1485,7 @@ function updateAnalysisSource () {
     row.addEventListener('keydown', event => {
       if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggle() }
     })
-    for (const value of [atom.monetId, atom.aseIndex, atom.element, ...['x', 'y', 'z'].map(axis => atom[axis].toFixed(7))]) {
+    for (const value of [atom.monetId, atom.aseIndex, atom.element, ...['x', 'y', 'z'].map(axis => atom[axis].toFixed(7)), atom.residue ?? '', atom.molecule ?? '']) {
       const cell = document.createElement('td')
       cell.textContent = value
       row.appendChild(cell)
@@ -1264,13 +1495,18 @@ function updateAnalysisSource () {
   $('ase-atom-match').textContent = atoms.length
     ? 'Atom order matches MONET. Elements and coordinates will be checked against ASE before calculation.'
     : 'No trajectory loaded.'
+  resetTopology()
   aseViewer.loadAtoms(atoms.map(atom => ({ ...atom, index: atom.monetId })))
   aseViewerNeedsFit = true
   resizeAseViewer()
   syncAsePicks([])
   for (const target of Object.values(selectionTargets)) $(target.input).value = ''
+  $('fluct-groups').value = ''
   updateSelectionTarget()
   clearAllAnalyses(false)
+  updateAseControls()
+  playerReset()
+  if (atoms.length && aseState.available) checkTopology({ quiet: true })
 }
 
 function updateAseControls () {
@@ -1278,9 +1514,13 @@ function updateAseControls () {
     $(`btn-run-${kind}`).disabled = !aseState.available || aseState.busy
   }
   $('btn-unwrap').disabled = !aseState.available || aseState.busy || !extractedTrajPath()
+  $('btn-run-mda').disabled ||= !aseState.mdanalysis
+  $('clear-structure').disabled = !$('structure-result').childElementCount
+  $('mda-pick').disabled = !aseState.available || aseState.busy || !aseState.mdanalysis || !aseState.analysisAtoms.length
   updateConvBtn()
   updatePlotControls()
-  for (const id of ['cell-apply', 'cell-reset', 'cell-read', 'btn-ase-recheck']) $(id).disabled = aseState.busy
+  for (const id of ['cell-apply', 'cell-reset', 'cell-read', 'cell-load-file', 'btn-ase-recheck']) $(id).disabled = aseState.busy
+  if (typeof player !== 'undefined') updatePlayerControls()
   $('ase-cancel').disabled = !aseState.busy || !window.monet.cancel
   $('ase-mic').disabled = aseState.busy
 }
@@ -1293,14 +1533,21 @@ async function checkAseStatus () {
   catch (error) { r = { ok: false, error: error.message } }
   aseState.available = Boolean(r?.ok)
   aseState.version = r?.ase_version
+  aseState.mdanalysis = r?.mdanalysis_version || null
+  $('mda-availability').textContent = aseState.mdanalysis
+    ? `MDAnalysis ${aseState.mdanalysis} on the active trajectory, with the MONET atom IDs as MDAnalysis ids.`
+    : 'MDAnalysis is not installed in the launcher Python (python -m pip install MDAnalysis); these analyses and XTC/TRR/DCD import are unavailable.'
+  updateMdaForm()
+  if (aseState.available && window.monet.listFormats) loadFormatList()
   $('ase-dot').className = `ase-dot ${aseState.available ? 'dot-ok' : 'dot-err'}`
-  $('ase-badge-text').textContent = aseState.available ? `ASE ${r.ase_version}` : 'ASE unavailable'
+  $('ase-badge-text').textContent = aseState.available ? `ASE ${r.ase_version}${aseState.mdanalysis ? ` · MDA ${aseState.mdanalysis}` : ''}` : 'ASE unavailable'
   $('ase-tab-badge').style.display = aseState.available ? 'inline' : 'none'
   $('ase-connection').textContent = aseState.available
     ? 'ASE connected. RMSD uses raw Cartesian coordinates. Distances and angles follow the minimum-image setting. RMSD does not unwrap periodic trajectories.'
     : (r?.message || r?.error || 'ASE is unavailable.') + ' Install ASE in the Python environment used to launch MONET, then click Recheck.'
   $('ase-badge').title = $('ase-connection').textContent
   updateAseControls()
+  if (aseState.available && aseState.analysisAtoms.length) checkTopology({ quiet: true })
 }
 
 $('btn-ase-recheck').addEventListener('click', checkAseStatus)
@@ -1313,6 +1560,7 @@ function updatePlotControls () {
     $(`download-${kind}`).disabled = !chart.data
     $(`csv-${kind}`).disabled = !chart.data
   }
+  $('fluct-table-csv').disabled = !fluct
   $('btn-clear-analyses').disabled = !Object.values(charts).some(chart => chart.data) && !charts[aseState.activeKind]
 }
 
@@ -1322,8 +1570,21 @@ function clearAnalysis (kind, report = true) {
   delete lastResults[kind]
   hideAseProgress(`${kind}-prog-row`)
   if ($(`${kind}-prog-label`)) $(`${kind}-prog-label`).textContent = '—'
-  if (kind === 'acf') { $('acf-result').classList.add('hidden'); clearAnalysis('acfdist', false) }
-  for (const id of { msd: ['msd-info'], vdos: ['vdos-info'] }[kind] || []) $(id).classList.add('hidden')
+  if (kind === 'acf') $('acf-result').classList.add('hidden')
+  if (charts[`${kind}dist`]) clearAnalysis(`${kind}dist`, false)
+  for (const id of { msd: ['msd-info'], vdos: ['vdos-info'], mda: ['mda-download', 'mda-activate'] }[kind] || []) $(id).classList.add('hidden')
+  if (kind === 'mda') {
+    $('mda-table').replaceChildren()
+    clearAnalysis('mdamatrix', false)
+    $('mda-matrix-block').classList.add('hidden')
+  }
+  if (kind === 'fluct') {
+    fluct = null
+    clearAnalysis('fluctseries', false)
+    $('fluct-table').replaceChildren()
+    $('fluct-summary').classList.add('hidden')
+    aseViewer.setOverlay(null)
+  }
   if (report) setStatus('Analysis cleared. Your trajectory and atom selection are unchanged.')
 }
 
@@ -1364,6 +1625,14 @@ async function runAse (kind, command) {
   if (kind === 'conv' && $('conv-apply-cell').checked && !aseState.cellParameters) return { ok: false, error: 'Apply a manual crystal cell first.' }
   const options = kind !== 'conv' || $('conv-apply-cell').checked ? cellOptions() : {}
   command = { ...command, ...options }
+  if (/^(mda_|topology$|ase_|fluctuations$)/.test(command.action || '')) {
+    // Atom i of the analysed file is MONET ID atom_ids[i]: MDAnalysis gets the same numbering.
+    const ids = []
+    for (const atom of mapping) ids[atom.aseIndex] = atom.monetId
+    if (ids.length === mapping.length && !ids.includes(undefined)) command.atom_ids = ids
+    const scale = Number($('ase-bond-scale').value)
+    if (scale >= 0.5 && scale <= 2) command.bond_scale = scale
+  }
   const rmsdNote = command.align ? ' Kabsch-aligned RMSD.' : ' Raw Cartesian RMSD.'
   const source = $('analysis-source').textContent + (options.cell ? ` Cell: ${options.cell.join(', ')}; PBC ${options.pbc.map(v => v ? 1 : 0).join('')}.` : ' Source cell.') + (['rmsd', 'rmsdmatrix'].includes(kind) ? rmsdNote + (command.unwrap ? ' Unwrapped.' : '') : ` MIC ${options.mic ? 'on' : 'off'}.`)
   aseState.busy = true
@@ -1399,6 +1668,186 @@ async function runAse (kind, command) {
 }
 
 // =============================================================================
+// ── Time series / distribution views with mean ± std in the legend ───────────
+// =============================================================================
+
+function geometrySeries (r) {
+  return {
+    labels: r.frame_indices.map(String),
+    series: Object.entries(r.series).map(([key, data]) => ({ name: MonetASEModel.seriesLabel(key, r.atomMapping), data }))
+  }
+}
+
+const GEOMETRY_RANGES = { natural: [0, 180], 360: [0, 360], signed90: [-90, 90], fold180: [0, 180] }
+const GEOMETRY_PERIODS = { 360: 360, signed90: 180, fold180: 180 }
+
+// Probability density of every series (own bins) with the optional fit, below the time series.
+function drawGeometryDistribution (kind, entry, { stats, legend, statNotes, low, high, range }) {
+  const chart = charts[`${kind}dist`]
+  if (!chart) return
+  const bins = Math.max(2, Math.min(500, Number($(`${kind}dist-bins`).value) || 60))
+  const notes = [...statNotes]
+  const hists = entry.series.map(series => MonetASEModel.histogram(series.data, bins, low, high))
+  const datasets = entry.series.map((series, i) => ({ label: legend(series, i), data: hists[i].density, bars: true, colorIndex: i }))
+  const model = $(`${kind}-fit`).value
+  if (model) {
+    const period = GEOMETRY_PERIODS[range] || null
+    const fitRange = parseFitRange($(`${kind}-fit-range`).value, notes)
+    entry.series.forEach((series, i) => {
+      try {
+        const fit = MonetFit.fitHistogram(hists[i].centres, hists[i].density, { model, period, low, range: fitRange, binWidth: hists[i].width })
+        datasets.push({ label: `${fit.label} fit · ${series.name}`, data: fit.curve, dash: true, colorIndex: i })
+        notes.push(fitNote(fit, entry.series.length > 1 ? series.name : '', entry.unit))
+      } catch (error) {
+        notes.push(`${series.name}: fit failed (${error.message})`)
+      }
+    })
+    notes.push('Fit errors come from the fit covariance (bins treated as independent) and ignore time correlation; compare them with the standard error of the mean above.')
+  }
+  chart.setData({
+    title: entry.title.replace(/ vs .*$/, '') + ' — distribution', source: entry.source,
+    xLabel: `${entry.quantity} (${entry.unit})`, yLabel: `Probability density (1/${entry.unit})`,
+    labels: hists[0].centres.map(value => fmt(value, 5)), yMin: 0, notes, datasets
+  })
+}
+
+function parseFitRange (text, notes) {
+  if (!text.trim()) return null
+  const bounds = text.trim().split(/[\s,;]+/).map(Number)
+  if (bounds.length === 2 && bounds.every(Number.isFinite)) return bounds
+  notes.push('Fit range: enter two numbers (first and last bin centre).')
+  return null
+}
+
+// "Gaussian fit: μ = 100.03 ± 0.03 °, σ = 8.98 ± 0.03 °, R² = 0.9994"
+function fitNote (fit, name, unit) {
+  const value = i => `${fmt(fit.params[i], 5)} ± ${fmt(fit.errors[i], 2)}`
+  const parts = []
+  fit.names.forEach((symbol, i) => {
+    if (symbol.startsWith('A')) return
+    parts.push(`${symbol} = ${value(i)}${symbol.startsWith('κ') || symbol === 'η' ? '' : ' ' + unit}`)
+  })
+  if (fit.fwhm) parts.push(`FWHM = ${fmt(fit.fwhm, 5)} ${unit}`)
+  if (fit.model === 'vonmises') parts.push(`circular σ = ${fmt(fit.sigma, 4)} ${unit}`)
+  if (fit.weights) parts.push(`weights ${fit.weights.map(w => fmt(w, 3)).join(' / ')}`)
+  parts.push(`R² = ${fmt(fit.rSquared, 5)}`)
+  return `${fit.label} fit${name ? ` (${name})` : ''}: ${parts.join(', ')}`
+}
+
+function drawGeometry (kind) {
+  const entry = lastResults[kind]
+  if (!entry) return
+  const range = entry.angleRange
+  const digits = entry.unit === '°' ? 4 : 5
+  const stats = entry.series.map(series => MonetASEModel.seriesStats(series.data, range))
+  const legend = (series, i) => stats[i]
+    ? `${series.name} · mean ${fmt(stats[i].mean, digits)} ± ${fmt(stats[i].std, 3)} ${entry.unit}${stats[i].circular ? ' (circular)' : ''}`
+    : series.name
+  // ± in the legend is the spread (σ); the uncertainty of the mean is the correlation-corrected SEM below.
+  const statNote = (st, prefix) => {
+    const parts = [`${prefix}${prefix ? 'mean' : 'Mean'} ${fmt(st.mean, 6)} ${entry.unit}, standard deviation ${fmt(st.std, 4)} ${entry.unit}${st.circular ? ` (circular, R = ${fmt(st.resultant, 4)})` : ''}, ${st.n} frames`]
+    if (Number.isFinite(st.sem) && st.n > 1) {
+      parts.push(`standard error of the mean ${fmt(st.sem, 3)} ${entry.unit} (N_eff = ${fmt(st.nEff, 4)}` +
+        (Number.isFinite(st.tauInt) ? `, τ_int = ${fmt(st.tauInt, 3)} analysed frames)` : ')'))
+    }
+    return parts.join('; ')
+  }
+  const statNotes = entry.series.length === 1
+    ? (stats[0] ? [statNote(stats[0], '')] : [])
+    : entry.series.slice(0, 6).map((series, i) => stats[i] ? statNote(stats[i], `${series.name}: `) : null).filter(Boolean)
+  const notes = [...(entry.notes || []), ...statNotes]
+  const view = $(`${kind}-view`).value
+  const values = entry.series.flatMap(series => series.data.filter(Number.isFinite))
+  const [low, high] = GEOMETRY_RANGES[range] || [Math.min(...values), Math.max(...values)]
+  const bins = Math.max(2, Math.min(500, Number($(`${kind}-bins`).value) || 60))
+  updateDistributionOptions(kind)
+  drawGeometryDistribution(kind, entry, { stats, legend, statNotes, low, high, range })
+  const keepView = charts[kind]._entry === entry
+  charts[kind]._entry = entry
+  if (view === 'dots' || (view === 'polar' && entry.unit === '°')) {
+    const polar = view === 'polar'
+    const references = parseReferences(kind)
+    let radial = null
+    const radialMode = polar ? $(`${kind}-radial`).value : 'dots'
+    if (radialMode === 'frame') {
+      radial = { label: 'Frame', values: entry.series.map(() => entry.labels.map(Number)) }
+    } else if (radialMode === 'custom') {
+      const parsed = parseRadialValues($(`${kind}-custom`).value, entry.labels)
+      radial = { label: $(`${kind}-custom-label`).value.trim() || 'Value', values: entry.series.map(() => parsed.values) }
+      if (parsed.message) notes.push(parsed.message)
+    }
+    const title = entry.title.replace(/ vs .*$/, '')
+    charts[kind].setData({
+      type: polar ? 'polar' : 'dots',
+      title: `${title} — ${polar ? 'polar distribution' : 'dot histogram'}`, source: entry.source,
+      xLabel: `${entry.quantity} (${entry.unit})`, frames: entry.labels, notes, bins,
+      range: polar ? GEOMETRY_RANGES[range] || [0, 180] : [low, high], radial, references,
+      series: entry.series.map((series, i) => ({ label: legend(series, i), values: series.data, mean: stats[i]?.mean, colorIndex: i }))
+    })
+    return
+  }
+  charts[kind].setData({
+    title: entry.title, source: entry.source, xLabel: 'Frame', yLabel: `${entry.quantity} (${entry.unit})`,
+    angleRange: range, angleNormal: entry.angleNormal, labels: entry.labels, notes,
+    datasets: entry.series.map((series, i) => ({ label: legend(series, i), data: series.data, colorIndex: i }))
+  }, { keepView })
+}
+
+// Reference markers: "84.3" or "84.3 96" (labels are numbered when several values are given).
+function parseReferences (kind) {
+  const text = $(`${kind}-ref`).value.trim()
+  if (!text) return []
+  const label = $(`${kind}-ref-label`).value.trim() || 'reference'
+  const values = text.split(/[\s,;]+/).map(Number).filter(Number.isFinite)
+  return values.map((value, i) => {
+    const name = values.length > 1 ? `${label} ${i + 1}` : label
+    return { value, short: name, label: `${name} = ${fmt(value, 5)}` }
+  })
+}
+
+// Radial values for the polar plot: "value" per computed frame, or "frame value" pairs.
+function parseRadialValues (text, frameLabels) {
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !/^[#!]/.test(line))
+  const values = new Array(frameLabels.length).fill(NaN)
+  if (!lines.length) return { values, message: 'Paste the radial values to draw the points.' }
+  const rows = lines.map(line => line.split(/[\s,;]+/).map(Number))
+  if (rows.every(row => row.length >= 2 && row.slice(0, 2).every(Number.isFinite))) {
+    const position = new Map(frameLabels.map((frame, k) => [Number(frame), k]))
+    let unmatched = 0
+    for (const [frame, value] of rows) {
+      if (position.has(frame)) values[position.get(frame)] = value
+      else unmatched++
+    }
+    return { values, message: unmatched ? `${unmatched} radial value(s) refer to frames that were not computed.` : '' }
+  }
+  const single = rows.map(row => row[0])
+  single.slice(0, values.length).forEach((value, k) => { values[k] = value })
+  const message = single.length !== values.length ? `${single.length} radial values for ${values.length} computed frames; extra frames are not drawn.` : ''
+  return { values, message }
+}
+
+function updateDistributionOptions (kind) {
+  const view = $(`${kind}-view`).value
+  const shown = view === 'dots' || view === 'polar'
+  $(`${kind}-dist-options`).classList.toggle('hidden', !shown)
+  const radial = $(`${kind}-radial`)
+  if (!radial) return
+  radial.closest('label').classList.toggle('hidden', view !== 'polar')
+  $(`${kind}-custom-row`).classList.toggle('hidden', !(view === 'polar' && radial.value === 'custom'))
+}
+
+for (const kind of ['rmsd', 'bonds', 'angles', 'dihedrals']) {
+  for (const id of [`${kind}-view`, `${kind}-bins`, `${kind}dist-bins`, `${kind}-fit`, `${kind}-fit-range`, `${kind}-radial`, `${kind}-ref`, `${kind}-ref-label`, `${kind}-custom`, `${kind}-custom-label`]) {
+    const element = $(id)
+    if (!element) continue
+    element.addEventListener(element.tagName === 'SELECT' ? 'change' : 'input', () => {
+      updateDistributionOptions(kind)
+      drawGeometry(kind)
+    })
+  }
+}
+
+// =============================================================================
 // ── ASE: RMSD ────────────────────────────────────────────────────────────────
 // =============================================================================
 
@@ -1421,15 +1870,11 @@ $('btn-run-rmsd').addEventListener('click', async () => {
 
   hideAseProgress('rmsd-prog-row')
   const labels = r.frame_indices.map(String)
-  charts.rmsd.setData({
-    source: charts.rmsd.source,
-    title:    `RMSD vs frame ${r.reference_index}${r.aligned ? ' (Kabsch-aligned)' : ''}`,
-    notes:    r.warning ? [r.warning] : [],
-    xLabel:   'Frame',
-    yLabel:   'RMSD (Å)',
-    labels,
-    datasets: [{ label: indices ? `RMSD · MONET IDs ${indices.map(i => r.atomMapping[i].monetId).join(', ')}` : 'RMSD · all atoms', data: r.rmsd, colorIndex: 0 }]
-  })
+  lastResults.rmsd = {
+    source: charts.rmsd.source, labels, series: [{ name: indices ? `RMSD · MONET IDs ${indices.map(i => r.atomMapping[i].monetId).join(', ')}` : 'RMSD · all atoms', data: r.rmsd }],
+    title: `RMSD vs frame ${r.reference_index}${r.aligned ? ' (Kabsch-aligned)' : ''}`, quantity: 'RMSD', unit: 'Å', notes: r.warning ? [r.warning] : []
+  }
+  drawGeometry('rmsd')
   setStatus(`RMSD computed over ${r.rmsd.length} frames` + (r.warning ? ` — ${r.warning}` : ''))
 })
 
@@ -1488,15 +1933,8 @@ $('btn-run-bonds').addEventListener('click', async () => {
   if (!r.ok) { setStatus('Bond error: ' + (r.message || r.error)); return }
 
   hideAseProgress('bonds-prog-row')
-  const labels = r.frame_indices.map(String)
-  const datasets = Object.entries(r.series).map(([key, data], i) => ({
-    label: MonetASEModel.seriesLabel(key, r.atomMapping), data, colorIndex: i
-  }))
-  charts.bonds.setData({
-    source: charts.bonds.source,
-    title: 'Bond Lengths vs Frame', xLabel: 'Frame', yLabel: 'Distance (Å)',
-    labels, datasets
-  })
+  lastResults.bonds = { ...geometrySeries(r), source: charts.bonds.source, title: 'Bond Lengths vs Frame', quantity: 'Distance', unit: 'Å' }
+  drawGeometry('bonds')
   setStatus('Bond lengths computed')
 })
 
@@ -1518,15 +1956,12 @@ $('btn-run-angles').addEventListener('click', async () => {
   if (!r.ok) { setStatus('Angles error: ' + (r.message || r.error)); return }
 
   hideAseProgress('angles-prog-row')
-  const labels   = r.frame_indices.map(String)
-  const datasets = Object.entries(r.series).map(([key, data], i) => ({
-    label: MonetASEModel.seriesLabel(key, r.atomMapping), data, colorIndex: i
-  }))
-  charts.angles.setData({
-    source: charts.angles.source + (r.angleRange === '360' ? ` Reference normal: ${r.angleNormal.join(', ')}.` : ''), angleRange: r.angleRange, angleNormal: r.angleNormal,
-    title: 'Bond Angles vs Frame', xLabel: 'Frame', yLabel: 'Angle (°)',
-    labels, datasets
-  })
+  lastResults.angles = {
+    ...geometrySeries(r), angleRange: r.angleRange, angleNormal: r.angleNormal,
+    source: charts.angles.source + (r.angleRange === '360' ? ` Reference normal: ${r.angleNormal.join(', ')}.` : ''),
+    title: 'Bond Angles vs Frame', quantity: 'Angle', unit: '°'
+  }
+  drawGeometry('angles')
   setStatus('Bond angles computed')
 })
 
@@ -1550,14 +1985,8 @@ $('btn-run-dihedrals').addEventListener('click', async () => {
     action: 'dihedrals', filename, quads, angle_range: $('dihedrals-range').value, frame_step: Number($('dihedrals-step').value)
   })
   if (!r.ok) return setStatus('Dihedral error: ' + (r.message || r.error))
-  charts.dihedrals.setData({
-    title: 'Dihedral Angles vs Frame', xLabel: 'Frame', yLabel: 'Dihedral (°)',
-    source: charts.dihedrals.source, angleRange: r.angleRange,
-    labels: r.frame_indices.map(String),
-    datasets: Object.entries(r.series).map(([key, data], i) => ({
-      label: MonetASEModel.seriesLabel(key, r.atomMapping), data, colorIndex: i
-    }))
-  })
+  lastResults.dihedrals = { ...geometrySeries(r), angleRange: r.angleRange, source: charts.dihedrals.source, title: 'Dihedral Angles vs Frame', quantity: 'Dihedral', unit: '°' }
+  drawGeometry('dihedrals')
   setStatus(`Dihedral angles computed (${{ signed90: '−90° to +90°, folded', fold180: '0° to 180°, folded' }[r.angleRange] || '0–360°'}).`)
 })
 
@@ -1585,19 +2014,35 @@ function timeAxis () {
 
 function updateTimeInfo () {
   const axis = timeAxis()
-  $('md-dt-info').textContent = axis
+  const text = axis
     ? `Time between saved frames: ${fmt(axis.dt, 6)} fs (${fmt(axis.timestep, 6)} fs × ${axis.stride}).`
     : 'Set the MD time step used in your simulation (needed for MSD, VDOS and autocorrelation).'
+  $$('.time-info').forEach(info => { info.textContent = text })
+  if (axis) $$('.time-step').forEach(input => input.classList.remove('field-missing'))
   if (lastResults.acf) showAcfResult()
 }
-for (const id of ['md-timestep', 'md-timestep-unit', 'md-stride']) {
-  $(id).addEventListener('input', updateTimeInfo)
-  $(id).addEventListener('change', updateTimeInfo)
+// The time axis is shown at the top of the module and again in the MSD, VDOS and ACF panels:
+// every copy edits the same value.
+for (const kind of ['time-step', 'time-unit', 'time-stride']) {
+  for (const input of $$(`.${kind}`)) {
+    const sync = () => {
+      for (const other of $$(`.${kind}`)) if (other !== input) other.value = input.value
+      updateTimeInfo()
+    }
+    input.addEventListener('input', sync)
+    input.addEventListener('change', sync)
+  }
 }
 
 function requireTime () {
   const axis = timeAxis()
-  if (!axis) throw new Error('Set the MD time step (and MD steps per saved frame) in the Time axis row first.')
+  if (!axis) {
+    const fields = [...$$('.time-step')]
+    fields.forEach(input => input.classList.add('field-missing'))
+    const visible = fields.find(input => input.closest('.ase-subpanel.active'))
+    ;(visible || $('md-timestep')).focus()
+    throw new Error('Set the MD time step (and MD steps per saved frame): enter it in the highlighted “MD time step” field of this panel.')
+  }
   return axis
 }
 
@@ -1618,14 +2063,27 @@ $('btn-run-rmsdmatrix').addEventListener('click', async () => {
     max_frames: Number($('rmsdmatrix-max').value), align: $('rmsdmatrix-align').checked, unwrap: $('rmsdmatrix-unwrap').checked
   })
   if (!r.ok) return setStatus('RMSD matrix error: ' + (r.message || r.error))
-  charts.rmsdmatrix.setData({
+  charts.rmsdmatrix.setData(matrixStyle('rmsdmatrix', {
     title: `Pairwise RMSD${r.aligned ? ' (Kabsch-aligned)' : ''}`, source: charts.rmsdmatrix.source,
     xLabel: 'Frame', yLabel: 'Frame', colorLabel: 'RMSD (Å)',
     labels: r.frame_indices.map(String), matrix: r.matrix,
     notes: [r.truncated ? `Only the first ${r.frame_indices.length} analysed frames are shown; increase the frame step to cover the whole run.` : '', r.warning || ''].filter(Boolean)
-  })
+  }))
   setStatus(`RMSD matrix computed for ${r.frame_indices.length} frames.`)
 })
+
+// Colour map, orientation and title chosen under a matrix plot; the computed title is kept as default.
+function matrixStyle (prefix, data) {
+  const base = data.defaultTitle ?? data.title
+  return { ...data, defaultTitle: base, title: $(`${prefix}-title`).value.trim() || base, colormap: $(`${prefix}-colormap`).value, origin: $(`${prefix}-origin`).value }
+}
+for (const [prefix, kind] of [['rmsdmatrix', 'rmsdmatrix'], ['mdamatrix', 'mdamatrix']]) {
+  for (const id of ['colormap', 'origin', 'title']) {
+    $(`${prefix}-${id}`).addEventListener('input', () => {
+      if (charts[kind].data) charts[kind].setData(matrixStyle(prefix, charts[kind].data))
+    })
+  }
+}
 
 // =============================================================================
 // ── ASE: RDF ─────────────────────────────────────────────────────────────────
@@ -1741,38 +2199,135 @@ function acfTau () {
   return null
 }
 
+// Asymptotic plateau of the fitted ACF: (1 − c)·exp(−t/τ) + c is within ε·(1 − c) of c from
+// t* = τ·ln(1/ε) on. Configurations sampled t* apart are treated as uncorrelated.
+let acfPlateauEdited = false
+function acfDecorrelation () {
+  const choice = acfTau()
+  if (!choice) return null
+  const eps = Number($('acf-plateau-eps').value) || 0.05
+  const fitted = choice.tau * Math.log(1 / eps)
+  const typed = Number($('acf-plateau-time').value)
+  const time = acfPlateauEdited && typed > 0 ? typed : fitted
+  const axis = timeAxis()
+  const stride = axis ? Math.max(1, Math.ceil(time / axis.dt - 1e-9)) : null
+  const frames = playerCount()
+  return { ...choice, eps, fitted, time, edited: acfPlateauEdited && typed > 0, axis, stride, frames, kept: stride ? Math.floor((frames - 1) / stride) + 1 : null }
+}
+
+function drawAcfChart () {
+  const r = lastResults.acf
+  if (!r) return
+  const datasets = [{ label: `C(t) · ${r.distLabel}`, data: r.acf, colorIndex: 0 }]
+  const offset = r.fit_model === 'exp_offset'
+  if (r.fit_curve) {
+    datasets.push({ label: offset ? `(1 − c)·exp(−t/τ) + c, τ = ${fmt(r.tau_fit, 4)} fs, c = ${fmt(r.plateau, 3)}` : `exp(−t/τ), τ = ${fmt(r.tau_fit, 4)} fs`, data: r.fit_curve, dash: true, colorIndex: 1 })
+  }
+  if (offset && Number.isFinite(r.plateau)) datasets.push({ label: `plateau c = ${fmt(r.plateau, 3)}`, data: r.acf.map(() => r.plateau), dash: true, colorIndex: 2 })
+  const d = acfDecorrelation()
+  const markers = d ? [{ value: d.time, label: `t* = ${fmt(d.time, 4)} fs${d.stride ? ` (${d.stride} frames)` : ''}` }] : []
+  const keepView = charts.acf._entry === r
+  charts.acf._entry = r
+  charts.acf.setData({
+    title: `Autocorrelation of the ${r.quantity === 'rmsd' ? 'RMSD' : r.quantity}${r.period === 180 ? ' (folded, period 180°)' : ''}`, source: charts.acf.source,
+    xLabel: 'Time lag (fs)', yLabel: r.mode === 'circular' ? 'Normalised circular autocorrelation' : 'Normalised autocorrelation',
+    labels: lineLabels(r.lags), datasets, markers,
+    notes: [`τ fit ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs · τ integral ${fmt(r.tau_int, 4)} fs · Δt ${fmt(r.dt, 5)} fs` +
+      (offset ? ` · plateau c = ${fmt(r.plateau, 3)} ± ${fmt(r.plateau_error, 2)}` : '')]
+  }, { keepView })
+}
+
 function showAcfResult () {
   const r = lastResults.acf
   if (!r) return
   const axis = timeAxis()
   const steps = value => axis ? ` = ${fmt(value / axis.timestep, 4)} MD steps = ${fmt(value / axis.dt, 4)} saved frames` : ''
+  const model = r.fit_model === 'exp_offset' ? '(1 − c)·exp(−t/τ) + c' : 'exp(−t/τ)'
   $('acf-tau-text').textContent = [
-    `τ (fit exp(−t/τ), ${r.fit_points} points up to ${fmt(r.fit_end, 4)} fs) = ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs${steps(r.tau_fit)}`,
+    `τ (fit ${model}, ${r.fit_points} points up to ${fmt(r.fit_end, 4)} fs) = ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs${steps(r.tau_fit)}`,
+    r.fit_model === 'exp_offset' ? `plateau c = ${fmt(r.plateau, 3)} ± ${fmt(r.plateau_error, 2)}` : null,
     `τ (integral to first zero) = ${fmt(r.tau_int, 4)} fs${r.decorrelated ? '' : ' (ACF never crossed zero: extend the lag range or the run)'}`,
     `Mean ${fmt(r.statistics[0].mean, 5)} ± ${fmt(r.statistics[0].sem, 2)} (std ${fmt(r.statistics[0].std, 4)}), N_eff ≈ ${fmt(r.n_effective, 3)} of ${r.n_frames} frames`
-  ].join(' · ')
-  const choice = acfTau()
-  const factor = Number($('acf-multiplier').value) || 1
-  if (!choice || !axis) {
-    $('acf-stride-text').textContent = axis ? 'No correlation time available.' : 'Set the MD time step to convert τ into a sampling stride.'
-    $('acf-apply-stride').disabled = true
+  ].filter(Boolean).join(' · ')
+  const d = acfDecorrelation()
+  if (d && !acfPlateauEdited) $('acf-plateau-time').value = Number(d.fitted.toPrecision(5))
+  if (!d) {
+    $('acf-plateau-text').textContent = 'No correlation time is available: the fit failed and the ACF never crossed zero. Enter τ by hand.'
+    $('acf-stride-text').textContent = ''
   } else {
-    const stride = Math.max(1, Math.ceil(factor * choice.tau / axis.dt - 1e-9))
-    $('acf-stride-text').textContent = `Sample every ${stride} saved frames (${fmt(stride * axis.stride, 6)} MD steps, ${fmt(stride * axis.dt, 5)} fs) using τ ${choice.source} = ${fmt(choice.tau, 4)} fs × ${factor}`
-    $('acf-apply-stride').dataset.stride = stride
-    $('acf-apply-stride').disabled = false
+    $('acf-plateau-text').textContent = d.edited
+      ? `You set t* = ${fmt(d.time, 5)} fs (the fit gives ${fmt(d.fitted, 5)} fs = τ·ln(1/ε) with τ ${d.source} = ${fmt(d.tau, 4)} fs, ε = ${d.eps * 100} %).`
+      : `The fitted ACF reaches its plateau within ε = ${d.eps * 100} % at t* = τ·ln(1/ε) = ${fmt(d.fitted, 5)} fs (τ ${d.source} = ${fmt(d.tau, 4)} fs; dashed line on the plot). ` +
+        'Check it against the curve, then accept it or type another t*.'
+    $('acf-stride-text').textContent = d.stride
+      ? `→ one configuration every ${d.stride} saved frames (${fmt(d.stride * d.axis.stride, 6)} MD steps, ${fmt(d.stride * d.axis.dt, 5)} fs): ${d.kept} uncorrelated configurations out of ${d.frames}`
+      : 'Set the MD time step to convert t* into saved frames.'
   }
+  const ready = Boolean(d?.stride)
+  $('acf-apply-stride').disabled = !ready
+  $('acf-accept').disabled = !ready || !aseState.available || aseState.busy || (d && d.kept < 2)
   $('acf-result').classList.remove('hidden')
+  drawAcfChart()
 }
-for (const id of ['acf-tau-manual', 'acf-multiplier']) $(id).addEventListener('input', showAcfResult)
+$('acf-tau-manual').addEventListener('input', () => { acfPlateauEdited = false; showAcfResult() })
+$('acf-plateau-eps').addEventListener('change', () => { acfPlateauEdited = false; showAcfResult() })
+$('acf-plateau-time').addEventListener('input', () => { acfPlateauEdited = true; showAcfResult() })
 $('acf-apply-stride').addEventListener('click', () => {
-  const stride = Number($('acf-apply-stride').dataset.stride)
-  if (!Number.isInteger(stride) || stride < 1) return
-  $('inp-freq').value = stride
+  const d = acfDecorrelation()
+  if (!d?.stride) return
+  $('inp-freq').value = d.stride
   updateSampledCount()
-  setStatus(`Sampling frequency set to every ${stride} frames (step 02). Re-run the extraction to apply it.`)
+  setStatus(`Sampling frequency set to every ${d.stride} frames (step 02, t* = ${fmt(d.time, 4)} fs). Re-run the extraction to apply it.`)
 })
+
+// Accepted t*: write the uncorrelated configurations and (optionally) make them the active trajectory.
+$('acf-accept').addEventListener('click', async () => {
+  const d = acfDecorrelation()
+  const filename = extractedTrajPath()
+  if (!d?.stride || !filename) return
+  const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+  const output = await window.monet.aseSelectOutput(`${stem}-uncorrelated.extxyz`)
+  if (!output) return
+  $('acf-subsample-result').classList.add('hidden')
+  $('acf-download-uncorrelated').classList.add('hidden')
+  const r = await runAse('subsample', { action: 'subsample', filename, stride: d.stride, output })
+  if (!r.ok) return acfError(r.message || r.error)
+  const summary = `✓ ${r.n_frames} uncorrelated configurations written (every ${d.stride} of ${r.source_frames} frames, t* = ${fmt(d.time, 4)} fs, source frames ${r.first}…${r.last}; each comment line keeps source_frame=).`
+  $('acf-subsample-text').textContent = summary
+  $('acf-subsample-result').classList.remove('hidden')
+  if (r.downloadURL) {
+    $('acf-download-uncorrelated').href = r.downloadURL
+    $('acf-download-uncorrelated').download = r.output || `${stem}-uncorrelated.extxyz`
+    $('acf-download-uncorrelated').classList.remove('hidden')
+  }
+  const path = r.filePath || output
+  if (!$('acf-activate').checked) return setStatus(summary)
+  try {
+    await activateTrajectory(path, { label: `uncorrelated · every ${d.stride} frames (t* = ${fmt(d.time, 4)} fs)`, strideFactor: d.stride })
+    setStatus(`${summary} MONET now analyses and extracts this uncorrelated trajectory (↩ Full trajectory to go back).`)
+  } catch (error) { acfError('The uncorrelated trajectory was written but could not be loaded: ' + error.message) }
+})
+
+// Lag window of the ACF plot: typed maximum lag, or drag-zoom on the plot.
+function applyAcfView () {
+  const max = Number($('acf-view-max').value)
+  if (!charts.acf.data) return
+  if ($('acf-view-max').value.trim() && max > 0) charts.acf.zoomToValues(0, max)
+  else charts.acf.setView(null)
+}
+$('acf-view-max').addEventListener('input', applyAcfView)
+$('acf-zoom-reset').addEventListener('click', () => { $('acf-view-max').value = ''; charts.acf.setView(null) })
+charts.acf.onZoom = view => { $('acf-zoom-reset').disabled = !view }
+
+function acfError (message) {
+  $('acf-error').textContent = message
+  $('acf-error').classList.toggle('hidden', !message)
+  if (message) setStatus('Autocorrelation: ' + message)
+}
+function updateAcfRange () { $('acf-range').disabled = $('acf-quantity').value !== 'dihedral' }
+updateAcfRange()
 $('acf-quantity').addEventListener('change', () => {
+  updateAcfRange()
   $('acf-groups').placeholder = { dihedral: '1 2 3 4', angle: '2 1 3', bond: '1 2', rmsd: '1 2 3 …' }[$('acf-quantity').value]
   $('acf-mode').value = 'linear'
   clearAnalysis('acf', false)
@@ -1781,7 +2336,8 @@ $('acf-quantity').addEventListener('change', () => {
 
 $('btn-run-acf').addEventListener('click', async () => {
   const filename = extractedTrajPath()
-  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  acfError('')
+  if (!filename) return acfError('Load a trajectory first.')
   const quantity = $('acf-quantity').value
   let groups, axis
   try {
@@ -1789,35 +2345,697 @@ $('btn-run-acf').addEventListener('click', async () => {
     groups = quantity === 'rmsd'
       ? [MonetASEModel.selectedIndices($('acf-groups').value, aseState.analysisAtoms) || aseState.analysisAtoms.map(atom => atom.aseIndex)]
       : MonetASEModel.groupsFromIds($('acf-groups').value, ACF_WIDTH[quantity], aseState.analysisAtoms)
-  } catch (error) { return setStatus(error.message) }
+  } catch (error) { return acfError(error.message) }
   const maxLag = $('acf-maxlag').value.trim()
   const r = await runAse('acf', {
     action: 'acf', filename, quantity, groups, dt: axis.dt, frame_step: Number($('acf-step').value),
-    mode: $('acf-mode').value, fit_until: $('acf-fit').value, nbins: Number($('acf-bins').value),
+    mode: $('acf-mode').value, fit_until: $('acf-fit').value, fit_model: $('acf-fit-model').value,
+    ...(quantity === 'dihedral' ? { angle_range: $('acf-range').value } : {}),
     ...(maxLag ? { max_lag: Number(maxLag) } : {})
   })
-  if (!r.ok) return setStatus('Autocorrelation error: ' + (r.message || r.error))
+  if (!r.ok) return acfError(r.message || r.error)
   lastResults.acf = r
-  const label = quantity === 'rmsd' ? 'RMSD' : groups.map(group => MonetASEModel.seriesLabel(group.join('-'), r.atomMapping)).join(' | ')
-  const unit = { dihedral: '°', angle: '°', bond: 'Å', rmsd: 'Å' }[quantity]
-  const datasets = [{ label: `C(t) · ${label}`, data: r.acf, colorIndex: 0 }]
-  if (r.fit_curve) datasets.push({ label: `exp(−t/τ), τ = ${fmt(r.tau_fit, 4)} fs`, data: r.fit_curve, dash: true, colorIndex: 1 })
-  charts.acf.setData({
-    title: `Autocorrelation of the ${quantity === 'rmsd' ? 'RMSD' : quantity}`, source: charts.acf.source,
-    xLabel: 'Time lag (fs)', yLabel: r.mode === 'circular' ? '⟨cos Δθ⟩' : 'Normalised autocorrelation',
-    labels: lineLabels(r.lags), datasets,
-    notes: [`τ fit ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs · τ integral ${fmt(r.tau_int, 4)} fs · Δt ${fmt(r.dt, 5)} fs`]
-  })
-  charts.acfdist.source = charts.acf.source
-  charts.acfdist.setData({
-    title: `Distribution of the ${quantity === 'rmsd' ? 'RMSD' : quantity}`, source: charts.acf.source,
-    xLabel: `${quantity === 'rmsd' ? 'RMSD' : quantity[0].toUpperCase() + quantity.slice(1)} (${unit})`, yLabel: 'Probability density',
-    labels: lineLabels(r.distribution.x),
-    datasets: [{ label: `${label} · ${r.n_frames} frames`, data: r.distribution.density, bars: true, colorIndex: 2 }],
-    notes: [`Mean ${fmt(r.statistics[0].mean, 5)} ${unit} · std ${fmt(r.statistics[0].std, 4)} ${unit}`], yMin: 0
-  })
+  r.distLabel = quantity === 'rmsd' ? 'RMSD' : groups.map(group => MonetASEModel.seriesLabel(group.join('-'), r.atomMapping)).join(' | ')
+  r.unit = { dihedral: '°', angle: '°', bond: 'Å', rmsd: 'Å' }[quantity]
+  r.quantity = quantity
+  acfPlateauEdited = false
+  $('acf-subsample-result').classList.add('hidden')
   showAcfResult()
-  setStatus(`Autocorrelation computed: τ = ${fmt(r.tau_fit, 4)} fs.`)
+  applyAcfView()
+  const d = acfDecorrelation()
+  setStatus(`Autocorrelation computed: τ = ${fmt(r.tau_fit, 4)} fs${d ? `, plateau at t* = ${fmt(d.time, 4)} fs — please validate it below the plot` : ''}.`)
+  $('acf-plateau').scrollIntoView?.({ block: 'nearest' })
+})
+
+// =============================================================================
+// ── MDAnalysis: format list, selections and analyses ────────────────────────
+// =============================================================================
+
+let formatsLoaded = false
+async function loadFormatList () {
+  if (formatsLoaded) return
+  const result = await window.monet.listFormats()
+  if (!result?.ok) return
+  formatsLoaded = true
+  const group = $('inp-format-ase')
+  const known = new Set([...$('inp-format').options].map(option => option.value))
+  for (const { name, description } of result.ase) {
+    if (known.has(name)) continue
+    const option = document.createElement('option')
+    option.value = `ase:${name}`
+    option.textContent = `${description} (${name})`
+    group.appendChild(option)
+  }
+  for (const option of $('inp-format').querySelectorAll('option[value^="mda-"]')) option.disabled = !result.mdanalysis
+}
+
+function monetIdsFromIndices (indices, mapping = aseState.analysisAtoms) {
+  return indices.map(index => mapping[index]?.monetId).filter(id => id !== undefined)
+}
+
+$('mda-pick').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  const selection = $('mda-pick-selection').value.trim()
+  if (!filename || !selection) return setStatus('Load a trajectory and enter an MDAnalysis selection.')
+  const r = await runAse('mdapick', { action: 'mda_select', filename, selection })
+  if (!r.ok) {
+    $('mda-pick-status').textContent = r.message || r.error
+    return setStatus('MDAnalysis selection: ' + (r.message || r.error))
+  }
+  syncAsePicks(monetIdsFromIndices(r.indices, r.atomMapping))
+  $('mda-pick-status').textContent = `${r.n_atoms} atoms in ${r.n_residues} residues${r.residues.length ? ': ' + r.residues.slice(0, 12).join(', ') + (r.n_residues > 12 ? ' …' : '') : ''}.`
+  setStatus(`Selected ${r.n_atoms} atoms with "${selection}".`)
+})
+
+// Fields of each MDAnalysis analysis: [param, label, type, default, options].
+// type: sel (selection with "← picked"), text, number, check, select, quads (groups of four MONET IDs)
+const MDA_SPECS = {
+  rmsd: { text: 'rms.RMSD: RMSD of the fit selection after optimal superposition on the first analysed frame; extra groups are measured after the same fit.',
+    fields: [['selection', 'Fit selection', 'sel', 'all'], ['groups', 'Extra groups (one selection per line)', 'lines', '']] },
+  rmsd_matrix: { text: 'diffusionmap.DistanceMatrix: RMSD between every pair of analysed frames, after optimal superposition of each pair (rms.rmsd). Use the frame step or the uncorrelated trajectory to compare independent configurations; long runs are thinned to the maximum number of frames.',
+    fields: [['selection', 'Selection', 'sel', 'all'], ['superposition', 'Superimpose each pair (remove rotation and translation)', 'check', true], ['max_frames', 'Maximum frames', 'number', 500]] },
+  rmsf: { text: 'rms.RMSF: fluctuation of every selected atom around its average position.',
+    fields: [['selection', 'Selection', 'sel', 'all'], ['align', 'Align on the selection first', 'check', true]] },
+  rgyr: { text: 'Mass-weighted radius of gyration of the selection in every frame.', fields: [['selection', 'Selection', 'sel', 'all']] },
+  pca: { text: 'pca.PCA: principal components of the selected coordinates; projections of the first three components along the trajectory and the variance table.',
+    fields: [['selection', 'Selection', 'sel', 'all'], ['align', 'Align on the selection first', 'check', true]] },
+  msd: { text: 'msd.EinsteinMSD: windowed mean-squared displacement (set the time axis for a lag in fs). Use an unwrapped trajectory for periodic runs.',
+    fields: [['selection', 'Selection', 'sel', 'all'], ['msd_type', 'Dimensions', 'select', 'xyz', ['xyz', 'xy', 'yz', 'xz', 'x', 'y', 'z']]] },
+  gnm: { text: 'gnm.GNMAnalysis: lowest non-zero eigenvalue of the Kirchhoff matrix in every frame.',
+    fields: [['selection', 'Selection', 'sel', 'all'], ['cutoff', 'Cutoff (Å)', 'number', 7]] },
+  diffusionmap: { text: 'diffusionmap.DiffusionMap: eigenvalues of the frame-to-frame RMSD diffusion kernel (at most 1500 frames).',
+    fields: [['selection', 'Selection', 'sel', 'all'], ['epsilon', 'Kernel width ε (Å²)', 'number', 1]] },
+  align: { text: 'align.AlignTraj: superimpose every frame on the first one and write the aligned trajectory (same atoms, same MONET IDs).',
+    fields: [['selection', 'Fit selection', 'sel', 'all']] },
+  hbonds: { text: 'HydrogenBondAnalysis: donor–hydrogen···acceptor triplets by distance and angle; count per frame and occupancy table (MONET IDs).',
+    fields: [['donors', 'Donors', 'sel', 'element O N F'], ['hydrogens', 'Hydrogens', 'sel', 'element H'], ['acceptors', 'Acceptors', 'sel', 'element O N F'],
+      ['d_a_cutoff', 'D–A cutoff (Å)', 'number', 3], ['angle', 'D–H–A minimum angle (°)', 'number', 150]] },
+  contacts: { text: 'contacts.Contacts: fraction of the native contacts of the first frame kept along the trajectory.',
+    fields: [['group_a', 'Group A', 'sel', 'all'], ['group_b', 'Group B', 'sel', 'all'], ['radius', 'Contact radius (Å)', 'number', 4.5],
+      ['method', 'Method', 'select', 'hard_cut', ['hard_cut', 'soft_cut', 'radius_cut']]] },
+  interrdf: { text: 'rdf.InterRDF: radial distribution function between two groups with minimum-image distances (needs a cell).',
+    fields: [['group_a', 'Group A', 'sel', 'element O'], ['group_b', 'Group B', 'sel', 'element O'], ['rmax', 'r max (Å)', 'number', 8],
+      ['nbins', 'Bins', 'number', 150], ['exclude_same', 'Exclude pairs within the same', 'select', 'none', ['none', 'atom', 'residue']]] },
+  com_distance: { text: 'Distance between the centres of mass of two groups (minimum image when a cell is set).',
+    fields: [['group_a', 'Group A', 'sel', 'resid 1'], ['group_b', 'Group B', 'sel', 'resid 2']] },
+  min_distance: { text: 'Shortest distance between any atom of group A and any atom of group B (minimum image when a cell is set).',
+    fields: [['group_a', 'Group A', 'sel', 'resid 1'], ['group_b', 'Group B', 'sel', 'not resid 1']] },
+  atomic_distances: { text: 'atomicdistances.AtomicDistances: atom k of group A with atom k of group B (same size; the first 12 pairs are plotted).',
+    fields: [['group_a', 'Group A', 'sel', 'id 1'], ['group_b', 'Group B', 'sel', 'id 2']] },
+  dihedral_mda: { text: 'dihedrals.Dihedral: torsions of groups of four atoms with the IUPAC sign convention (−180…180°; the ASE tab uses 0–360°).',
+    fields: [['quads', 'Groups of four MONET IDs', 'quads', '']] },
+  lineardensity: { text: 'lineardensity.LinearDensity: mass-density profile along the cell axes, averaged over the analysed frames (needs a cell).',
+    fields: [['selection', 'Selection', 'sel', 'all'], ['grouping', 'Grouping', 'select', 'atoms', ['atoms', 'residues', 'segments', 'fragments']],
+      ['binsize', 'Bin size (Å)', 'number', 0.25], ['axes', 'Axes', 'select', 'xyz', ['xyz', 'x', 'y', 'z']]] },
+  density: { text: 'density.DensityAnalysis: 3D number-density grid of the selection, written as OpenDX for VMD, PyMOL or Chimera.',
+    fields: [['selection', 'Selection', 'sel', 'element O'], ['delta', 'Grid spacing (Å)', 'number', 1]] },
+  ramachandran: { text: 'dihedrals.Ramachandran: backbone φ/ψ of protein residues (needs a topology with standard atom names, e.g. PDB).',
+    fields: [['selection', 'Protein selection', 'sel', 'protein']] },
+  dssp: { text: 'dssp.DSSP: fraction of helix, strand and loop residues per frame (protein topology with backbone N, CA, C, O).', fields: [] }
+}
+
+function updateMdaForm () {
+  const spec = MDA_SPECS[$('mda-analysis').value]
+  $('mda-description').textContent = spec.text
+  const box = $('mda-fields')
+  box.replaceChildren()
+  for (const [param, label, type, value, options] of spec.fields) {
+    const wrap = document.createElement('label')
+    wrap.textContent = label
+    let input
+    if (type === 'select') {
+      input = document.createElement('select')
+      for (const option of options) input.add(new Option(option, option))
+    } else if (type === 'lines') {
+      input = document.createElement('textarea')
+      input.rows = 2
+    } else {
+      input = document.createElement('input')
+      input.type = type === 'number' ? 'number' : type === 'check' ? 'checkbox' : 'text'
+      if (type === 'number') input.step = 'any'
+    }
+    input.id = `mda-p-${param}`
+    input.dataset.param = param
+    input.dataset.type = type
+    if (type === 'check') {
+      input.checked = value
+      wrap.prepend(input)
+    } else {
+      input.className = 'field-input'
+      input.value = value
+      if (type === 'quads') input.placeholder = 'e.g. 1 2 3 4  5 6 7 8'
+      if (type === 'sel' || type === 'quads') {
+        const row = document.createElement('div')
+        row.className = 'pick-row'
+        const pick = document.createElement('button')
+        pick.type = 'button'
+        pick.className = 'btn btn-sm'
+        pick.textContent = '← picked'
+        pick.title = 'Use the atoms selected in the viewer (MONET IDs)'
+        pick.addEventListener('click', () => {
+          if (!aseState.pickedIds.length) return setStatus('Select atoms in the viewer first.')
+          const ids = aseState.pickedIds.join(' ')
+          input.value = type === 'quads' && input.value.trim() ? `${input.value.trim()}  ${ids}` : type === 'quads' ? ids : `id ${ids}`
+        })
+        row.append(input, pick)
+        wrap.appendChild(row)
+      } else wrap.appendChild(input)
+    }
+    if (type === 'sel' || type === 'lines' || type === 'quads') wrap.classList.add('mda-wide')
+    box.appendChild(wrap)
+  }
+  clearAnalysis('mda', false)
+}
+$('mda-analysis').addEventListener('change', updateMdaForm)
+
+function mdaParams () {
+  const params = {}
+  for (const input of $('mda-fields').querySelectorAll('[data-param]')) {
+    const { param, type } = input.dataset
+    if (type === 'check') params[param] = input.checked
+    else if (type === 'number') {
+      const value = Number(input.value)
+      if (!input.value.trim() || !Number.isFinite(value) || value <= 0) throw new Error(`Enter a positive number for “${input.parentElement.firstChild.textContent}”.`)
+      params[param] = ['nbins', 'max_frames'].includes(param) ? Math.round(value) : value
+    } else if (type === 'lines') params[param] = input.value.split('\n').map(line => line.trim()).filter(Boolean)
+    else if (type === 'quads') {
+      // MONET IDs → positions in the analysed file.
+      params[param] = MonetASEModel.groupsFromIds(input.value, 4, aseState.analysisAtoms)
+    } else if (type === 'select') {
+      if (input.value !== 'none') params[param] = input.value
+    } else params[param] = input.value.trim()
+  }
+  return params
+}
+
+// Atom indices (0-based, analysed file) → "MONET ID (element)".
+function atomName (index, mapping) {
+  const atom = mapping.find(a => a.aseIndex === index)
+  return atom ? `${atom.monetId} (${atom.element})` : `#${index}`
+}
+
+function renderTable (container, table, { title, mapping, mismatch } = {}) {
+  const wrap = document.createElement('div')
+  if (title) {
+    const heading = document.createElement('h4')
+    heading.textContent = title
+    wrap.appendChild(heading)
+  }
+  const element = document.createElement('table')
+  element.className = 'atom-table'
+  const head = element.createTHead().insertRow()
+  for (const column of table.columns) {
+    const th = document.createElement('th')
+    th.textContent = column
+    head.appendChild(th)
+  }
+  const body = element.createTBody()
+  const atomColumns = new Set(table.atom_columns || [])
+  table.rows.forEach((values, r) => {
+    const row = body.insertRow()
+    if (mismatch?.has(r)) row.classList.add('mismatch')
+    values.forEach((value, c) => { row.insertCell().textContent = atomColumns.has(c) && mapping ? atomName(value, mapping) : value })
+  })
+  const scroll = document.createElement('div')
+  scroll.className = 'ase-atom-scroll'
+  scroll.appendChild(element)
+  wrap.appendChild(scroll)
+  container.appendChild(wrap)
+}
+
+let mdaAlignedPath = null
+$('btn-run-mda').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  const analysis = $('mda-analysis').value
+  let params
+  try { params = mdaParams() } catch (error) { return setStatus(error.message) }
+  const command = { filename, frame_step: Number($('mda-step').value) || 1, params }
+  const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+  if (analysis === 'align' || analysis === 'density') {
+    command.output = await window.monet.aseSelectOutput(analysis === 'align' ? `${stem}-aligned.extxyz` : `${stem}-density.dx`)
+    if (!command.output) return
+  }
+  if (analysis === 'align') command.action = 'mda_align'
+  else {
+    Object.assign(command, { action: 'mda_run', analysis })
+    const axis = timeAxis()
+    if (axis) command.dt = axis.dt
+  }
+  clearAnalysis('mda', false)
+  const r = await runAse('mda', command)
+  if (!r.ok) return setStatus('MDAnalysis error: ' + (r.message || r.error))
+  const link = $('mda-download')
+  if (r.downloadURL) {
+    link.href = r.downloadURL
+    link.download = r.output || command.output.split(/[\\/]/).pop()
+    link.classList.remove('hidden')
+  }
+  if (analysis === 'align') {
+    mdaAlignedPath = r.filePath || command.output
+    $('mda-activate').classList.remove('hidden')
+    renderTable($('mda-table'), { columns: ['Aligned trajectory', 'Value'], rows: [['Frames', r.n_frames], ['Fit selection', r.selection], ['File', link.download || command.output]] })
+    return setStatus(`Aligned ${r.n_frames} frames on "${r.selection}".`)
+  }
+  mdaAlignedPath = null
+  const spec = $('mda-analysis').selectedOptions[0].textContent
+  const notes = [...(r.notes || []), `${r.n_frames} analysed frames (step ${command.frame_step})`]
+  if (r.kind === 'matrix') {
+    $('mda-matrix-block').classList.remove('hidden')
+    charts.mdamatrix.source = charts.mda.source
+    charts.mdamatrix.setData(matrixStyle('mdamatrix', {
+      title: 'Pairwise RMSD (MDAnalysis)', source: charts.mda.source, xLabel: r.xLabel, yLabel: r.yLabel, colorLabel: r.colorLabel,
+      labels: r.labels.map(String), matrix: r.matrix, notes: r.notes || []
+    }))
+  } else if (r.kind !== 'table') {
+    const frames = r.xLabel === 'Frame'
+    let labels = frames ? r.x.map(String) : lineLabels(r.x)
+    if (r.atoms) labels = r.atoms.map(index => String(r.atomMapping.find(a => a.aseIndex === index)?.monetId ?? index + 1))
+    charts.mda.setData({
+      title: spec, source: charts.mda.source, xLabel: r.xLabel, yLabel: r.yLabel, labels, notes,
+      datasets: r.series.map((entry, k) => {
+        const stats = frames ? MonetASEModel.seriesStats(entry.data) : null
+        return { label: stats ? `${entry.label} · mean ${fmt(stats.mean, 4)} ± ${fmt(stats.std, 3)}` : entry.label, data: entry.data, bars: Boolean(r.bars), colorIndex: k }
+      })
+    })
+    lastResults.mda = r
+  }
+  if (r.table) renderTable($('mda-table'), r.table, { mapping: r.atomMapping, title: r.kind === 'table' ? spec : null })
+  if (r.kind === 'table' && notes.length) {
+    const note = document.createElement('p')
+    note.className = 'panel-desc'
+    note.textContent = notes.join(' · ')
+    $('mda-table').appendChild(note)
+  }
+  setStatus(`MDAnalysis ${analysis} computed.`)
+})
+
+$('mda-activate').addEventListener('click', async () => {
+  if (!mdaAlignedPath) return
+  try {
+    await activateTrajectory(mdaAlignedPath, { label: 'aligned (MDAnalysis AlignTraj)' })
+    setStatus('MONET now analyses and extracts the aligned trajectory (↩ Full trajectory to go back).')
+  } catch (error) { setStatus('The aligned trajectory could not be loaded: ' + error.message) }
+})
+
+// =============================================================================
+// ── ASE: structure summary and coordination numbers ──────────────────────────
+// =============================================================================
+
+$('btn-run-structure').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  const frame = Number($('structure-frame').value)
+  if (!Number.isInteger(frame) || frame < 0) return setStatus('Enter a frame number (0 = first).')
+  const symprec = Number($('structure-symprec').value) || 1e-3
+  const r = await runAse('structure', { action: 'ase_structure', filename, frame, symprec })
+  const box = $('structure-result')
+  box.replaceChildren()
+  if (!r.ok) { updateAseControls(); return setStatus('Structure error: ' + (r.message || r.error)) }
+  renderTable(box, { columns: ['Property', 'Value'], rows: r.summary }, { title: `Frame ${r.frame}` })
+  renderTable(box, r.bonds, { title: 'Bonds per element pair' })
+  renderTable(box, r.coordination, { title: 'Coordination numbers' })
+  updateAseControls()
+  setStatus(`Structure of frame ${r.frame} analysed with ASE.`)
+})
+$('clear-structure').addEventListener('click', () => {
+  $('structure-result').replaceChildren()
+  updateAseControls()
+})
+
+$('btn-run-coordination').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  let indices
+  try { indices = MonetASEModel.selectedIndices($('coordination-atoms').value, aseState.analysisAtoms) }
+  catch (error) { return setStatus(error.message) }
+  const step = Number($('coordination-step').value) || 1
+  const r = await runAse('coordination', { action: 'ase_coordination', filename, indices, frame_step: step })
+  if (!r.ok) return setStatus('Coordination error: ' + (r.message || r.error))
+  // Per-atom keys are element + (index + 1) in the analysed file: show MONET IDs.
+  const name = key => {
+    const match = /^([A-Za-z]+)(\d+)$/.exec(key)
+    const atom = match && r.atomMapping.find(a => a.aseIndex === Number(match[2]) - 1)
+    return atom ? `${atom.element} ${atom.monetId}` : key
+  }
+  charts.coordination.setData({
+    title: 'Coordination numbers (ASE natural cutoffs)', source: charts.coordination.source, xLabel: 'Frame', yLabel: 'Coordination number', yMin: 0,
+    labels: r.frame_indices.map(String), notes: [`Bond cutoff × ${r.bond_scale} covalent radii · frame step ${step}`],
+    datasets: Object.entries(r.series).map(([key, data], k) => {
+      const stats = MonetASEModel.seriesStats(data)
+      return { label: `${name(key)} · mean ${fmt(stats.mean, 4)}`, data, colorIndex: k, dash: /mean of/.test(key) ? undefined : [4, 3] }
+    })
+  })
+  setStatus('Coordination numbers computed.')
+})
+
+// =============================================================================
+// ── Atom identity: MONET = ASE = MDAnalysis ──────────────────────────────────
+// =============================================================================
+
+let topologyRevision = 0
+function resetTopology () {
+  topologyRevision++
+  $('topology-status').className = 'info-box'
+  $('topology-status').textContent = aseState.analysisAtoms.length ? 'Atom identity not checked yet.' : 'Load a trajectory to compare MONET, ASE and MDAnalysis.'
+  $('topology-table').replaceChildren()
+}
+
+// Compare MONET's atoms with what ASE and MDAnalysis read from the same file.
+function compareTopology (atoms, info) {
+  const problems = []
+  const bad = new Set()
+  const byIndex = []
+  for (const atom of atoms) byIndex[atom.aseIndex] = atom
+  if (info.n_atoms !== atoms.length) problems.push(`ASE reads ${info.n_atoms} atoms, MONET ${atoms.length}.`)
+  const mda = info.mdanalysis
+  if (mda && mda.index.length !== atoms.length) problems.push(`MDAnalysis builds ${mda.index.length} atoms, MONET ${atoms.length}.`)
+  const n = Math.min(atoms.length, info.n_atoms, mda ? mda.index.length : Infinity)
+  for (let i = 0; i < n; i++) {
+    const atom = byIndex[i]
+    const reasons = []
+    if (!atom) { reasons.push('no MONET atom'); bad.add(i); problems.push(`File atom ${i} has no MONET ID.`); continue }
+    if (info.symbols[i] !== atom.element) reasons.push(`ASE element ${info.symbols[i]}`)
+    if (['x', 'y', 'z'].some((axis, j) => Math.abs(info.positions[i][j] - atom[axis]) > 1e-3)) reasons.push('ASE coordinates')
+    if (mda) {
+      if (mda.id[i] !== atom.monetId) reasons.push(`MDAnalysis id ${mda.id[i]}`)
+      if (mda.element[i] !== atom.element) reasons.push(`MDAnalysis element ${mda.element[i]}`)
+      if (['x', 'y', 'z'].some((axis, j) => Math.abs(mda.positions[i][j] - atom[axis]) > 2e-3)) reasons.push('MDAnalysis coordinates')
+    }
+    if (reasons.length) {
+      bad.add(i)
+      if (problems.length < 6) problems.push(`MONET ID ${atom.monetId}: ${reasons.join(', ')}.`)
+    }
+  }
+  return { problems, bad, byIndex }
+}
+
+async function checkTopology ({ quiet = false } = {}) {
+  const filename = extractedTrajPath()
+  if (!filename || !aseState.available || !aseState.analysisAtoms.length) return
+  const revision = ++topologyRevision
+  const atoms = aseState.analysisAtoms
+  $('topology-status').className = 'info-box'
+  $('topology-status').textContent = 'Comparing MONET, ASE and MDAnalysis …'
+  const command = { action: 'topology', filename, ...cellOptions(), atom_ids: [] }
+  for (const atom of atoms) command.atom_ids[atom.aseIndex] = atom.monetId
+  const scale = Number($('ase-bond-scale').value)
+  if (scale >= 0.5 && scale <= 2) command.bond_scale = scale
+  let info
+  // Read-only check: it does not take the calculation lock, so analyses can start meanwhile.
+  try { info = await window.monet.aseRun(command) } catch (error) { info = { ok: false, error: error.message } }
+  if (revision !== topologyRevision) return
+  const status = $('topology-status')
+  if (!info?.ok) {
+    status.classList.add('topology-bad')
+    status.textContent = 'Atom identity could not be checked: ' + (info?.message || info?.error)
+    return quiet || setStatus(status.textContent)
+  }
+  const { problems, bad, byIndex } = compareTopology(atoms, info)
+  const mda = info.mdanalysis
+  if (mda) {
+    // Residue and molecule of every atom, as MDAnalysis sees them, in the MONET atom table.
+    for (let i = 0; i < mda.index.length; i++) {
+      const atom = byIndex[i]
+      if (!atom) continue
+      atom.residue = `${mda.resname[i]}${mda.resid[i]}`
+      atom.molecule = mda.fragment[i] + 1
+    }
+    for (const row of $('ase-atom-body').rows) {
+      const atom = atoms.find(a => String(a.monetId) === row.dataset.monetId)
+      if (atom && row.cells.length >= 8) { row.cells[6].textContent = atom.residue; row.cells[7].textContent = atom.molecule }
+    }
+  }
+  status.classList.add(problems.length ? 'topology-bad' : 'topology-ok')
+  status.textContent = problems.length
+    ? `✗ Atom identity mismatch: ${problems.join(' ')} Reload the trajectory (and its topology) before analysing it.`
+    : `✓ ${atoms.length} atoms: MONET IDs, ASE indices${mda ? ' and MDAnalysis ids' : ''} refer to the same atoms (elements and first-frame coordinates agree)${info.n_frames ? `; ${info.n_frames} frames` : ''}.` +
+      (mda ? ` MDAnalysis: ${mda.n_residues} residues, ${mda.n_fragments} molecules, ${mda.n_bonds} bonds (cutoff × ${command.bond_scale ?? 1.2}).` : ' MDAnalysis is not installed: only ASE was compared.')
+  const rows = []
+  for (let i = 0; i < info.n_atoms; i++) {
+    const atom = byIndex[i]
+    rows.push([atom?.monetId ?? '—', i, atom?.element ?? '—', info.symbols[i],
+      ...(mda ? [mda.id[i], mda.name[i], mda.element[i], `${mda.resname[i]}${mda.resid[i]}`, mda.fragment[i] + 1, mda.mass[i]] : [])])
+  }
+  const table = $('topology-table')
+  table.replaceChildren()
+  renderTable(table, { columns: ['MONET ID', 'ASE index', 'MONET element', 'ASE element', ...(mda ? ['MDA id', 'MDA name', 'MDA element', 'Residue', 'Molecule', 'Mass (amu)'] : [])], rows },
+    { title: 'Atom identity', mismatch: bad })
+  if (problems.length) $('ase-atom-match').textContent = 'Atom identity mismatch — see MDAnalysis › Topology & consistency.'
+  if (!quiet) setStatus(problems.length ? 'Atom identity mismatch found.' : 'Atom identity verified in MONET, ASE and MDAnalysis.')
+}
+$('btn-run-topology').addEventListener('click', () => checkTopology())
+
+// =============================================================================
+// ── Custom: fluctuations and trends of atoms, bonds, angles and dihedrals ────
+// =============================================================================
+
+var FLUCT_WIDTH = { atoms: 1, bonds: 2, angles: 3, dihedrals: 4 }
+var fluct = null // { r, active, sort: { key, dir } }
+const FS_TO_CM1 = 1e15 / 2.99792458e10
+
+function updateFluctForm () {
+  const quantity = $('fluct-quantity').value
+  const groups = $('fluct-scope').value === 'groups'
+  $('fluct-align-row').classList.toggle('hidden', quantity !== 'atoms')
+  $('fluct-groups-row').classList.toggle('hidden', !groups)
+  $('fluct-atoms-row').classList.toggle('hidden', groups)
+  $('fluct-groups-label').textContent = quantity === 'atoms' ? 'Atoms — MONET IDs' : `Groups of ${FLUCT_WIDTH[quantity]} MONET IDs, in order`
+  if ($('ase-selection-target').value === 'fluct') updateSelectionTarget()
+}
+for (const id of ['fluct-quantity', 'fluct-scope']) $(id).addEventListener('change', () => { updateFluctForm(); clearAnalysis('fluct', false) })
+
+function fluctItemName (item, mapping) {
+  const atoms = item.map(index => mapping.find(a => a.aseIndex === index))
+  if (item.length === 1) return atoms[0] ? `${atoms[0].element}${atoms[0].monetId}` : `#${item[0]}`
+  return atoms.map((atom, k) => atom ? `${atom.element}${atom.monetId}` : `#${item[k]}`).join('–')
+}
+
+// Columns of the statistics table: [key, header, value(stat) → number, digits].
+function fluctColumns (r) {
+  const unit = r.quantity === 'atoms' || r.quantity === 'bonds' ? 'Å' : '°'
+  const perTime = r.dt ? `${unit}/ps` : `${unit}/frame`
+  const slopeScale = r.dt ? 1000 : 1
+  const spread = r.quantity === 'atoms' ? 'RMSF' : r.quantity === 'dihedrals' ? 'circular SD' : 'SD'
+  const frequency = r.dt
+    ? ['frequency', 'Dominant ν (cm⁻¹)', st => st.frequency * FS_TO_CM1, 4]
+    : ['frequency', 'Dominant period (frames)', st => (st.frequency > 0 ? 1 / st.frequency : NaN), 4]
+  return [
+    ['mean', r.quantity === 'atoms' ? `Mean |Δr| (${unit})` : `Mean (${unit})`, st => st.mean, 5],
+    ['std', `${spread} (${unit})`, st => (r.quantity === 'atoms' ? st.rmsf : st.std), 4],
+    ['min', `Min (${unit})`, st => st.min, 5],
+    ['max', `Max (${unit})`, st => st.max, 5],
+    ['range', `5–95 % (${unit})`, st => st.p95 - st.p5, 4],
+    ['slope', `Trend (${perTime})`, st => st.slope * slopeScale, 3],
+    ['slope_error', '± error', st => st.slope_error * slopeScale, 2],
+    ['r2', 'R²', st => st.r2, 3],
+    ['drift', `Drift 2nd−1st half (${unit})`, st => st.drift, 3],
+    ['block_sem', `Block SEM (${unit})`, st => st.block_sem, 2],
+    frequency,
+    ['frequency_share', 'Power share (%)', st => 100 * st.frequency_share, 3]
+  ]
+}
+
+function fluctMetric (r, st) {
+  const metric = $('fluct-metric').value
+  const column = fluctColumns(r).find(([key]) => key === metric)
+  const value = column[2](st)
+  return ['slope', 'drift'].includes(metric) ? Math.abs(value) : value
+}
+
+function drawFluct () {
+  if (!fluct) return
+  const { r } = fluct
+  const metric = $('fluct-metric')
+  const metricLabel = metric.selectedOptions[0].textContent
+  const column = fluctColumns(r).find(([key]) => key === metric.value)
+  const values = r.statistics.map(st => fluctMetric(r, st))
+  const names = r.items.map(item => fluctItemName(item, r.atomMapping))
+  charts.fluct.setData({
+    title: `${metricLabel} — ${r.quantity}`, source: charts.fluct.source, xLabel: r.quantity === 'atoms' ? 'Atom (MONET ID)' : 'Item (MONET IDs)',
+    yLabel: column[1], labels: names, notes: [fluct.summary], yMin: values.every(v => !Number.isFinite(v) || v >= 0) ? 0 : undefined,
+    datasets: [{ label: `${column[1]} of ${r.items.length} ${r.quantity}`, data: values.map(v => (Number.isFinite(v) ? v : null)), bars: true, colorIndex: 0 }]
+  })
+  // Colour map on the molecule.
+  const finite = values.filter(Number.isFinite)
+  if (!$('fluct-map').checked || !finite.length) return aseViewer.setOverlay(null)
+  const low = Math.min(...finite), high = Math.max(...finite)
+  const name = $('fluct-colormap').value
+  const color = value => {
+    const [red, green, blue] = MonetLineChart.colormap(name, high > low ? (value - low) / (high - low) : 0.5)
+    return `rgb(${red},${green},${blue})`
+  }
+  const monetId = index => r.atomMapping.find(a => a.aseIndex === index)?.monetId
+  const overlay = { dimAtoms: true, atomColors: new Map(), segments: [], legend: { title: `${column[1]} · ${r.quantity}`, min: low, max: high, colors: Array.from({ length: 9 }, (_, k) => color(low + (k / 8) * (high - low))), format: v => fmt(v, 3) } }
+  r.items.forEach((item, k) => {
+    if (!Number.isFinite(values[k])) return
+    if (r.quantity === 'atoms') overlay.atomColors.set(monetId(item[0]), color(values[k]))
+    else overlay.segments.push({ ids: item.map(monetId), color: color(values[k]) })
+  })
+  // Draw the largest values last, on top.
+  aseViewer.setOverlay(overlay)
+}
+for (const id of ['fluct-metric', 'fluct-colormap', 'fluct-map']) $(id).addEventListener('change', () => { drawFluct(); renderFluctTable() })
+
+function renderFluctTable () {
+  const box = $('fluct-table')
+  box.replaceChildren()
+  if (!fluct) return
+  const { r, sort } = fluct
+  const columns = fluctColumns(r)
+  const order = r.items.map((_, k) => k)
+  if (sort.key) {
+    const column = columns.find(([key]) => key === sort.key)
+    const value = k => (sort.key === 'item' ? k : column[2](r.statistics[k]))
+    order.sort((a, b) => {
+      const va = value(a), vb = value(b)
+      if (!Number.isFinite(va)) return 1
+      if (!Number.isFinite(vb)) return -1
+      return sort.dir * (va - vb)
+    })
+  }
+  const table = document.createElement('table')
+  table.className = 'atom-table'
+  const head = table.createTHead().insertRow()
+  for (const [key, label] of [['item', r.quantity === 'atoms' ? 'Atom' : 'Item (MONET IDs)'], ...columns, ['trend', 'Trend?']]) {
+    const th = document.createElement('th')
+    th.textContent = label + (sort.key === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '')
+    th.dataset.key = key
+    if (key !== 'trend') {
+      th.title = 'Sort'
+      th.addEventListener('click', () => {
+        fluct.sort = { key, dir: sort.key === key ? -sort.dir : key === 'item' ? 1 : -1 }
+        renderFluctTable()
+      })
+    }
+    head.appendChild(th)
+  }
+  const body = table.createTBody()
+  for (const k of order.slice(0, 2000)) {
+    const st = r.statistics[k]
+    const row = body.insertRow()
+    row.dataset.index = k
+    if (fluct.active === k) row.classList.add('active')
+    row.insertCell().textContent = fluctItemName(r.items[k], r.atomMapping)
+    for (const [, , value, digits] of columns) {
+      const v = value(st)
+      row.insertCell().textContent = Number.isFinite(v) ? fmt(v, digits) : '—'
+    }
+    const flag = row.insertCell()
+    flag.textContent = st.trend ? 'yes' : 'no'
+    if (st.trend) flag.className = 'trend-flag'
+    row.addEventListener('click', () => showFluctItem(k))
+  }
+  box.appendChild(table)
+  if (order.length > 2000) {
+    const note = document.createElement('p')
+    note.className = 'panel-desc'
+    note.textContent = `First 2000 of ${order.length} rows shown; the statistics CSV contains all of them.`
+    box.appendChild(note)
+  }
+}
+
+async function showFluctItem (k) {
+  if (!fluct) return
+  const { r } = fluct
+  fluct.active = k
+  renderFluctTable()
+  const item = r.items[k]
+  syncAsePicks(item.map(index => r.atomMapping.find(a => a.aseIndex === index)?.monetId).filter(id => id !== undefined))
+  let data = r.series?.[k]
+  if (!data) {
+    const current = fluct
+    const one = await runAse('fluctseries', { ...fluct.command, groups: [item] })
+    if (current !== fluct) return
+    if (!one.ok) return setStatus('Fluctuation series error: ' + (one.message || one.error))
+    data = one.series[0]
+  }
+  const st = r.statistics[k]
+  const period = r.quantity === 'dihedrals' ? 360 : null
+  // Dihedrals are shown around their circular mean, so the trace stays continuous.
+  const shown = period ? data.map(v => st.mean + ((((v - st.mean + 180) % 360) + 360) % 360) - 180) : data
+  const n = shown.length
+  const xs = shown.map((_, i) => i)
+  const mx = (n - 1) / 2, my = shown.reduce((a, b) => a + b, 0) / n
+  let sxy = 0, sxx = 0
+  shown.forEach((v, i) => { sxy += (i - mx) * (v - my); sxx += (i - mx) ** 2 })
+  const slope = sxx ? sxy / sxx : 0
+  const unit = r.quantity === 'atoms' || r.quantity === 'bonds' ? 'Å' : '°'
+  const centre = st.mean
+  const spread = st.std
+  const name = fluctItemName(item, r.atomMapping)
+  const columns = fluctColumns(r)
+  const describe = key => { const c = columns.find(([k2]) => k2 === key); const v = c[2](st); return `${c[1]} ${Number.isFinite(v) ? fmt(v, c[3]) : '—'}` }
+  charts.fluctseries.setData({
+    title: r.quantity === 'atoms' ? `Displacement of ${name} from its average position` : `${name} along the trajectory`,
+    source: charts.fluct.source, xLabel: 'Frame', yLabel: r.quantity === 'atoms' ? `|Δr| (${unit})` : `${r.quantity.replace(/s$/, '')} (${unit})`,
+    labels: r.frame_indices.map(String),
+    notes: [[describe('std'), describe('slope'), describe('frequency'), st.trend ? 'significant trend' : 'no significant trend'].join(' · ')],
+    datasets: [
+      { label: name, data: shown, colorIndex: 0 },
+      { label: `mean ${fmt(centre, 5)} ${unit}`, data: shown.map(() => centre), colorIndex: 2, dash: [6, 4] },
+      { label: `± SD ${fmt(spread, 4)} ${unit}`, data: shown.map(() => centre + spread), colorIndex: 3, dash: [2, 3] },
+      { label: '', data: shown.map(() => centre - spread), colorIndex: 3, dash: [2, 3] },
+      { label: `linear trend (${describe('slope')})`, data: xs.map(i => my + slope * (i - mx)), colorIndex: 1 }
+    ]
+  })
+  setStatus(`${name}: time series shown below the table and highlighted in the viewer.`)
+}
+
+$('btn-run-fluct').addEventListener('click', async () => {
+  const filename = extractedTrajPath()
+  if (!filename) return setStatus('Load an XYZ file and click Next first.')
+  const quantity = $('fluct-quantity').value
+  const command = { action: 'fluctuations', filename, quantity, frame_step: Number($('fluct-step').value) || 1 }
+  try {
+    if ($('fluct-scope').value === 'groups') command.groups = MonetASEModel.groupsFromIds($('fluct-groups').value, FLUCT_WIDTH[quantity], aseState.analysisAtoms)
+    else {
+      const indices = MonetASEModel.selectedIndices($('fluct-atoms').value, aseState.analysisAtoms)
+      if (indices) command.indices = indices
+    }
+  } catch (error) { return setStatus(error.message) }
+  if (quantity === 'atoms') command.align = $('fluct-align').checked
+  const axis = timeAxis()
+  if (axis) command.dt = axis.dt
+  clearAnalysis('fluct', false)
+  const r = await runAse('fluct', command)
+  if (!r.ok) return setStatus('Fluctuation error: ' + (r.message || r.error))
+  const spreads = r.statistics.map(st => (quantity === 'atoms' ? st.rmsf : st.std))
+  let top = 0
+  spreads.forEach((v, k) => { if (v > spreads[top]) top = k })
+  const trends = r.statistics.filter(st => st.trend).length
+  const unit = quantity === 'atoms' || quantity === 'bonds' ? 'Å' : '°'
+  // Spectral resolution of the dominant frequency: one Fourier bin.
+  const resolution = r.dt ? ` · ν resolution ${fmt(FS_TO_CM1 / (r.n_frames * r.dt), 3)} cm⁻¹` : ''
+  const summary = `${r.items.length} ${quantity} · ${r.n_frames} frames${r.dt ? ` (Δt ${fmt(r.dt, 4)} fs)` : ''}${resolution} · largest ${quantity === 'atoms' ? 'RMSF' : 'SD'}: ${fluctItemName(r.items[top], r.atomMapping)} (${fmt(spreads[top], 4)} ${unit}) · ${trends} with a significant trend${r.periodic ? ' · minimum image' : ''}`
+  delete command.groups
+  if ($('fluct-scope').value === 'groups') command.groups = r.items
+  fluct = { r, command, active: null, sort: { key: null, dir: -1 }, summary }
+  $('fluct-summary').textContent = summary + (r.series ? '' : ' · time series are loaded when a row is clicked')
+  $('fluct-summary').classList.remove('hidden')
+  drawFluct()
+  renderFluctTable()
+  updatePlotControls()
+  setStatus(`Fluctuations of ${r.items.length} ${quantity} computed.`)
+})
+
+$('fluct-table-csv').addEventListener('click', () => {
+  if (!fluct) return
+  const { r } = fluct
+  const columns = fluctColumns(r)
+  const cell = value => (/[",\n]/.test(String(value)) ? `"${String(value).replace(/"/g, '""')}"` : value)
+  const lines = [`# ${fluct.summary}`, ['item', 'monet_ids', ...columns.map(c => c[1]), 'trend'].map(cell).join(',')]
+  r.items.forEach((item, k) => {
+    const ids = item.map(index => r.atomMapping.find(a => a.aseIndex === index)?.monetId).join(' ')
+    lines.push([fluctItemName(item, r.atomMapping), ids, ...columns.map(c => { const v = c[2](r.statistics[k]); return Number.isFinite(v) ? v : '' }), r.statistics[k].trend].map(cell).join(','))
+  })
+  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' })
+  const link = document.createElement('a')
+  link.href = URL.createObjectURL(blob)
+  link.download = `MONET-fluctuations-${r.quantity}.csv`
+  link.click()
+  setTimeout(() => URL.revokeObjectURL(link.href), 1000)
+  setStatus('Statistics CSV download started.')
 })
 
 // =============================================================================
@@ -1923,6 +3141,10 @@ window.addEventListener('load', () => {
   updateFormatUI()
   updateQmUI()
   updateTimeInfo()
+  updateMdaForm()
+  updateFluctForm()
+  $$('.ase-stab').forEach(b => b.classList.toggle('group-hidden', b.dataset.group !== activeGroup))
+  $('module-intro').textContent = ANALYSIS_GROUPS[activeGroup]
   if (window.monet.isBrowser) {
     state.outputDir = 'MONET-results'
     $('output-dir-text').textContent = 'Download results as a ZIP file'
