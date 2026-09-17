@@ -478,7 +478,7 @@
           <input class="field-input field-input-sm" type="number" id="angles-step" value="1" min="1" />
           <button class="btn btn-sm btn-accent" id="btn-run-angles">Compute</button>
         </div>
-<div class="ase-ctrl-row"><label class="field-label" for="angles-range">Angle range</label><select class="field-input" id="angles-range"><option value="natural">Bond angle: 0–180°</option><option value="360">0–360°</option><option value="signed90">−90° to +90° (folded, modulo 180°)</option></select></div>
+<div class="ase-ctrl-row"><label class="field-label" for="angles-range">Angle range</label><select class="field-input" id="angles-range"><option value="natural">Bond angle: 0–180°</option><option value="360">0–360°</option><option value="signed90">−90° to +90° (folded, modulo 180°)</option><option value="fold180">0° to 180° (folded, modulo 180°)</option></select></div>
 <label class="field-label hidden" id="angles-normal-row">Reference normal x y z (Cartesian, selects orientation for 0–360°)
           <input class="field-input" id="angles-normal" value="0 0 1" /></label>
         <p class="panel-desc">0–360° retains the spatial angle magnitude and uses the reference normal to choose direction; an in-plane normal is rejected. Folded mode maps the usual 0–180° bond angle modulo 180°.</p>
@@ -507,8 +507,8 @@
           <button class="btn btn-sm btn-accent" id="btn-run-dihedrals">Compute dihedrals</button>
         </div>
         <p class="panel-desc">Torsion about the middle bond, in ASE's 0–360° convention. Periodic-image correction is optional in Crystal cell. Collinear groups have undefined dihedrals.</p>
-<div class="ase-ctrl-row"><label class="field-label" for="dihedrals-range">Angle range</label><select class="field-input" id="dihedrals-range"><option value="360">0–360°</option><option value="signed90">−90° to +90° (folded, modulo 180°)</option></select></div>
-<p class="panel-desc">Folded mode maps torsions modulo 180° into [−90°, +90°); +90° is represented by −90°. Opposite orientations become equivalent. Change the range, then recompute.</p>
+<div class="ase-ctrl-row"><label class="field-label" for="dihedrals-range">Angle range</label><select class="field-input" id="dihedrals-range"><option value="360">0–360°</option><option value="fold180">0° to 180° (folded, modulo 180°) — torsions near 90°</option><option value="signed90">−90° to +90° (folded, modulo 180°) — torsions near 0°</option></select></div>
+<p class="panel-desc">Folded modes map torsions modulo 180°, so opposite orientations become equivalent: [0°, 180°) keeps values near 90° continuous, [−90°, +90°) keeps values near 0° continuous. When a value crosses the range edge, the trace continues from the opposite edge. Change the range, then recompute.</p>
         <div class="ase-prog-row hidden" id="dihedrals-prog-row">
           <div class="progress-bar"><div class="progress-fill" id="dihedrals-prog-fill"></div></div>
           <span id="dihedrals-prog-label">—</span>

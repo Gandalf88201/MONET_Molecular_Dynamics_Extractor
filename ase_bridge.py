@@ -630,6 +630,9 @@ def _validate_groups(groups, width, atom_count):
 
 
 def _angle_value(value, cmd):
+    if cmd.get('angle_range') == 'fold180':
+        # Axial convention on [0, 180): suited to torsions fluctuating around 90 degrees.
+        return value % 180.0
     if cmd.get('angle_range') == 'signed90':
         # Axial convention: orientations separated by 180 degrees are equivalent.
         return (value + 90.0) % 180.0 - 90.0
@@ -751,7 +754,7 @@ def validate_command(cmd):
         if cmd.get('cell_vectors', 'rows') not in ('rows', 'columns'):
             raise ValueError('Cell vectors must be rows or columns.')
     mode = cmd.get('angle_range', 'natural')
-    if mode not in ('natural', '360', 'signed90'):
+    if mode not in ('natural', '360', 'signed90', 'fold180'):
         raise ValueError('Unknown angle range.')
     if cmd.get('action') == 'angles' and mode == '360':
         normal = cmd.get('angle_normal')
