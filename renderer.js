@@ -1314,50 +1314,6 @@ $('btn-wrap').addEventListener('click', async () => {
   setStatus(`Wrapped ${r.n_frames} frames${r.n_molecules ? ` (${r.n_molecules} molecules)` : ''}${r.output && !r.downloadURL ? ` → ${r.output}` : ''}.`)
 })
 
-let contextAtom = null
-function hideAtomMenu () { $('ase-context-menu').classList.add('hidden') }
-function showAtomMenu (event, id) {
-  event.preventDefault()
-  if (id === null) { hideAtomMenu(); return }
-  contextAtom = id
-  const menu = $('ase-context-menu')
-  $('ase-select-molecule').textContent = `Select molecule containing atom ${id}`
-  $('ase-select-molecule').disabled = !aseState.available || aseState.busy
-  menu.style.left = Math.max(0, Math.min(event.clientX, window.innerWidth - 290)) + 'px'
-  menu.style.top = Math.max(0, Math.min(event.clientY, window.innerHeight - 70)) + 'px'
-  menu.classList.remove('hidden')
-  $('ase-select-molecule').focus()
-}
-$('ase-mol-canvas').addEventListener('contextmenu', event => {
-  const canvas = $('ase-mol-canvas'), rect = canvas.getBoundingClientRect()
-  const x = (event.clientX - rect.left) * canvas.width / (rect.width || canvas.clientWidth || 1)
-  const y = (event.clientY - rect.top) * canvas.height / (rect.height || canvas.clientHeight || 1)
-  showAtomMenu(event, aseViewer._hitTest(x, y))
-})
-document.addEventListener('click', hideAtomMenu)
-document.addEventListener('keydown', event => { if (event.key === 'Escape') hideAtomMenu() })
-$('ase-select-molecule').addEventListener('click', async () => {
-  const atom = aseState.analysisAtoms.find(atom => atom.monetId === contextAtom)
-  if (!atom || aseState.busy || !aseState.available) return
-  const revision = aseState.sourceRevision
-  const filename = extractedTrajPath(), options = cellOptions()
-  const mapping = aseState.analysisAtoms.map(atom => ({ ...atom }))
-  aseState.busy = true; updateAseControls(); hideAtomMenu()
-  try {
-    setStatus('Finding bonded molecule …')
-    const info = await window.monet.aseRun({ action: 'read_info', filename, ...options })
-    if (revision !== aseState.sourceRevision) return
-    MonetASEModel.verifyAtoms(mapping, info)
-    const result = await window.monet.aseRun({ action: 'molecule', filename, seed: atom.aseIndex,
-      bond_scale: Number($('ase-bond-scale').value), ...options })
-    if (revision !== aseState.sourceRevision) return setStatus('Molecule selection discarded because the source changed.')
-    if (!result.ok) throw new Error(result.message || result.error)
-    syncAsePicks(result.indices.map(index => mapping[index].monetId))
-    setStatus(`Selected ${result.indices.length} atoms in the molecule. IDs start at the clicked atom in graph order; pick ordered groups for angles or dihedrals.`)
-  } catch (error) { setStatus('Molecule selection: ' + error.message) }
-  finally { aseState.busy = false; updateAseControls() }
-})
-
 const ACF_WIDTH = { bond: 2, angle: 3, dihedral: 4 }
 const selectionTargets = {
   rmsd: { input: 'rmsd-atoms', minimum: 1 },
@@ -2225,6 +2181,12 @@ function drawAcfChart () {
   }
   if (offset && Number.isFinite(r.plateau)) datasets.push({ label: `plateau c = ${fmt(r.plateau, 3)}`, data: r.acf.map(() => r.plateau), dash: true, colorIndex: 2 })
   const d = acfDecorrelation()
+  // A τ typed by hand is drawn with the same model (and plateau c) as the fit, so t* can be checked against it.
+  if (d?.source === 'entered') {
+    const c = offset && Number.isFinite(r.plateau) ? r.plateau : 0
+    datasets.push({ label: `${offset ? '(1 − c)·exp(−t/τ) + c' : 'exp(−t/τ)'}, τ entered = ${fmt(d.tau, 4)} fs`,
+      data: r.lags.map(t => (1 - c) * Math.exp(-t / d.tau) + c), dash: true, colorIndex: 3 })
+  }
   const markers = d ? [{ value: d.time, label: `t* = ${fmt(d.time, 4)} fs${d.stride ? ` (${d.stride} frames)` : ''}` }] : []
   const keepView = charts.acf._entry === r
   charts.acf._entry = r
@@ -2254,14 +2216,24 @@ function showAcfResult () {
   if (!d) {
     $('acf-plateau-text').textContent = 'No correlation time is available: the fit failed and the ACF never crossed zero. Enter τ by hand.'
     $('acf-stride-text').textContent = ''
+    $('acf-plateau-warn').classList.add('hidden')
   } else {
     $('acf-plateau-text').textContent = d.edited
       ? `You set t* = ${fmt(d.time, 5)} fs (the fit gives ${fmt(d.fitted, 5)} fs = τ·ln(1/ε) with τ ${d.source} = ${fmt(d.tau, 4)} fs, ε = ${d.eps * 100} %).`
-      : `The fitted ACF reaches its plateau within ε = ${d.eps * 100} % at t* = τ·ln(1/ε) = ${fmt(d.fitted, 5)} fs (τ ${d.source} = ${fmt(d.tau, 4)} fs; dashed line on the plot). ` +
-        'Check it against the curve, then accept it or type another t*.'
+      : d.source === 'entered'
+        ? `With τ entered = ${fmt(d.tau, 4)} fs (not fitted: the fit gives ${fmt(r.tau_fit, 4)} fs), exp(−t/τ) reaches its plateau within ε = ${d.eps * 100} % at t* = τ·ln(1/ε) = ${fmt(d.fitted, 5)} fs (“τ entered” curve and dashed line on the plot). ` +
+          'Compare that curve with C(t) before accepting t*.'
+        : `The fitted ACF reaches its plateau within ε = ${d.eps * 100} % at t* = τ·ln(1/ε) = ${fmt(d.fitted, 5)} fs (τ ${d.source} = ${fmt(d.tau, 4)} fs; dashed line on the plot). ` +
+          'Check it against the curve, then accept it or type another t*.'
     $('acf-stride-text').textContent = d.stride
-      ? `→ one configuration every ${d.stride} saved frames (${fmt(d.stride * d.axis.stride, 6)} MD steps, ${fmt(d.stride * d.axis.dt, 5)} fs): ${d.kept} uncorrelated configurations out of ${d.frames}`
+      ? `→ t* = ${fmt(d.time, 5)} fs rounded up to a whole number of frames: one configuration every ${d.stride} saved frames (${fmt(d.stride * d.axis.stride, 6)} MD steps, effective spacing ${fmt(d.stride * d.axis.dt, 5)} fs): ${d.kept} uncorrelated configurations out of ${d.frames}`
       : 'Set the MD time step to convert t* into saved frames.'
+    // τ close to the saving interval: the ACF is sampled by only a few points per decay time.
+    const coarse = d.axis && d.tau < 5 * d.axis.dt
+    $('acf-plateau-warn').textContent = coarse
+      ? `⚠ τ ${d.source} = ${fmt(d.tau, 4)} fs is only ${fmt(d.tau / d.axis.dt, 2)} saved frames (Δt = ${fmt(d.axis.dt, 4)} fs): below ~5 Δt the decay is not resolved and t* is not reliable. Check τ against the curve, or save frames more often.`
+      : ''
+    $('acf-plateau-warn').classList.toggle('hidden', !coarse)
   }
   const ready = Boolean(d?.stride)
   $('acf-apply-stride').disabled = !ready
@@ -2392,6 +2364,205 @@ async function loadFormatList () {
 function monetIdsFromIndices (indices, mapping = aseState.analysisAtoms) {
   return indices.map(index => mapping[index]?.monetId).filter(id => id !== undefined)
 }
+
+// =============================================================================
+// ── Selection tools of both viewers: ASE neighbour lists when available,
+//    otherwise the displayed geometry (bonds drawn in the viewer, no periodic images).
+// =============================================================================
+
+const viewerSelections = {
+  ase: { viewer: aseViewer, get: () => [...aseState.pickedIds], set: ids => syncAsePicks(ids) },
+  main: {
+    viewer,
+    get: () => [...state.selectedAtoms],
+    set: ids => { state.selectedAtoms = new Set(ids); syncSelectionUI() }
+  }
+}
+
+function selectionRadius (target) {
+  const radius = Number($(`${target}-sel-radius`)?.value)
+  return radius > 0 && radius <= 30 ? radius : 3
+}
+
+// ASE selection on the analysed trajectory; null when ASE cannot map these atoms (then the viewer geometry is used).
+async function aseSelect (mode, ids, extra = {}) {
+  const filename = extractedTrajPath()
+  if (!aseState.available || !filename) return null
+  const byId = new Map(aseState.analysisAtoms.map(atom => [atom.monetId, atom.aseIndex]))
+  if (!byId.size || ids.some(id => !byId.has(id))) return null
+  const scale = Number($('ase-bond-scale').value)
+  const r = await runAse('select', { action: 'select_atoms', filename, mode, ...(ids.length ? { indices: ids.map(id => byId.get(id)) } : {}),
+    bond_scale: scale >= 0.5 && scale <= 2 ? scale : 1.2, ...extra })
+  if (!r.ok) throw new Error(r.message || r.error)
+  return r
+}
+
+const SELECT_LABELS = { neighbors: 'bonded neighbours', molecules: 'molecules', within: 'sphere' }
+// mode: neighbors | molecules | within. replace: the result replaces the selection (it starts at the seeds).
+async function selectAround (target, mode, seeds, { replace = false } = {}) {
+  const t = viewerSelections[target]
+  if (!seeds.length) return setStatus('Select at least one atom first.')
+  const extra = mode === 'within' ? { radius: selectionRadius(target) } : {}
+  let ids = null, via = 'ASE'
+  try {
+    const r = await aseSelect(mode, seeds, extra)
+    if (r) ids = monetIdsFromIndices(r.indices, r.atomMapping)
+  } catch (error) { return setStatus(`Selection (${SELECT_LABELS[mode]}): ${error.message}`) }
+  if (!ids) {
+    via = 'displayed bonds'
+    ids = mode === 'within' ? t.viewer.idsWithin(seeds, extra.radius) : t.viewer.bondedIds(seeds, { whole: mode === 'molecules' })
+  }
+  const shown = new Set(t.viewer.atoms.map(atom => atom.index))
+  ids = ids.filter(id => shown.has(id))
+  const before = t.get()
+  t.set(replace ? ids : [...before, ...ids.filter(id => !before.includes(id))])
+  const added = t.get().length - (replace ? 0 : before.length)
+  setStatus(`${SELECT_LABELS[mode][0].toUpperCase() + SELECT_LABELS[mode].slice(1)}${mode === 'within' ? ` of ${extra.radius} Å` : ''}: ${replace ? `${ids.length} atoms selected` : `${added} atoms added`} (${via}).`)
+}
+
+function selectElements (target, elements, { add = false } = {}) {
+  const t = viewerSelections[target]
+  const ids = t.viewer.idsOfElements(elements)
+  const before = add ? t.get() : []
+  t.set([...before, ...ids.filter(id => !before.includes(id))])
+  setStatus(`${ids.length} ${elements.join('/')} atoms ${add ? 'added to' : 'selected in'} the viewer.`)
+}
+
+function selectAllAtoms (target) {
+  const t = viewerSelections[target]
+  t.set(t.viewer.atoms.map(atom => atom.index))
+}
+
+function invertSelection (target) {
+  const t = viewerSelections[target]
+  const picked = new Set(t.get())
+  t.set(t.viewer.atoms.map(atom => atom.index).filter(id => !picked.has(id)))
+}
+
+// Toolbar: element, all/invert, grow by bonds or molecules, sphere of radius R.
+function buildSelectionTools (target) {
+  const box = $(`${target}-select-tools`)
+  const make = (tag, props, text) => Object.assign(document.createElement(tag), props, text ? { textContent: text } : {})
+  const element = make('select', { id: `${target}-sel-element`, className: 'field-input field-input-sm', title: 'Element' })
+  const buttons = [
+    ['select', 'Select element', 'Select every atom of this element', () => element.value && selectElements(target, [element.value])],
+    ['add', '+ Element', 'Add every atom of this element to the selection', () => element.value && selectElements(target, [element.value], { add: true })],
+    ['all', 'All', 'Select all atoms', () => selectAllAtoms(target)],
+    ['invert', 'Invert', 'Invert the selection', () => invertSelection(target)],
+    ['neighbors', '+ Bonded', 'Add the atoms bonded to the selection (ASE neighbour list)', () => selectAround(target, 'neighbors', viewerSelections[target].get())],
+    ['molecules', '+ Molecules', 'Extend the selection to whole bonded molecules (ASE neighbour list)', () => selectAround(target, 'molecules', viewerSelections[target].get())]
+  ].map(([key, text, title, run]) => {
+    const button = make('button', { id: `${target}-sel-${key}`, className: 'btn btn-sm', title, type: 'button' }, text)
+    button.addEventListener('click', run)
+    return button
+  })
+  const radius = make('input', { id: `${target}-sel-radius`, className: 'field-input field-input-sm', type: 'number', value: '3', min: '0.1', max: '30', step: '0.1', title: 'Radius R (Å)' })
+  const within = make('button', { id: `${target}-sel-within`, className: 'btn btn-sm', type: 'button', title: 'Add the atoms within R Å of the selected atoms (minimum image when enabled)' }, '+ Within R')
+  within.addEventListener('click', () => selectAround(target, 'within', viewerSelections[target].get()))
+  const sphere = make('span', { className: 'select-tools-radius' })
+  sphere.append(make('span', {}, 'R'), radius, make('span', {}, 'Å'), within)
+  box.append(element, ...buttons, sphere)
+  updateSelectionTools(target)
+}
+
+function updateSelectionTools (target) {
+  const t = viewerSelections[target]
+  const select = $(`${target}-sel-element`)
+  if (!select) return
+  const current = select.value
+  const elements = t.viewer.elements()
+  select.replaceChildren(...elements.map(el => Object.assign(document.createElement('option'), { value: el, textContent: el })))
+  if (elements.includes(current)) select.value = current
+  for (const button of $(`${target}-select-tools`).querySelectorAll('button')) button.disabled = !elements.length
+  if (target === 'ase') $('sel-pattern-find').disabled = !elements.length
+}
+
+// Context menu, shared by the two viewers and the ASE atom table.
+const contextMenu = $('viewer-context-menu')
+function hideAtomMenu () { $('viewer-context-menu').classList.add('hidden') }
+function showViewerMenu (target, event, id) {
+  event.preventDefault?.()
+  const t = viewerSelections[target]
+  if (!t.viewer.atoms.length) return hideAtomMenu()
+  const picks = t.get()
+  const atom = id === null || id === undefined ? null : t.viewer.atoms[t.viewer._index?.get(id)]
+  const radius = selectionRadius(target)
+  const items = []
+  if (atom) {
+    items.push(['header', `Atom ${id} (${atom.element})`],
+      ['ctx-toggle', picks.includes(id) ? `Deselect atom ${id}` : `Select atom ${id}`,
+        () => t.set(picks.includes(id) ? picks.filter(v => v !== id) : [...picks, id])],
+      ['ctx-molecule', `Select molecule containing atom ${id}`, () => selectAround(target, 'molecules', [id], { replace: true })],
+      ['ctx-neighbours', `Select atom ${id} and its bonded neighbours`, () => selectAround(target, 'neighbors', [id], { replace: true })],
+      ['ctx-sphere', `Select atoms within ${radius} Å of atom ${id}`, () => selectAround(target, 'within', [id], { replace: true })],
+      ['ctx-element', `Select all ${atom.element} atoms`, () => selectElements(target, [atom.element])],
+      ['sep'])
+  }
+  const none = !picks.length
+  items.push(['header', `Selection (${picks.length} atoms)`],
+    ['ctx-grow-bonded', 'Add bonded neighbours', () => selectAround(target, 'neighbors', picks), none],
+    ['ctx-grow-molecules', 'Extend to whole molecules', () => selectAround(target, 'molecules', picks), none],
+    ['ctx-grow-within', `Add atoms within ${radius} Å`, () => selectAround(target, 'within', picks), none],
+    ['ctx-all', 'Select all', () => selectAllAtoms(target)],
+    ['ctx-invert', 'Invert selection', () => invertSelection(target)],
+    ['ctx-clear', 'Clear selection', () => t.set([]), none],
+    ['sep'],
+    ['ctx-center', none ? 'Centre view on all atoms' : 'Centre view on selection', () => t.viewer.centerOn(picks)],
+    ['ctx-reset', 'Reset view', () => target === 'ase' ? $('ase-fit-view').click() : (t.viewer.rotX = .25, t.viewer.rotY = -.40, t.viewer.fitView())])
+  contextMenu.replaceChildren(...items.map(([key, text, run, disabled]) => {
+    if (key === 'sep') return Object.assign(document.createElement('div'), { className: 'ctx-sep' })
+    if (key === 'header') return Object.assign(document.createElement('div'), { className: 'ctx-header', textContent: text })
+    const button = Object.assign(document.createElement('button'), { id: key, className: 'ctx-item', type: 'button', textContent: text, disabled: Boolean(disabled) })
+    button.setAttribute('role', 'menuitem')
+    button.addEventListener('click', () => { hideAtomMenu(); run() })
+    return button
+  }))
+  contextMenu.classList.remove('hidden')
+  const { width, height } = contextMenu.getBoundingClientRect()
+  contextMenu.style.left = Math.max(0, Math.min(event.clientX, window.innerWidth - (width || 290))) + 'px'
+  contextMenu.style.top = Math.max(0, Math.min(event.clientY, window.innerHeight - (height || 380))) + 'px'
+  contextMenu.querySelector('.ctx-item:not(:disabled)')?.focus()
+}
+// Kept for the ASE atom table (right-click on a row).
+function showAtomMenu (event, id) { showViewerMenu('ase', event, id) }
+aseViewer.onContextClick = (event, id) => showViewerMenu('ase', event, id)
+viewer.onContextClick = (event, id) => showViewerMenu('main', event, id)
+document.addEventListener('mousedown', event => { if (!contextMenu.contains(event.target)) hideAtomMenu() })
+document.addEventListener('keydown', event => { if (event.key === 'Escape') hideAtomMenu() })
+window.addEventListener('blur', hideAtomMenu)
+for (const target of Object.keys(viewerSelections)) {
+  buildSelectionTools(target)
+  viewerSelections[target].viewer.onLoad = () => updateSelectionTools(target)
+}
+
+// Bonded chains by element (bonds, angles, dihedrals) from the ASE neighbour list, written into analysis inputs.
+const PATTERN_MODES = { 2: 'bonds', 3: 'angles', 4: 'dihedrals' }
+$('sel-pattern-find').addEventListener('click', async () => {
+  const pattern = $('sel-pattern').value.trim().split(/[\s,\-]+/).filter(Boolean)
+    .map(p => p === '*' ? p : p[0].toUpperCase() + p.slice(1).toLowerCase())
+  const mode = PATTERN_MODES[pattern.length]
+  const status = message => { $('sel-pattern-status').textContent = message; setStatus(message) }
+  if (!mode) return status('Enter 2, 3 or 4 element symbols, e.g. "O H", "H O H" or "C C C C" (* = any element).')
+  if (!aseState.available) return status('Bonded chains need ASE: start MONET with python3 start_monet.py or the desktop app.')
+  const byId = new Map(aseState.analysisAtoms.map(atom => [atom.monetId, atom.aseIndex]))
+  const restrict = $('sel-pattern-restrict').checked ? aseState.pickedIds.map(id => byId.get(id)).filter(i => i !== undefined) : null
+  if (restrict && !restrict.length) return status('Select atoms first, or untick "only among selected atoms".')
+  let r
+  try { r = await aseSelect(mode, [], { pattern, ...(restrict ? { restrict } : {}) }) } catch (error) { return status(`Find ${mode}: ${error.message}`) }
+  if (!r) return status('Load a trajectory first.')
+  if (!r.groups.length) return status(`No ${pattern.join('-')} ${mode} found with this bond cutoff.`)
+  const groups = r.groups.map(group => monetIdsFromIndices(group, r.atomMapping))
+  const text = groups.map(group => group.join(' ')).join('  ')
+  const where = $('sel-pattern-target').value
+  const change = (id, value) => { $(id).value = value; $(id).dispatchEvent(new Event('change')) }
+  if (where === 'acf') { change('acf-quantity', mode.slice(0, -1)); $('acf-groups').value = text }
+  else if (where === 'fluct') { change('fluct-quantity', mode); change('fluct-scope', 'groups'); $('fluct-groups').value = text }
+  else $(selectionTargets[mode].input).value = text
+  syncAsePicks([...new Set(groups.flat())])
+  const into = { geometry: `the ${mode} input`, acf: 'the autocorrelation groups', fluct: 'the fluctuation groups' }[where]
+  status(`${r.n_groups} ${pattern.join('-')} ${mode} found${r.truncated ? ` (first ${groups.length} kept)` : ''} and written to ${into}; their atoms are selected. Click Compute in that panel.`)
+})
+$('sel-pattern').addEventListener('keydown', event => { if (event.key === 'Enter') $('sel-pattern-find').click() })
 
 $('mda-pick').addEventListener('click', async () => {
   const filename = extractedTrajPath()

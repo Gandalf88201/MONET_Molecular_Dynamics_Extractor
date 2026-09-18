@@ -88,6 +88,9 @@ w.monet = {
       return { ok: true, n_frames: kept, source_frames: w.testMonet.state.fileInfo.configCount, stride: command.stride, start: 0, first: 0, last: (kept - 1) * command.stride }
     }
     if (command.action === 'cell_file') return { ok: true, cellpar: [10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371], note: '' }
+    if (command.action === 'select_atoms') return command.pattern
+      ? { ok: true, groups: [[0, 1, 2, 3]], n_groups: 1, truncated: false }
+      : { ok: true, indices: [...command.indices, ...activeAtoms.map((_, i) => i).filter(i => !command.indices.includes(i))] }
     if (command.action === 'molecule') return { ok: true, indices: [command.seed, ...activeAtoms.map((_,i) => i).filter(i => i !== command.seed)] }
     if (defer) return new Promise(resolve => { pendingResolve = resolve })
     if (command.action === 'dihedrals') return { ok: true, frame_indices: [0, 1], series: { [command.quads[0].join('-')]: [270, 90] } }
@@ -362,12 +365,37 @@ async function run () {
   const allIds = [...w.document.querySelectorAll('[id]')].map(node => node.id)
   assert.equal(new Set(allIds).size, allIds.length); checks++
   const seedPoint = w.testMonet.aseViewer._project(atoms[1].x, atoms[1].y, atoms[1].z)
-  canvas.dispatchEvent(new w.MouseEvent('contextmenu', { clientX: seedPoint.sx, clientY: seedPoint.sy, bubbles: true, cancelable: true }))
-  assert.equal(el('ase-context-menu').classList.contains('hidden'), false); checks++
-  await click('ase-select-molecule')
+  const rightClick = (target, x, y) => {
+    target.dispatchEvent(new w.MouseEvent('mousedown', { clientX: x, clientY: y, button: 2, bubbles: true }))
+    target.dispatchEvent(new w.MouseEvent('contextmenu', { clientX: x, clientY: y, button: 2, bubbles: true, cancelable: true }))
+    target.dispatchEvent(new w.MouseEvent('mouseup', { clientX: x, clientY: y, button: 2, bubbles: true }))
+  }
+  rightClick(canvas, seedPoint.sx, seedPoint.sy)
+  assert.equal(el('viewer-context-menu').classList.contains('hidden'), false); checks++
+  assert.match(el('ctx-molecule').textContent, /atom 2/); checks++
+  await click('ctx-molecule')
   assert.equal([...w.testMonet.aseViewer.selected].join(' '), '2 1 3 4'); checks++
+  assert.equal(latestCommand.action, 'select_atoms'); assert.equal(latestCommand.mode, 'molecules'); checks++
   el('ase-selection-target').value = 'rmsd'; await click('ase-use-selection'); await click('btn-run-rmsd')
   assert.equal(JSON.stringify(latestCommand.indices), '[1,0,2,3]'); checks++
+  // A right-drag translates the view and opens no menu; rotation is unchanged.
+  const view = w.testMonet.aseViewer, before = [...view.center], rot = [view.rotX, view.rotY]
+  canvas.dispatchEvent(new w.MouseEvent('mousedown', { clientX: 20, clientY: 20, button: 2, bubbles: true }))
+  canvas.dispatchEvent(new w.MouseEvent('mousemove', { clientX: 80, clientY: 50, button: 2, bubbles: true }))
+  canvas.dispatchEvent(new w.MouseEvent('mouseup', { clientX: 80, clientY: 50, button: 2, bubbles: true }))
+  assert.notDeepEqual(view.center, before); assert.deepEqual([view.rotX, view.rotY], rot); checks++
+  const moved = view._project(...before)
+  assert.ok(Math.abs(moved.sx - view.canvas.width / 2 - 60) < 1e-6 && Math.abs(moved.sy - view.canvas.height / 2 - 30) < 1e-6); checks++
+  assert.equal(el('viewer-context-menu').classList.contains('hidden'), true); checks++
+  // Element, invert and pattern tools.
+  el('ase-sel-element').value = 'H'; await click('ase-sel-select')
+  assert.deepEqual([...view.selected].map(id => atoms.find(a => a.index === id).element).every(e => e === 'H'), true); checks++
+  await click('ase-sel-invert'); await click('ase-sel-all')
+  assert.equal(view.selected.size, atoms.length); checks++
+  el('sel-pattern').value = 'c c c c'; el('sel-pattern-target').value = 'geometry'
+  await click('sel-pattern-find')
+  assert.equal(latestCommand.mode, 'dihedrals'); assert.equal(el('dihedrals-quads').value, '1 2 3 4'); assert.equal(JSON.stringify(latestCommand.pattern), '["C","C","C","C"]'); checks++
+  await click('ase-clear-selection')
   // Presets constrain the cell, and calculations receive its applied snapshot.
   el('cell-system').value = 'hexagonal'; el('cell-system').dispatchEvent(new w.Event('change'))
   el('cell-a').value = '8'; el('cell-a').dispatchEvent(new w.Event('input'))
@@ -520,6 +548,14 @@ async function run () {
   assert.match(el('acf-stride-text').textContent, /every 104 saved frames/); assert.match(el('acf-plateau-text').textContent, /You set t\* = 50 fs/); checks++
   el('acf-tau-manual').value = '10'; el('acf-tau-manual').dispatchEvent(new w.Event('input'))
   assert.match(el('acf-stride-text').textContent, /every 62 saved frames/); assert.match(el('acf-plateau-text').textContent, /τ entered = 10 fs/); checks++
+  // The entered τ is drawn; the effective spacing after rounding is shown; no warning at τ = 10 fs ≈ 21 Δt.
+  assert.match(w.testMonet.charts.acf.data.datasets.at(-1).label, /τ entered = 10 fs/)
+  { const entered = w.testMonet.charts.acf.data.datasets.at(-1).data, fitted = w.testMonet.charts.acf.data.datasets[1].data
+    assert.ok(entered[0] <= 1 && entered.every((v, i) => i === 0 || v <= entered[i - 1]) && Math.abs(entered[2] - Math.exp(-2)) < 1e-12 && entered[2] < fitted[2]); checks++ }
+  assert.match(el('acf-stride-text').textContent, /rounded up to a whole number of frames.*effective spacing/); assert.equal(el('acf-plateau-warn').classList.contains('hidden'), true); checks++
+  el('acf-tau-manual').value = '1'; el('acf-tau-manual').dispatchEvent(new w.Event('input'))
+  assert.equal(el('acf-plateau-warn').classList.contains('hidden'), false); assert.match(el('acf-plateau-warn').textContent, /τ entered = 1 fs/); checks++
+  el('acf-tau-manual').value = '10'; el('acf-tau-manual').dispatchEvent(new w.Event('input'))
   el('md-stride').value = '5'; el('md-stride').dispatchEvent(new w.Event('input'))
   assert.match(el('acf-stride-text').textContent, /every 13 saved frames \(65 MD steps/); checks++
   await click('acf-apply-stride')
