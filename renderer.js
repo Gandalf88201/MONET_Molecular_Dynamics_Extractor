@@ -849,6 +849,7 @@ const aseState = {
   sourceRevision: 0,
   analysisAtoms: [],
   pickedIds: [],
+  centreIds: null, // atoms centred in the cell ("centre selection"), fixed when the option is ticked
   cellParameters: null,
   mic: true,
   cellPbc: [true, true, true],
@@ -893,10 +894,8 @@ function syncAsePicks (ids) {
   $('ase-clear-selection').disabled = !aseState.pickedIds.length
   $('use-ase-selection').disabled = !aseState.pickedIds.length
   $('ase-use-selection').disabled = !aseState.pickedIds.length
-  if (typeof player !== 'undefined') {
-    updateLive()
-    if ($('ase-center').checked) applyDisplay()
-  }
+  // "centre selection" keeps the atoms fixed when it was ticked: picking atoms must not move the structure.
+  if (typeof player !== 'undefined') updateLive()
 }
 aseViewer.onSelectionChange = syncAsePicks
 $('ase-clear-selection').addEventListener('click', () => syncAsePicks([]))
@@ -1185,7 +1184,7 @@ function applyDisplay ({ rebond = true, cell = displayCell() } = {}) {
   if (cell && (mode !== 'none' || centre)) {
     try {
       const byId = new Map(aseState.analysisAtoms.map(atom => [atom.monetId, atom.aseIndex]))
-      const picked = aseState.pickedIds.map(id => byId.get(id)).filter(i => i !== undefined)
+      const picked = (aseState.centreIds || []).map(id => byId.get(id)).filter(i => i !== undefined)
       const center = centre ? (picked.length ? picked : aseState.analysisAtoms.map(atom => atom.aseIndex)) : null
       coords = MonetPBC.wrapFrame(player.raw, cell, { mode, tree: mode === 'molecules' ? moleculeTreeFor(cell) : null, center })
     } catch (error) { setStatus('Cell display: ' + error.message) }
@@ -1258,6 +1257,13 @@ $('player-next').addEventListener('click', () => { playerStop(); goToFrame(playe
 $('player-prev').addEventListener('click', () => { playerStop(); goToFrame(player.index - playerStep(), { direction: -1 }) })
 $('player-slider').addEventListener('input', () => { playerStop(); goToFrame(Number($('player-slider').value)) })
 for (const id of ['ase-wrap', 'ase-center']) $(id).addEventListener('change', () => {
+  // The centring atoms are those selected when the box is ticked (all atoms if none).
+  if (id === 'ase-center') {
+    aseState.centreIds = $('ase-center').checked ? [...aseState.pickedIds] : null
+    if ($('ase-center').checked) setStatus(aseState.centreIds.length
+      ? `Centred on the ${aseState.centreIds.length} selected atoms; later picks do not move the view (untick and tick again to re-centre).`
+      : 'Centred on all atoms; select atoms, then untick and tick again to centre on them.')
+  }
   applyDisplay()
   aseViewerNeedsFit = true
   resizeAseViewer()
@@ -1420,6 +1426,7 @@ function updateAnalysisSource () {
   } else if (!aseState.cellParameters) aseViewer.cell = null
   hideAtomMenu()
   const extracted = Boolean(state.lastResult?.success)
+  aseState.centreIds = $('ase-center').checked ? [] : null
   aseState.analysisAtoms = extracted ? state.lastResult.sourceAtoms.map(atom => ({ ...atom }))
     : MonetASEModel.atomMap(state.firstFrame || [])
   const atoms = aseState.analysisAtoms
