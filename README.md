@@ -1,6 +1,6 @@
 # MONET 2 — Molecular Dynamics Extractor with ASE and MDAnalysis
 
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22816522.svg)](https://doi.org/10.5281/zenodo.22816522)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22816521.svg)](https://doi.org/10.5281/zenodo.22816521)
 
 MONET extracts configurations every N frames from molecular-dynamics trajectories, writes quantum-chemistry inputs for each sampled configuration and analyses the trajectory with ASE, MDAnalysis and MONET's own methods. It runs in a browser (with a local Python launcher) or as an Electron desktop app, in day or night mode (☀/☾ button in the title bar).
 
@@ -427,7 +427,7 @@ Current results (ASE 3.29.0, MDAnalysis 2.10.0, Python 3.14, Node 22): 48 regres
 
 ## Citing and licences
 
-**How to cite MONET**: GitHub shows a *Cite this repository* button generated from [`CITATION.cff`](CITATION.cff). Please cite the software — T. Francese, *MONET: Molecular Dynamics Extractor*, version 2.0.0, Zenodo, doi:[10.5281/zenodo.22816522](https://doi.org/10.5281/zenodo.22816522) — together with the PCCP 2022 article (doi:[10.1039/d2cp01147f](https://doi.org/10.1039/d2cp01147f)) and the libraries of the analyses you used, listed below.
+**How to cite MONET**: GitHub shows a *Cite this repository* button generated from [`CITATION.cff`](CITATION.cff). Please cite the software — T. Francese, *MONET: Molecular Dynamics Extractor*, the version you used (shown in the title bar), Zenodo, doi:[10.5281/zenodo.22816521](https://doi.org/10.5281/zenodo.22816521) (all versions; each release also has its own DOI on the Zenodo page) — together with the PCCP 2022 article (doi:[10.1039/d2cp01147f](https://doi.org/10.1039/d2cp01147f)) and the libraries of the analyses you used, listed below.
 
 **MONET licence**: MIT, see [`LICENSE`](LICENSE).
 
