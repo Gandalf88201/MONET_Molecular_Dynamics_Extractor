@@ -1,6 +1,6 @@
 name: release
 
-# Push a tag (v2.0.0, or a named tag such as monet-pub) to publish a GitHub release
+# Push a tag (v2.1.0, or a named tag such as monet-pub) to publish a GitHub release
 # for the version in CITATION.cff (source ZIP included by GitHub).
 # With the repository enabled in Zenodo, each release is archived and receives a DOI.
 on:

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.1.0
 
 - Right-drag (or Shift-drag) moves the structure in both 3D viewers; right-click opens a selection menu instead of the browser menu.
 - Selection tools in both viewers, on ASE neighbour lists when available: element, bonded neighbours, whole molecules, atoms within R Å, all, invert, centre view.
