@@ -402,6 +402,20 @@ async function run () {
   assert.equal(el('cell-b').value, '8'); assert.equal(el('cell-gamma').value, '120'); assert.equal(el('cell-b').disabled, true); checks++
   await click('cell-apply')
   assert.equal(w.testMonet.aseViewer.cell.length, 3); checks++
+  // Centre selection: the centred atoms are fixed when ticked; later picks must not move the structure.
+  if (!el('ase-center').disabled) {
+    const coordsOf = () => JSON.stringify(w.testMonet.aseViewer.atoms.map(atom => [atom.x, atom.y, atom.z]))
+    await click('ase-clear-selection')
+    el('ase-center').checked = true; el('ase-center').dispatchEvent(new w.Event('change'))
+    const centred = coordsOf()
+    pick(2); pick(3)
+    assert.equal(coordsOf(), centred); checks++
+    el('ase-center').checked = false; el('ase-center').dispatchEvent(new w.Event('change'))
+    el('ase-center').checked = true; el('ase-center').dispatchEvent(new w.Event('change'))
+    assert.notEqual(coordsOf(), centred); checks++ // re-ticking centres on atoms 2 and 3
+    el('ase-center').checked = false; el('ase-center').dispatchEvent(new w.Event('change'))
+    await click('ase-clear-selection')
+  } else console.warn('ase-center disabled in this fixture: centre-selection check skipped')
   assert.equal(w.testMonet.charts.rmsd.data, null); checks++
   el('bonds-pairs').value = '1 2'; await click('btn-run-bonds')
   assert.equal(JSON.stringify(latestCommand.cell), '[8,8,10,90,90,120]'); assert.equal(latestCommand.mic, true); checks++

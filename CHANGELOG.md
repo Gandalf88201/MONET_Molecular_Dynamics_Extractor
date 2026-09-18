@@ -6,6 +6,7 @@
 - Selection tools in both viewers, on ASE neighbour lists when available: element, bonded neighbours, whole molecules, atoms within R Å, all, invert, centre view.
 - Find bonds, angles and dihedrals by element pattern (`O H`, `H O H`, `C C O H`, `*` wildcard) and fill the geometry, autocorrelation or fluctuation inputs.
 - Autocorrelation plateau: a τ typed by hand is drawn on the plot, the stride text gives t* and the effective spacing after rounding up to whole frames, and a warning appears when τ is below ~5 saved frames.
+- Fix: with **centre selection** on, picking atoms no longer moves the structure; the atoms selected when the option is ticked stay centred (untick and tick again to re-centre).
 
 ## 2.0.0
 

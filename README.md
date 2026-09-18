@@ -132,7 +132,7 @@ The **minimum-image** checkbox controls periodic bond lengths, pair distances, a
 A CIF only provides the cell metric: MONET builds the vectors with **a** along x and **b** in the xy plane. The XYZ coordinates keep the origin of the program that wrote them, so atoms usually lie partly outside the drawn box; the cell status reports what fraction does. This does not affect the analyses, which use the minimum image. To display the structure inside the box, use **Cell display** under the viewer:
 - *wrap whole molecules*;
 - *wrap atoms*;
-- *centre selection*.
+- *centre selection*: the atoms selected when you tick it (all atoms if none) are moved to the cell centre in every frame. Picking more atoms afterwards does not move the view; untick and tick again to re-centre on a new selection.
 
 To write the wrapped coordinates, use *Convert → Wrap and download*. If molecules still overlap after wrapping, the trajectory was written with different cell vectors (another orientation or setting). In that case, use the simulation cell (extended XYZ lattice, CP2K `.cell`) instead of the CIF metric.
 
