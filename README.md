@@ -101,7 +101,7 @@ For bond lengths, select groups of 2 atoms. For angles, select groups of 3; the 
 
 For RMSD, select one or more atoms. For pair distances, select at least two atoms; the histogram includes pairs among that subset and also applies any element-pair filter. The RMSD and pair-distance atom fields can be edited manually; leaving them blank uses all atoms.
 
-Drag to rotate, scroll to zoom, and click **Fit view** to reset the orientation and fit the molecule. Rotation gestures do not select atoms. For overlapping atoms, clicking picks the visible front atom; rotate to reach atoms behind it.
+Drag to rotate, right-drag (or Shift-drag, handy on a trackpad) to move the structure, scroll to zoom, and click **Fit view** to reset the orientation and fit the molecule. Rotation gestures do not select atoms. For overlapping atoms, clicking picks the visible front atom; rotate to reach atoms behind it.
 
 ASE picking is separate from the main workflow's extraction selection. **Clear selection** only clears the ASE picks; **Clear analysis** clears results. Changing the active trajectory resets the ASE picks and atom input fields so selections cannot refer to the wrong source. Use selection must be clicked again to apply changed picks to an analysis input.
 
@@ -149,13 +149,21 @@ During playback:
 - a dashed cursor follows the shown frame on the RMSD, bond, angle, dihedral and MDAnalysis time series, and clicking one of those plots jumps to that frame;
 - with 2, 3 or 4 selected atoms, the distance, angle or dihedral of the shown frame is updated live, with the minimum image when it is enabled.
 
-### Select a complete molecule
+### Selection tools (both viewers)
 
-Right-click an atom in the ASE viewer or its atom-table row, then choose **Select molecule containing atom …**. ASE finds the connected component using first-frame covalent radii, with the displayed cutoff multiplier (default 1.2). Periodic connectivity follows the minimum-image setting and can join atoms across a cell boundary.
+Right-click an atom (in either viewer, or a row of the ASE atom table) for a menu; right-click empty space for the selection-only part:
 
-Selection replaces the previous ASE picks, begins at the clicked atom, and follows graph traversal order. It is suitable for RMSD or pair-distance subsets. For angles and torsions, choose the desired atoms individually in bond order: a whole molecule’s graph order is not necessarily a valid analysis path.
+- **atom**: select/deselect it, its molecule, it and its bonded neighbours, the atoms within R Å, every atom of its element;
+- **selection**: add bonded neighbours, extend to whole molecules, add atoms within R Å, select all, invert, clear;
+- **view**: centre on the selection, reset.
 
-Connectivity is inferred, not read as authoritative chemical bonds. Adjust the cutoff for unusual bonds or close contacts. A component connected to its own periodic copies is reported as an extended network rather than a finite molecule. Isolated atoms select just themselves. Only atoms in the active (possibly extracted) trajectory can be selected. Displayed sticks are a direct-coordinate visual estimate; periodic molecule detection uses ASE.
+The same actions are in the toolbar under the ASE picks and in the Atom Selection step (element, All, Invert, + Bonded, + Molecules, + Within R). Connectivity and spheres come from ASE neighbour lists (`natural_cutoffs` × the molecule bond cutoff, default 1.2; minimum image when enabled, so molecules split across the cell are joined). Without ASE, the bonds drawn in the viewer and plain distances are used.
+
+**Find bonded chains by element** (ASE panel) lists every bond, angle or dihedral whose elements match a pattern, e.g. `O H`, `H O H` (centre in the middle), `C C O H`; `*` matches any element, and each chain is reported once whichever direction matches. The groups are written to the geometry series, the autocorrelation or the fluctuation inputs, optionally only among the selected atoms.
+
+A molecule selection replaces the previous picks, begins at the clicked atom, and follows graph traversal order. It is suitable for RMSD or pair-distance subsets. For angles and torsions, choose the desired atoms individually in bond order: a whole molecule’s graph order is not necessarily a valid analysis path.
+
+Connectivity is inferred, not read as authoritative chemical bonds. Adjust the cutoff for unusual bonds or close contacts. A component connected to its own periodic copies (an extended network) is selected as a whole. Isolated atoms select just themselves. Only atoms in the active (possibly extracted) trajectory can be selected. Displayed sticks are a direct-coordinate visual estimate; periodic molecule detection uses ASE.
 
 ### Bond-angle and dihedral ranges
 

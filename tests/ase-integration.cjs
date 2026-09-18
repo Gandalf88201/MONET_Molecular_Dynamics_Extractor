@@ -180,6 +180,15 @@ with zipfile.ZipFile(sys.argv[1]) as z:
   assert.deepEqual(result.indices, [1]); checks++
   result = await api.aseRun({ action: 'molecule', filename: periodicName, seed: 2, cell, mic: true })
   assert.deepEqual(result.indices, [2, 3]); checks++
+  // Selection tools: ASE neighbour list with the minimum image, element, sphere and bonded chains.
+  result = await api.aseRun({ action: 'select_atoms', mode: 'molecules', filename: periodicName, indices: [1], cell, mic: true, bond_scale: 1.2 })
+  assert.equal(result.ok, true, JSON.stringify(result)); assert.deepEqual(result.indices, [1, 0]); checks++
+  result = await api.aseRun({ action: 'select_atoms', mode: 'neighbors', filename: periodicName, indices: [1], cell, mic: false })
+  assert.deepEqual(result.indices, [1]); checks++
+  result = await api.aseRun({ action: 'select_atoms', mode: 'bonds', filename: periodicName, pattern: ['*', '*'], cell, mic: true })
+  assert.equal(result.ok, true, JSON.stringify(result)); assert.ok(result.groups.some(g => g.includes(0) && g.includes(1))); checks++
+  result = await api.aseRun({ action: 'select_atoms', mode: 'within', filename: periodicName, indices: [0], radius: 31, cell })
+  assert.equal(result.ok, false); checks++
   result = await api.aseRun({ action: 'convert', input: periodicName, output: 'crystal.extxyz', format: 'extxyz', cell, pbc: [true, false, false], first_frame_only: true })
   assert.equal(result.ok, true, JSON.stringify(result)); const cellText = await downloaded.text(); assert.match(cellText, /Lattice=/); assert.match(cellText, /pbc="T F F"/); checks++
   file = new File([cellText], 'native-cell.xyz'); const nativeCellName = await api.selectFile()

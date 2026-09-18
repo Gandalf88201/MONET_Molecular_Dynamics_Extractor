@@ -101,7 +101,11 @@
       // Colour map of an analysis: { atomColors: Map(MONET ID → colour), segments: [{ ids, color }], legend }
       this.overlay = null
       this.onSelectionChange = null
+      // Right click (or Ctrl-click) without dragging: onContextClick(event, MONET ID or null).
+      this.onContextClick = null
+      this.onLoad = null // called after loadAtoms()
       this.dragging = false
+      this.panning = false
       this.moving = false
       this.lastMouse = null
       this._wasDrag = false
@@ -112,7 +116,9 @@
 
       canvas.addEventListener('mousedown', e => this._onMouseDown(e))
       canvas.addEventListener('mousemove', e => this._onMouseMove(e))
-      canvas.addEventListener('mouseup', () => this._endDrag())
+      canvas.addEventListener('mouseup', e => this._onMouseUp(e))
+      // The browser menu is replaced by onContextClick, sent on release so that a right-drag pans instead.
+      canvas.addEventListener('contextmenu', e => e.preventDefault())
       canvas.addEventListener('mouseleave', () => this._endDrag())
       canvas.addEventListener('wheel', e => this._onWheel(e), { passive: false })
       canvas.addEventListener('click', e => this._onClick(e))
@@ -131,7 +137,7 @@
       this.atoms = atoms
       this.bonds = new Uint32Array(0)
       this._index = new Map(atoms.map((atom, i) => [atom.index, i]))
-      if (!atoms.length) { this.render(); return }
+      if (!atoms.length) { this.render(); this.onLoad?.(); return }
       let cx = 0, cy = 0, cz = 0
       for (const a of atoms) { cx += a.x; cy += a.y; cz += a.z }
       cx /= atoms.length; cy /= atoms.length; cz /= atoms.length
@@ -143,6 +149,7 @@
       this.bonds = findBonds(atoms)
       this._topology = this.bonds
       this.render()
+      this.onLoad?.()
     }
 
     // Move atoms to new coordinates (flat [x0, y0, z0, x1, …] in atom order) keeping the view.
@@ -427,11 +434,14 @@
       return best
     }
 
+    // Left drag rotates; right drag (also Shift/Ctrl + left drag, for trackpads) translates.
     _onMouseDown (e) {
-      if (e.button !== 0) return
+      if (e.button !== 0 && e.button !== 2) return
       this._wasDrag = false
       this.dragStart = { x: e.clientX, y: e.clientY }
       this.dragging = true
+      this.panning = e.button === 2 || e.shiftKey || e.ctrlKey
+      this._contextPress = e.button === 2 || (e.button === 0 && e.ctrlKey)
       this.lastMouse = { x: e.clientX, y: e.clientY }
     }
 
@@ -440,14 +450,49 @@
       if (!this._wasDrag && Math.hypot(e.clientX - this.dragStart.x, e.clientY - this.dragStart.y) <= 4) return
       this._wasDrag = true
       this.moving = true
-      this.rotY += (e.clientX - this.lastMouse.x) * 0.008
-      this.rotX += (e.clientY - this.lastMouse.y) * 0.008
+      const dx = e.clientX - this.lastMouse.x, dy = e.clientY - this.lastMouse.y
+      if (this.panning) {
+        const rect = this.canvas.getBoundingClientRect?.()
+        const scale = rect?.width ? this.canvas.width / rect.width : 1
+        this.pan(dx * scale, dy * scale)
+      } else {
+        this.rotY += dx * 0.008
+        this.rotX += dy * 0.008
+      }
       this.lastMouse = { x: e.clientX, y: e.clientY }
       this.requestRender()
     }
 
+    // Shift the view by (dx, dy) canvas pixels: the centre moves in the screen plane, so rotation
+    // and zoom then act around the new point in the middle of the canvas.
+    pan (dx, dy) {
+      const X = -dx / this.zoom, Y = dy / this.zoom
+      const cyR = Math.cos(this.rotY), syR = Math.sin(this.rotY), cxR = Math.cos(this.rotX), sxR = Math.sin(this.rotX)
+      // Inverse of the rotation in _project applied to the screen-plane vector (X, Y, 0).
+      const py = Y * cxR, z1 = -Y * sxR
+      const px = X * cyR - z1 * syR, pz = X * syR + z1 * cyR
+      this.center = [this.center[0] + px, this.center[1] + py, this.center[2] + pz]
+      this.requestRender()
+    }
+
+    _onMouseUp (e) {
+      const context = this.dragging && this._contextPress && !this._wasDrag
+      this._contextPress = false
+      this._endDrag()
+      if (!context) return
+      const [mx, my] = this._canvasPoint(e)
+      this.onContextClick?.(e, this._hitTest(mx, my))
+    }
+
+    _canvasPoint (e) {
+      const rect = this.canvas.getBoundingClientRect()
+      return [(e.clientX - rect.left) * this.canvas.width / (rect.width || this.canvas.clientWidth || 1),
+        (e.clientY - rect.top) * this.canvas.height / (rect.height || this.canvas.clientHeight || 1)]
+    }
+
     _endDrag () {
       this.dragging = false
+      this.panning = false
       if (this.moving) { this.moving = false; this.requestRender() }
     }
 
@@ -459,9 +504,8 @@
 
     _onClick (e) {
       if (this._wasDrag) { this._wasDrag = false; return }
-      const rect = this.canvas.getBoundingClientRect()
-      const mx = (e.clientX - rect.left) * this.canvas.width / (rect.width || this.canvas.clientWidth || 1)
-      const my = (e.clientY - rect.top) * this.canvas.height / (rect.height || this.canvas.clientHeight || 1)
+      if (e.ctrlKey) return // Ctrl-click is the macOS right click
+      const [mx, my] = this._canvasPoint(e)
       const hit = this._hitTest(mx, my)
       if (hit !== null) {
         if (this.selected.has(hit)) this.selected.delete(hit)
@@ -469,6 +513,48 @@
         this.render()
         this.onSelectionChange?.([...this.selected])
       }
+    }
+
+    // Selection helpers on the displayed geometry (used when ASE is not available).
+    // IDs are MONET IDs; bonds are the displayed ones (no periodic images).
+    elements () { return [...new Set(this.atoms.map(atom => atom.element))].sort() }
+
+    idsOfElements (elements) {
+      const wanted = new Set(elements)
+      return this.atoms.filter(atom => wanted.has(atom.element)).map(atom => atom.index)
+    }
+
+    bondedIds (ids, { whole = false } = {}) {
+      const adjacency = this.atoms.map(() => [])
+      for (let k = 0; k < this.bonds.length; k += 2) {
+        adjacency[this.bonds[k]].push(this.bonds[k + 1]); adjacency[this.bonds[k + 1]].push(this.bonds[k])
+      }
+      const start = ids.map(id => this._index?.get(id)).filter(i => i !== undefined)
+      const found = new Set(start), order = [...start]
+      let frontier = start
+      while (frontier.length) {
+        const next = []
+        for (const i of frontier) for (const j of adjacency[i].sort((a, b) => a - b)) {
+          if (!found.has(j)) { found.add(j); order.push(j); next.push(j) }
+        }
+        frontier = whole ? next : []
+      }
+      return order.map(i => this.atoms[i].index)
+    }
+
+    idsWithin (ids, radius) {
+      const seeds = ids.map(id => this._index?.get(id)).filter(i => i !== undefined).map(i => this.atoms[i])
+      const inside = this.atoms.filter(atom => !ids.includes(atom.index) &&
+        seeds.some(s => (s.x - atom.x) ** 2 + (s.y - atom.y) ** 2 + (s.z - atom.z) ** 2 <= radius * radius))
+      return [...ids, ...inside.map(atom => atom.index)]
+    }
+
+    // Centre the view on the given atoms (all atoms when empty) keeping the rotation and zoom.
+    centerOn (ids) {
+      const list = ids?.length ? ids.map(id => this.atoms[this._index?.get(id)]).filter(Boolean) : this.atoms
+      if (!list.length) return
+      this.center = ['x', 'y', 'z'].map(axis => list.reduce((sum, atom) => sum + atom[axis], 0) / list.length)
+      this.requestRender()
     }
 
     setSelected (ids) {

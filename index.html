@@ -184,6 +184,7 @@
         <button class="btn btn-sm" id="btn-apply-ids">Apply</button>
       </div>
       <button class="btn btn-sm" id="use-ase-selection" disabled>Use atoms picked in the ASE analysis</button>
+      <div class="select-tools-body" id="main-select-tools" data-target="main"></div>
       <div class="selection-info">
         Selected: <strong id="sel-count">0</strong> atoms
         <button class="btn btn-sm btn-ghost" id="btn-clear-sel">Clear</button>
@@ -305,7 +306,7 @@
       <div class="viewer-header">
         <span id="viewer-title">3D Molecular Viewer</span>
         <label class="view-style">Style <select class="field-input field-input-sm view-style-select" id="view-style"></select></label>
-        <span class="viewer-hint">Drag to rotate · Scroll to zoom · Click atom to select</span>
+        <span class="viewer-hint">Drag to rotate · Right-drag or Shift-drag to move · Scroll to zoom · Click atom to select · Right-click for selection options</span>
       </div>
       <canvas id="mol-canvas"></canvas>
       <div class="viewer-overlay" id="viewer-overlay">
@@ -403,10 +404,7 @@
           </div>
           <div class="player-live" id="ase-live" aria-live="polite"></div>
         </div>
-        <p class="panel-desc">Click atoms in order · Right-click an atom to select its molecule · Drag to rotate · Scroll to zoom · Space plays/stops, ←/→ step · Click a time-series plot to jump to that frame. With 2–4 selected atoms the distance, angle or dihedral of the shown frame is updated live.</p>
-        <div id="ase-context-menu" class="ase-context-menu hidden">
-          <button class="btn btn-sm" id="ase-select-molecule">Select molecule from atom</button>
-        </div>
+        <p class="panel-desc">Click atoms in order · Right-click for selection options (molecule, neighbours, element, sphere …) · Drag to rotate · Right-drag or Shift-drag to move · Scroll to zoom · Space plays/stops, ←/→ step · Click a time-series plot to jump to that frame. With 2–4 selected atoms the distance, angle or dihedral of the shown frame is updated live.</p>
         <label class="field-label">Molecule bond cutoff × covalent radii
           <input class="field-input field-input-sm" id="ase-bond-scale" type="number" value="1.2" min="0.5" max="2" step="0.05" />
         </label>
@@ -415,6 +413,25 @@
           <button class="btn btn-sm" id="ase-clear-selection" disabled>Clear selection</button>
         </div>
         <div id="ase-picked-atoms" class="ase-picked-atoms" aria-live="polite">No atoms selected.</div>
+
+        <details class="select-tools" open>
+          <summary>Selection tools</summary>
+          <div class="select-tools-body" id="ase-select-tools" data-target="ase"></div>
+          <label class="field-label" for="sel-pattern">Find bonded chains by element</label>
+          <div class="dir-row">
+            <input class="field-input" id="sel-pattern" placeholder="O H · H O H · C C C C (* = any element)" />
+            <button class="btn btn-sm" id="sel-pattern-find" disabled>Find</button>
+          </div>
+          <div class="select-tools-row">
+            <label class="plot-view">Fill <select class="field-input field-input-sm" id="sel-pattern-target">
+              <option value="geometry">Geometry series (bonds / angles / dihedrals)</option>
+              <option value="acf">Autocorrelation groups</option>
+              <option value="fluct">Fluctuation groups</option>
+            </select></label>
+            <label class="plot-view"><input type="checkbox" id="sel-pattern-restrict" /> only among selected atoms</label>
+          </div>
+          <p class="panel-desc" id="sel-pattern-status">2 symbols = bonds, 3 = angles (centre in the middle), 4 = dihedrals, on the ASE neighbour list (covalent radii × the bond cutoff; minimum image when enabled).</p>
+        </details>
 
         <label class="field-label" for="mda-pick-selection">Select with MDAnalysis syntax</label>
         <div class="dir-row">
@@ -1033,6 +1050,7 @@
           <div class="acf-plateau" id="acf-plateau" role="group" aria-labelledby="acf-plateau-title">
             <strong id="acf-plateau-title">Asymptotic plateau of the fit — please check and validate</strong>
             <p class="panel-desc" id="acf-plateau-text"></p>
+            <p class="panel-desc acf-plateau-warn hidden" id="acf-plateau-warn" role="alert"></p>
             <div class="ase-ctrl-row">
               <label class="plot-view">Use τ (fs) <input class="field-input field-input-sm" type="number" id="acf-tau-manual" min="0" step="any" placeholder="fit" /></label>
               <label class="plot-view">Plateau tolerance ε <select class="field-input field-input-sm plot-view-select" id="acf-plateau-eps">
@@ -1224,6 +1242,7 @@
   <span id="status-msg">Ready</span>
 </footer>
 
+<div id="viewer-context-menu" class="ase-context-menu viewer-context-menu hidden" role="menu"></div>
 <script src="xyz.js"></script>
 <script src="viewer.js"></script>
 <script src="qm-inputs.js"></script>

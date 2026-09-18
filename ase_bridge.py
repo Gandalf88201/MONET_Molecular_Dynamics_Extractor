@@ -1055,6 +1055,106 @@ def action_molecule(cmd):
     ok(indices=queue, n_atoms=len(queue), bond_scale=cmd.get('bond_scale', 1.2))
 
 
+SELECT_MODES = {'element', 'neighbors', 'molecules', 'within', 'bonds', 'angles', 'dihedrals'}
+PATTERN_WIDTH = {'bonds': 2, 'angles': 3, 'dihedrals': 4}
+
+
+def _bond_graph(atoms, bond_scale):
+    """Neighbour sets from ASE natural_cutoffs × bond_scale (minimum image when the atoms are periodic)."""
+    from ase.neighborlist import neighbor_list, natural_cutoffs
+    ii, jj = neighbor_list('ij', atoms, natural_cutoffs(atoms, mult=bond_scale))
+    graph = [set() for _ in atoms]
+    for i, j in zip(ii, jj):
+        if i != j:
+            graph[int(i)].add(int(j))
+    return graph
+
+
+def _pattern_groups(graph, symbols, pattern, allowed=None):
+    """Bonded chains i-j (bonds), i-j-k (angles) or i-j-k-l (dihedrals) whose elements match
+    the pattern in either direction ('*' matches any element). Each chain is reported once."""
+    width = len(pattern)
+    match = lambda chain, pat: all(p == '*' or symbols[a] == p for a, p in zip(chain, pat))
+    ok_atom = (lambda a: a in allowed) if allowed is not None else (lambda a: True)
+    groups, seen = [], set()
+
+    def emit(chain):
+        key = min(tuple(chain), tuple(reversed(chain)))
+        if key in seen or not all(ok_atom(a) for a in chain):
+            return
+        if match(chain, pattern):
+            seen.add(key); groups.append(list(chain))
+        elif match(chain[::-1], pattern):
+            seen.add(key); groups.append(list(chain[::-1]))
+
+    for j, neighbours in enumerate(graph):
+        if width == 2:
+            for k in neighbours:
+                emit((j, k))
+        elif width == 3:
+            ordered = sorted(neighbours)
+            for a in range(len(ordered)):
+                for b in range(a + 1, len(ordered)):
+                    emit((ordered[a], j, ordered[b]))
+        else:
+            for k in neighbours:
+                if k < j:
+                    continue
+                for i in graph[j] - {k}:
+                    for l in graph[k] - {j, i}:
+                        emit((i, j, k, l))
+    groups.sort()
+    return groups
+
+
+def action_select_atoms(cmd):
+    """Selection helpers on the first frame, with ASE neighbour lists (like ase gui / ase.geometry.analysis):
+    element, bonded neighbours, whole molecules, sphere of radius R, and bond/angle/dihedral chains by element."""
+    if not _require_ase(): return
+    from ase.neighborlist import neighbor_list
+    atoms = _first_atoms(cmd['filename'], cmd)
+    if not cmd.get('mic', False):
+        atoms.set_pbc(False)
+    mode = cmd['mode']
+    n = len(atoms)
+    seeds = [int(i) for i in cmd.get('indices') or []]
+    _validate_groups([[i] for i in seeds], 1, n) if seeds else None
+    symbols = atoms.get_chemical_symbols()
+    scale = cmd.get('bond_scale', 1.2)
+    if mode == 'element':
+        wanted = set(cmd.get('elements') or [])
+        ok(indices=[i for i, s in enumerate(symbols) if s in wanted], mode=mode)
+    elif mode in ('neighbors', 'molecules'):
+        if not seeds:
+            raise ValueError('Select at least one atom first.')
+        graph = _bond_graph(atoms, scale)
+        chosen = list(dict.fromkeys(seeds))
+        found = set(chosen)
+        frontier = list(chosen)
+        while frontier:
+            nxt = []
+            for i in frontier:
+                for j in sorted(graph[i]):
+                    if j not in found:
+                        found.add(j); chosen.append(j); nxt.append(j)
+            frontier = nxt if mode == 'molecules' else []
+        ok(indices=chosen, mode=mode, bond_scale=scale)
+    elif mode == 'within':
+        if not seeds:
+            raise ValueError('Select at least one atom first.')
+        radius = float(cmd['radius'])
+        ii, jj = neighbor_list('ij', atoms, radius)
+        seed_set = set(seeds)
+        found = set(int(j) for i, j in zip(ii, jj) if int(i) in seed_set)
+        ok(indices=seeds + sorted(found - seed_set), mode=mode, radius=radius)
+    else:
+        pattern = [str(p) for p in cmd['pattern']]
+        restrict = cmd.get('restrict')
+        allowed = set(int(i) for i in restrict) if restrict else None
+        groups = _pattern_groups(_bond_graph(atoms, scale), symbols, pattern, allowed)
+        ok(groups=groups[:20000], n_groups=len(groups), truncated=len(groups) > 20000, mode=mode, bond_scale=scale)
+
+
 def validate_command(cmd):
     cell = cmd.get('cell')
     if cell is not None:
@@ -1101,7 +1201,29 @@ def validate_command(cmd):
                     raise ValueError(f'{key} must be a list of selections.')
             else:
                 raise ValueError(f'Unsupported value for {key}.')
-    if action in ('ase_structure', 'ase_coordination', 'topology', 'mda_run', 'mda_align', 'molecule', 'fluctuations'):
+    if action == 'select_atoms':
+        mode = cmd.get('mode')
+        if mode not in SELECT_MODES:
+            raise ValueError('Unknown selection mode.')
+        for key in ('indices', 'restrict'):
+            value = cmd.get(key)
+            if value is not None and (not isinstance(value, list) or len(value) > 10 ** 6
+                                      or any(type(i) is not int or i < 0 for i in value)):
+                raise ValueError(f'{key} must be a list of atom indices.')
+        if mode == 'element':
+            elements = cmd.get('elements')
+            if not isinstance(elements, list) or not elements or any(not isinstance(e, str) or len(e) > 3 for e in elements):
+                raise ValueError('Choose at least one element.')
+        if mode == 'within':
+            radius = cmd.get('radius')
+            if type(radius) not in (int, float) or not 0 < radius <= 30:
+                raise ValueError('The radius must be between 0 and 30 Å.')
+        if mode in PATTERN_WIDTH:
+            pattern = cmd.get('pattern')
+            if (not isinstance(pattern, list) or len(pattern) != PATTERN_WIDTH[mode]
+                    or any(not isinstance(p, str) or not p or len(p) > 3 for p in pattern)):
+                raise ValueError(f'Enter {PATTERN_WIDTH[mode]} element symbols (or *) for {mode}.')
+    if action in ('ase_structure', 'ase_coordination', 'topology', 'mda_run', 'mda_align', 'molecule', 'fluctuations', 'select_atoms'):
         scale = cmd.get('bond_scale', 1.2)
         if type(scale) not in (int, float) or not 0.5 <= scale <= 2.0:
             raise ValueError('The bond cutoff scale must be between 0.5 and 2.')
@@ -1243,6 +1365,7 @@ ACTIONS = {
     "read_info": action_read_info,
     "cell_file": action_cell_file,
     "molecule":  action_molecule,
+    "select_atoms": action_select_atoms,
     "rmsd":      action_rmsd,
     "pdd":       action_pdd,
     "bonds":     action_bonds,

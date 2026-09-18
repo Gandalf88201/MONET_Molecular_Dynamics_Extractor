@@ -804,6 +804,21 @@ code { font-family: var(--font) }
 .ase-cell-panel .ase-ctrl-row { flex-wrap:wrap; margin:8px 0; }
 .ase-context-menu { position:fixed; z-index:1000; padding:7px; border:1px solid var(--blue); border-radius:5px; background:var(--bg); box-shadow:0 4px 20px var(--shadow); }
 .ase-context-menu.hidden { display:none; }
+.viewer-context-menu { display:flex; flex-direction:column; min-width:250px; max-width:340px; gap:1px; font-size:.78rem; }
+.viewer-context-menu .ctx-header { padding:3px 8px 5px; color:var(--gold); font-weight:600; }
+.viewer-context-menu .ctx-item { text-align:left; padding:5px 8px; border:0; border-radius:3px; background:none; color:var(--text); font:inherit; cursor:pointer; }
+.viewer-context-menu .ctx-item:hover:not(:disabled), .viewer-context-menu .ctx-item:focus-visible { background:var(--bg3); outline:none; }
+.viewer-context-menu .ctx-item:disabled { opacity:.45; cursor:default; }
+.viewer-context-menu .ctx-sep { height:1px; margin:4px 2px; background:var(--border); }
+.viewer-context-menu .ctx-radius { display:flex; align-items:center; gap:6px; padding:4px 8px; color:var(--text2, var(--text)); }
+.viewer-context-menu .ctx-radius input { width:64px; }
+.select-tools { margin:8px 0; font-size:.76rem; }
+.select-tools summary { cursor:pointer; color:var(--blue); }
+.select-tools-body, .select-tools-row { display:flex; flex-wrap:wrap; align-items:center; gap:5px; margin:6px 0; }
+.select-tools-body .field-input-sm { width:auto; }
+.select-tools-radius { display:inline-flex; align-items:center; gap:4px; white-space:nowrap; }
+.select-tools-body .select-tools-radius input { width:58px; flex:none; }
+#main-select-tools { font-size:.76rem; }
 #ase-mic { margin-left:12px; }
 #angles-normal-row.hidden { display:none; }
 
@@ -917,3 +932,6 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .fluct-table tbody tr.active td { background: var(--accent-soft, rgba(77,157,224,.18)); }
 .fluct-table .trend-flag { color: var(--danger, #d64545); font-weight: 600; }
 .matrix-style .field-input:not(.field-input-sm) { min-width: 220px; flex: 1; }
+
+.acf-plateau-warn { color:var(--red, #c0392b); font-weight:600; }
+.acf-plateau-warn.hidden { display:none; }

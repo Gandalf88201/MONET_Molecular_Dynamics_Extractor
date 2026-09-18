@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Right-drag (or Shift-drag) moves the structure in both 3D viewers; right-click opens a selection menu instead of the browser menu.
+- Selection tools in both viewers, on ASE neighbour lists when available: element, bonded neighbours, whole molecules, atoms within R Å, all, invert, centre view.
+- Find bonds, angles and dihedrals by element pattern (`O H`, `H O H`, `C C O H`, `*` wildcard) and fill the geometry, autocorrelation or fluctuation inputs.
+- Autocorrelation plateau: a τ typed by hand is drawn on the plot, the stride text gives t* and the effective spacing after rounding up to whole frames, and a warning appears when τ is below ~5 saved frames.
+
 ## 2.0.0
 
 First release of MONET 2 (browser app with a local Python launcher; the Electron window remains available for development).
