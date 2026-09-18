@@ -15,11 +15,11 @@ authors:
     given-names: Tommaso
     affiliation: University of Chicago
 version: 2.1.0
-doi: "10.5281/zenodo.22816522"
+doi: "10.5281/zenodo.22816521"
 identifiers:
   - type: doi
-    value: "10.5281/zenodo.22816522"
-    description: "Zenodo archive of MONET"
+    value: "10.5281/zenodo.22816521"
+    description: "Zenodo archive of MONET, all versions (concept DOI)"
 license: MIT
 repository-code: "https://github.com/Gandalf88201/MONET_Molecular_Dynamics_Extractor"
 keywords:
