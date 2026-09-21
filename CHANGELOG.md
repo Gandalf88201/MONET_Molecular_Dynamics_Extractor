@@ -19,10 +19,16 @@
   - the History tab has filters, notes and a *final* mark.
 - Sessions:
   - *Save session* downloads a ZIP with `session.json`, a methods report (Markdown, and Word when pandoc is installed) and `replay.py`;
-  - *Open session* restores the log read-only until the trajectory with the same SHA-256 is loaded;
+  - *Open session* restores the log read-only until the trajectory with the same SHA-256 is loaded; while it stays read-only, no analysis runs;
+  - opening a session starts a fork (a new creation time, `forked_from` the original), so it never overwrites the history it came from;
   - loading a trajectory offers its previous history.
 - Methods report: software versions with citations, input checksums, the steps with their key numbers, and the reporting checklist of the workflow document pre-filled.
-- `replay.py`: re-runs the logged analyses without the browser (`python replay.py --monet /path/to/MONET`), checks the input checksums and reports every number that differs from the logged one (`--rtol`, default 1e-6).
+- `replay.py`: re-runs the logged analyses without the browser (`python replay.py --monet /path/to/MONET`), checks the input checksums and compares the logged raw numbers (τ, τ_int, t₀, D, frame counts, …), reporting every one that differs (`--rtol`, default 1e-6); steps without such numbers (e.g. bond lengths, whose report values are statistics) print `RAN` rather than a false `OK`. Session files are shareable and untrusted, so `replay.py` embeds their values only as safe literals or single-line comments, never as executable code.
+- Fix: opening a saved session no longer overwrites the (possibly newer) autosave it was opened from once its trajectory is attached and autosave resumes — opening now forks the session first.
+- Fix: an ASE step that is still running when *Open session*, a resume or a new trajectory load swaps the current session can no longer finish or fail onto an unrelated step of the newly current session; *Open session* is also disabled while an analysis is running.
+- Fix: `replay.py` generation no longer splices in a source id that was never assigned in the script (e.g. a trajectory derived while the history was paused, or not logged) — the step is skipped with an explanatory comment instead of raising `NameError` when the script runs.
+- Fix: bond/angle/dihedral/coordination series keys in the log and methods report are relabelled from file indices to MONET atom IDs.
+- Fix: continuing a session (resume, or reattaching an opened session's trajectory) refreshes the logged software versions so the report reflects the current environment.
 
 ## 2.1.0
 

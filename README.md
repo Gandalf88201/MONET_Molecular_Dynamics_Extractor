@@ -348,12 +348,14 @@ Open **History** (Ctrl+`) for the drawer:
   - `methods.md`, and `methods.docx` when pandoc is installed. The report lists the software versions with citations, the input checksums and the steps, and pre-fills the reporting checklist of `docs/md-analysis-workflow.md` §12.
   - `replay.py`.
 - **Open session:**
-  - It restores a saved log read-only and never re-runs anything.
+  - It restores a saved log read-only and never re-runs anything. While it stays read-only, no analysis runs until its trajectory is loaded.
+  - Opening a session starts a fork: the restored copy gets a new creation time (`forked_from` records the one it was opened from), so it is autosaved to its own file and never overwrites the history it came from.
   - Load the trajectory with the same SHA-256 to continue it.
   - Loading a trajectory also offers its previous autosaved history.
 - **replay.py:**
   - Run `python replay.py --monet /path/to/MONET` in the folder that holds the trajectory.
-  - It checks the input checksums (`--force` skips this), re-runs each step headless, writes `stepNN_<action>.json` to `--out`, and prints `OK` or `DIFF` against the logged numbers (`--rtol`, default 1e-6).
+  - It checks the input checksums (`--force` skips this), re-runs each step headless, writes `stepNN_<action>.json` to `--out`, and compares the logged raw numbers (τ, τ_int, t₀, D, frame counts, …), printing `OK` or `DIFF` against them (`--rtol`, default 1e-6). Steps with nothing raw logged to compare (bond/angle/dihedral series, whose report values are statistics such as a mean) print `RAN` instead of a false `OK`.
+  - Session files are shareable; every value in one is untrusted. replay.py embeds them only as safe literals or single-line comments, never as executable code, so a crafted or shared session file cannot inject code into the generated script.
   - Edit it like a notebook.
 
 ## Convert
