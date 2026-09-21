@@ -286,6 +286,9 @@ async function run () {
   await click('history-open-session'); await settle()
   assert.equal(H.readOnly, true); assert.equal(el('console-input').disabled, true); assert.match(el('status-msg').textContent, /read-only/); assert.equal(latestCommand, null); checks++
   assert.equal(el('md-timestep').value, '0.5'); checks++
+  latestCommand = null
+  await click('btn-run-rmsd')
+  assert.equal(latestCommand, null); assert.match(el('status-msg').textContent, /read-only/); checks++
   await click('btn-browse'); await click('next-1'); await settle()
   assert.equal(H.readOnly, false); assert.equal(H.session.data.steps.length, openedData.steps.length); assert.equal(H.activeSource, 'S1'); checks++
   // A different file: confirm starts a new history for it.

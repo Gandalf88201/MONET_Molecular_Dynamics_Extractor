@@ -1803,6 +1803,7 @@ async function historyExtracted (stepId, result, sourceAtoms) {
 
 async function runAse (kind, command) {
   if (aseState.busy) return { ok: false, error: 'Another ASE calculation is running.' }
+  if (monetHistory.readOnly) return { ok: false, error: 'Session open read-only: load its trajectory to continue, or load another file to start a new history.' }
   if (!aseState.available) return { ok: false, error: 'ASE is unavailable. Check the connection message above.' }
   const sourceRevision = aseState.sourceRevision
   const revision = analysisRevision[kind]
