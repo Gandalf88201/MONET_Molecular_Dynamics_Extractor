@@ -27,7 +27,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 STATIC = {'index.html', 'styles.css', 'theme.js', 'xyz.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'browser-bridge.js',
-          'qm-inputs.js', 'viewer.js', 'renderer.js', 'examples/water.XYZ'}
+          'qm-inputs.js', 'viewer.js', 'renderer.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'examples/water.XYZ'}
 FORMATS = {'xyz', 'extxyz', 'vasp', 'cif', 'espresso-in', 'lammps-data', 'aims', 'turbomole', 'gaussian-in', 'dftb', 'json'}
 ACTIONS = {'scan', 'frame', 'read_info', 'molecule', 'rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'convert', 'extract', 'import',
            'rmsd_matrix', 'rdf', 'msd', 'vdos', 'unwrap', 'acf', 'equilibration', 'mda_select', 'mda_rmsf', 'mda_rgyr', 'mda_hbonds', 'cell_file', 'wrap', 'frames', 'subsample', 'mda_run', 'mda_align', 'topology', 'ase_structure', 'ase_coordination', 'fluctuations', 'select_atoms'}
