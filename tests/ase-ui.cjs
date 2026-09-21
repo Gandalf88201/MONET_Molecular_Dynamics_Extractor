@@ -534,6 +534,13 @@ async function run () {
   el('acf-range').value = 'fold180'; await click('btn-run-acf')
   assert.equal(latestCommand.angle_range, 'fold180'); checks++
   el('acf-range').value = '360'
+  // Labels formatted with thousands separators ("1,500") still map to numbers for zoom, cursor and markers.
+  { const chart = w.testMonet.charts.acf
+    chart.setData({ title: 't', labels: ['0', '500', '1,000', '1,500', '2,000'], datasets: [{ label: 'a', data: [1, .8, .5, .3, .1] }], markers: [{ value: 1200, label: 'm' }] })
+    assert.deepEqual([...chart.axisValues()], [0, 500, 1000, 1500, 2000]); checks++
+    assert.equal(chart.zoomToValues(0, 1000), true); assert.deepEqual([...chart.viewRange()], [0, 2]); checks++
+    assert.equal(chart.labelIndex(1200), 2); checks++
+    chart.setView(null) }
   el('acf-quantity').value = 'bond'; el('acf-quantity').dispatchEvent(new w.Event('change'))
   assert.equal(el('acf-range').disabled, true)
   el('acf-quantity').value = 'dihedral'; el('acf-quantity').dispatchEvent(new w.Event('change'))
