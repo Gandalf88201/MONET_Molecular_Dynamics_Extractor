@@ -342,5 +342,15 @@ assert.equal(blocks.ou.sizes[blocks.ou.plateau_index], 256); near(blocks.ou.plat
 assert.equal(blocks.white.plateau_index, 0); near(blocks.white.g, 1, 1e-9, 'white g'); checks++
 assert.equal(blocks.short.plateau_index, null); assert.equal(blocks.short.g, null); checks++
 
+// Equilibration (Chodera 2016): a 60° transient relaxing with τ = 200 is discarded; a stationary run keeps t₀ = 0.
+const equil = py(`
+t = np.arange(6000.0)
+dump({'relax': ma.detect_equilibration(60 * np.exp(-t / 200) + ou(6000, seed=11)),
+      'flat': ma.detect_equilibration(ou(6000, seed=12))})
+`)
+assert.ok(equil.relax.t0 >= 250 && equil.relax.t0 <= 1000, `t0 = ${equil.relax.t0}`); assert.ok(equil.relax.n_effective_t0 > equil.relax.n_effective[0]); checks++
+assert.equal(equil.flat.t0, 0); checks++
+assert.equal(equil.relax.starts[0], 0); assert.equal(equil.relax.starts.at(-1), 3000); assert.equal(equil.relax.g.length, equil.relax.starts.length); checks++
+
 fs.rmSync(temp, { recursive: true, force: true })
 console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations, tau_int).`)

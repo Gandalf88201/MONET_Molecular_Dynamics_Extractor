@@ -303,6 +303,30 @@ def block_average(values, min_blocks=8):
             'plateau_sem': plateau_sem, 'g': g}
 
 
+def detect_equilibration(values, candidates=50, method='sokal'):
+    """Start of the production window by maximum effective sample size (Chodera 2016).
+
+    For trial origins t0 spread over the first half of the series, g(t0) = 2 tau_int of values[t0:]
+    (in samples, at least 1) and N_eff(t0) = (N - t0) / g(t0); the chosen t0 maximises N_eff.
+    """
+    x = np.asarray(values, dtype=float)
+    n = len(x)
+    if n < 16:
+        raise ValueError('Equilibration detection needs at least 16 frames.')
+    starts = np.unique(np.linspace(0, n // 2, candidates).astype(int))
+    g, n_eff = [], []
+    for t0 in starts:
+        segment = x[t0:]
+        acf = autocorrelation(segment, 'linear', len(segment) // 2)
+        tau = integrated_time(acf, 1.0, method)['tau_int']
+        g0 = max(1.0, 2 * tau) if math.isfinite(tau) else 1.0
+        g.append(g0)
+        n_eff.append((n - t0) / g0)
+    best = int(np.argmax(n_eff))
+    return {'starts': starts.tolist(), 'g': g, 'n_effective': n_eff, 't0': int(starts[best]),
+            'g_t0': g[best], 'n_effective_t0': n_eff[best]}
+
+
 def correlation_time(lags, acf, fit_until='zero', model='exp', tau_int_method='zero', n_samples=None):
     """Fit C(t) = exp(-t/tau) (as in the MONET reference workflow) and integrate C(t).
 
