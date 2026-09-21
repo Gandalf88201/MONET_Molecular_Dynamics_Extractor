@@ -7,8 +7,10 @@ Calculations run as background jobs that report progress and can be cancelled.
 """
 import argparse
 import atexit
+import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 import re
 import secrets
@@ -21,6 +23,7 @@ import threading
 import time
 from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
+import zipfile
 
 ROOT = Path(__file__).resolve().parent
 STATIC = {'index.html', 'styles.css', 'theme.js', 'xyz.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'browser-bridge.js',
@@ -37,11 +40,134 @@ ALLOWED = {'indices', 'quantity', 'groups', 'center', 'atom_ids', 'stride', 'sta
 MAX_JOBS = 3
 MAX_JSON = 16 * 1024 * 1024
 CHUNK = 1024 * 1024
+SESSION_SCHEMA = 'monet-session/1'
+SESSIONS_DIR = Path.home() / '.monet' / 'sessions'
+SESSION_README = """MONET analysis session
+
+session.json   the analysis history (schema monet-session/1); open it in MONET with History > Open session
+methods.md     methods report: software versions, input checksums, steps and the reporting checklist
+methods.docx   the same report for Word (only when pandoc was installed)
+replay.py      re-runs the logged analyses without the browser and compares the numbers:
+                 python replay.py --monet /path/to/MONET
+               run it in the folder that holds the input trajectories
+"""
 
 
 def safe_name(name, fallback='file'):
     name = re.sub(r'[^A-Za-z0-9._-]+', '_', Path(str(name)).name).strip('._')
     return name[:120] or fallback
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, 'rb') as fh:
+        for block in iter(lambda: fh.read(CHUNK), b''):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def check_session(data):
+    if not isinstance(data, dict) or not str(data.get('schema', '')).startswith('monet-session/'):
+        raise ValueError('Not a MONET session file.')
+    if data['schema'] != SESSION_SCHEMA:
+        raise ValueError(f'This session uses {data["schema"]}; open it with a newer MONET.')
+    if not isinstance(data.get('sources'), list) or not isinstance(data.get('steps'), list):
+        raise ValueError('The session file is incomplete.')
+    return data
+
+
+def session_path(folder, data):
+    """Autosave file of a session: checksum prefix, trajectory name, creation time. None without a checksum."""
+    first = data['sources'][0] if data['sources'] and isinstance(data['sources'][0], dict) else {}
+    digest = first.get('sha256')
+    if not digest:
+        return None
+    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+        raise ValueError('Invalid checksum in the session.')
+    stamp = re.sub(r'\D', '', str(data.get('created') or ''))[:14] or 'undated'
+    return Path(folder) / f'{digest[:12]}-{safe_name(first.get("name") or "trajectory")}-{stamp}.json'
+
+
+def write_atomic(path, text):
+    """Write through a temporary file in the same folder, so a crash never leaves half a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix='.tmp-', suffix='.json')
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as fh:
+            fh.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def save_session(folder, data):
+    path = session_path(folder, check_session(data))
+    if path is None:
+        return {'ok': False, 'error': 'The trajectory checksum is not known yet; the history is kept in the page.'}
+    write_atomic(path, json.dumps(data, allow_nan=False))
+    return {'ok': True, 'saved': path.name}
+
+
+def find_session(folder, digest):
+    if not isinstance(digest, str) or not re.fullmatch(r'[0-9a-f]{64}', digest):
+        raise ValueError('Invalid checksum.')
+    found = []
+    for path in Path(folder).glob(f'{digest[:12]}-*.json'):
+        try:
+            data = check_session(json.loads(path.read_text(encoding='utf-8')))
+        except (OSError, ValueError):
+            continue
+        if data['sources'] and isinstance(data['sources'][0], dict) and data['sources'][0].get('sha256') == digest:
+            found.append(data)
+    # The newest history with more than the load step first; a history just started is the fallback.
+    found.sort(key=lambda data: (len(data['steps']) > 1, str(data.get('updated', ''))))
+    return {'ok': True, 'session': found[-1] if found else None}
+
+
+def read_session(path):
+    path = Path(path)
+    try:
+        if zipfile.is_zipfile(path):
+            with zipfile.ZipFile(path) as archive:
+                names = [name for name in archive.namelist() if name.split('/')[-1] == 'session.json']
+                if not names:
+                    raise ValueError('The ZIP has no session.json.')
+                info = archive.getinfo(names[0])
+                if info.file_size > MAX_JSON:
+                    raise ValueError('session.json is too large.')
+                text = archive.read(info).decode('utf-8')
+        else:
+            if path.stat().st_size > MAX_JSON:
+                raise ValueError('The session file is too large.')
+            text = path.read_text(encoding='utf-8')
+        data = json.loads(text)
+    except (UnicodeDecodeError, json.JSONDecodeError, zipfile.BadZipFile) as error:
+        raise ValueError(f'The session file is damaged ({error.__class__.__name__}).') from None
+    return {'ok': True, 'session': check_session(data)}
+
+
+def build_session_zip(target, data, methods, replay):
+    check_session(data)
+    if not isinstance(methods, str) or not isinstance(replay, str):
+        raise ValueError('Invalid session export.')
+    with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr('session.json', json.dumps(data, indent=1, allow_nan=False))
+        archive.writestr('methods.md', methods)
+        archive.writestr('replay.py', replay)
+        archive.writestr('README.txt', SESSION_README)
+        pandoc = shutil.which('pandoc')
+        if pandoc:
+            with tempfile.TemporaryDirectory() as work:
+                source, docx = Path(work) / 'methods.md', Path(work) / 'methods.docx'
+                source.write_text(methods, encoding='utf-8')
+                try:
+                    done = subprocess.run([pandoc, str(source), '-o', str(docx)], capture_output=True, timeout=60)
+                    if done.returncode == 0 and docx.exists():
+                        archive.write(docx, 'methods.docx')
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+    return target
 
 
 class Job:
@@ -131,10 +257,11 @@ class Session:
     def new_dir(self, prefix):
         return Path(tempfile.mkdtemp(prefix=prefix, dir=self.dir))
 
-    def add_file(self, path, name):
+    def add_file(self, path, name, sha256=None):
         file_id = secrets.token_urlsafe(16)
+        digest = sha256 or sha256_file(path)
         with self.lock:
-            self.files[file_id] = {'path': Path(path), 'name': name, 'size': Path(path).stat().st_size}
+            self.files[file_id] = {'path': Path(path), 'name': name, 'size': Path(path).stat().st_size, 'sha256': digest}
         return file_id
 
     def add_download(self, path, name):
@@ -240,19 +367,31 @@ class Session:
             elif action == 'extract':
                 result['download_id'] = self.add_download(workdir / 'MONET-results.zip', 'MONET-results.zip')
                 result['extracted_id'] = self.add_file(result.pop('fullTrajectory'), 'FULL_TRAJECTORY_EXTRACTED.xyz')
+            # Checksums of new files, for the analysis history.
+            if result.get('file_id') in self.files:
+                result['sha256'] = self.files[result['file_id']]['sha256']
+            if result.get('extracted_id') in self.files:
+                result['extracted_sha256'] = self.files[result['extracted_id']]['sha256']
             return result
 
         return self.register(Job(command, finish))
+
+    def export_session(self, request):
+        folder = self.new_dir('session-')
+        name = safe_name(request.get('name') or 'MONET-session.zip', 'MONET-session.zip')
+        build_session_zip(folder / 'session.zip', request.get('session'), request.get('methods'), request.get('replay'))
+        return {'ok': True, 'download_id': self.add_download(folder / 'session.zip', name)}
 
 
 class Server(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, max_upload):
+    def __init__(self, address, max_upload, sessions_dir=SESSIONS_DIR):
         super().__init__(address, Handler)
         self.token = secrets.token_urlsafe(32)
         self.session = Session()
         self.max_upload = max_upload
+        self.sessions_dir = Path(sessions_dir).expanduser()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -363,6 +502,14 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path == '/api/release':
                 session.release(request.get('file_id'))
                 result = {'ok': True}
+            elif self.path == '/api/session/save':
+                result = save_session(self.server.sessions_dir, request.get('session'))
+            elif self.path == '/api/session/find':
+                result = find_session(self.server.sessions_dir, request.get('sha256'))
+            elif self.path == '/api/session/export':
+                result = session.export_session(request)
+            elif self.path == '/api/session/read':
+                result = read_session(session.file(request.get('file_id'))['path'])
             elif self.path.startswith('/api/jobs/') and len(parts) == 5 and parts[4] == 'cancel':
                 job = session.jobs.get(parts[3])
                 if job:
@@ -393,6 +540,7 @@ class Handler(BaseHTTPRequestHandler):
         folder = session.new_dir('upload-')
         target = folder / safe_name(name, 'trajectory.xyz')
         remaining = length
+        digest = hashlib.sha256()
         try:
             with target.open('wb') as fh:
                 while remaining:
@@ -400,11 +548,13 @@ class Handler(BaseHTTPRequestHandler):
                     if not block:
                         raise ValueError('Upload interrupted.')
                     fh.write(block)
+                    digest.update(block)
                     remaining -= len(block)
         except Exception:
             shutil.rmtree(folder, ignore_errors=True)
             raise
-        self.respond(200, {'ok': True, 'file_id': session.add_file(target, name), 'size': length})
+        sha256 = digest.hexdigest()
+        self.respond(200, {'ok': True, 'file_id': session.add_file(target, name, sha256), 'size': length, 'sha256': sha256})
 
 
 def open_browser(url):
@@ -426,15 +576,18 @@ def main():
     parser.add_argument('--no-browser', action='store_true')
     parser.add_argument('--max-upload-gb', type=float, default=200,
                         help='largest trajectory accepted from the browser (default: 200 GB)')
+    parser.add_argument('--sessions-dir', default=str(SESSIONS_DIR),
+                        help=f'folder for the autosaved analysis histories (default: {SESSIONS_DIR})')
     args = parser.parse_args()
     try:
-        server = Server(('127.0.0.1', args.port), int(args.max_upload_gb * 1024 ** 3))
+        server = Server(('127.0.0.1', args.port), int(args.max_upload_gb * 1024 ** 3), args.sessions_dir)
     except OSError as error:
         print(f'Cannot start MONET: {error}. Try --port 8766.', file=sys.stderr)
         return 1
     url = f'http://127.0.0.1:{server.server_port}'
     print(f'MONET: {url}\nKeep this terminal open. Press Ctrl+C to stop.', flush=True)
     print(f'Session files: {server.session.dir} (removed on exit)', flush=True)
+    print(f'Analysis histories: {server.sessions_dir} (kept)', flush=True)
     if not args.no_browser:
         open_browser(url)
 

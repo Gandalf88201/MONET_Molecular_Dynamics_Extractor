@@ -11,7 +11,7 @@ Protocol
            followed by exactly one {"type":"result",...}
            or           {"type":"error","message":"..."}
 """
-import sys, os, json, traceback, math
+import sys, os, json, traceback, math, platform
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import monet_io
@@ -129,7 +129,13 @@ def _load_images(filename, frame_step=1, max_frames=None, cmd=None, label='Frame
 def action_check(_):
     if not _ASE_OK:
         return err(f"ASE not found. pip install ase  ({_ASE_ERR})")
-    ok(ase_version=_ASE_VERSION, numpy_version=np.__version__, mdanalysis_version=monet_mda.version())
+    try:
+        import scipy
+        scipy_version = scipy.__version__
+    except ImportError:
+        scipy_version = None
+    ok(ase_version=_ASE_VERSION, numpy_version=np.__version__, mdanalysis_version=monet_mda.version(),
+       python_version=platform.python_version(), scipy_version=scipy_version)
 
 
 def action_cell_file(cmd):
