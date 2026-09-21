@@ -9,12 +9,19 @@
   // Hidden settings MONET sends with every command; replay.py sets them with s.options(...).
   const OPTIONS = ['cell', 'pbc', 'mic', 'bond_scale']
   const expected = result => Object.fromEntries(Object.entries(result || {}).filter(([key]) => !key.includes(':')))
+  // Session files are shareable, so every value in one is untrusted. A source id is spliced into
+  // the generated code as a bare Python identifier, so it must look like one before it is used.
+  const validId = id => typeof id === 'string' && /^S\d+$/.test(id)
+  // Collapses a session value to one line so it can never break out of a '#' comment.
+  const line = v => String(v).replace(/[\r\n\u2028\u2029]+/g, ' ')
+  // Same, plus escapes what would otherwise break out of a Python triple-quoted docstring.
+  const docSafe = v => line(v).replace(/["\\]/g, ch => (ch === '"' ? "'" : '/'))
 
   function header (data) {
     const gaps = data.steps.some(step => step.kind === 'pause')
     return [
       '#!/usr/bin/env python3',
-      `"""Replay of a MONET analysis session (${data.schema}, created ${data.created}).`,
+      `"""Replay of a MONET analysis session (${docSafe(data.schema)}, created ${docSafe(data.created)}).`,
       '',
       'Run it in the folder that holds the input trajectories:',
       '    python replay.py --monet /path/to/MONET',
@@ -44,13 +51,12 @@
   }
 
   function stepCode (session, step) {
-    const target = (step.outputs || []).find(output => output.source)
-    const assign = target ? `${target.source} = ` : ''
     const expect = expected(step.result)
     const tail = step.status === 'ok' && Object.keys(expect).length ? { expect } : {}
     if (step.kind === 'load') {
+      if (!validId(step.source)) return null
       const source = session.source(step.source)
-      if (!source) return null
+      if (!source || !validId(source.id)) return null
       const imported = source.import || {}
       return `${source.id} = s.load(${C.formatArgs({
         name: source.name, sha256: source.sha256 ?? undefined, atoms: source.atoms ?? undefined, atom_ids: source.atom_ids ?? undefined,
@@ -58,11 +64,25 @@
         cell_vectors: source.import ? imported.cell_vectors : undefined, step: step.id
       })})`
     }
-    if (step.kind === 'extract') return `${assign}s.extract(${step.source}, ${C.formatArgs({ step: step.id, ...step.params, ...tail })})`
+    // target/step.source are spliced in as bare Python identifiers below, so both must be checked
+    // before use; a step whose source or target doesn't look like a source id is not replayed.
+    const target = (step.outputs || []).find(output => output.source)
+    if (target && !validId(target.source)) return null
+    const assign = target ? `${target.source} = ` : ''
+    if (step.kind === 'extract') {
+      if (!validId(step.source)) return null
+      return `${assign}s.extract(${step.source}, ${C.formatArgs({ step: step.id, ...step.params, ...tail })})`
+    }
     if (!step.call) return null
     const { args } = C.parse(step.call)
-    if (step.kind === 'derive') return `${assign}s.derive(${step.source}, ${C.formatValue(step.action)}, ${C.formatArgs({ step: step.id, ...args, ...tail })})`
-    if (step.kind === 'analysis' && C.names().includes(step.action)) return `s.${step.action}(${step.source}, ${C.formatArgs({ step: step.id, ...args, ...tail })})`
+    if (step.kind === 'derive') {
+      if (!validId(step.source)) return null
+      return `${assign}s.derive(${step.source}, ${C.formatValue(step.action)}, ${C.formatArgs({ step: step.id, ...args, ...tail })})`
+    }
+    if (step.kind === 'analysis' && C.names().includes(step.action)) {
+      if (!validId(step.source)) return null
+      return `s.${step.action}(${step.source}, ${C.formatArgs({ step: step.id, ...args, ...tail })})`
+    }
     return null
   }
 
@@ -71,17 +91,21 @@
     const lines = header(data)
     let options = null
     for (const step of session.data.steps) {
-      if (step.kind === 'pause') { lines.push('', `# step ${step.id}: history paused at ${step.time}; steps until it was resumed are not in this script`); continue }
-      if (step.kind === 'resume') { lines.push(`# step ${step.id}: history resumed at ${step.time}`, ''); continue }
+      // Every session value spliced into a '#' comment below goes through line() first, so it can
+      // never contain a real newline and break out into a line of executable Python.
+      const id = line(step.id)
+      const label = line(step.action || step.kind)
+      if (step.kind === 'pause') { lines.push('', `# step ${id}: history paused at ${line(step.time)}; steps until it was resumed are not in this script`); continue }
+      if (step.kind === 'resume') { lines.push(`# step ${id}: history resumed at ${line(step.time)}`, ''); continue }
       if (step.kind === 'clear' || step.kind === 'logging_error') continue
       if (['time', 'cell', 'export'].includes(step.kind)) {
-        lines.push(`# step ${step.id} ${step.kind}${step.action ? ' ' + step.action : ''}: ${C.formatArgs(step.params || {})} (setting or export, not replayed)`)
+        lines.push(`# step ${id} ${line(step.kind)}${step.action ? ' ' + line(step.action) : ''}: ${line(C.formatArgs(step.params || {}))} (setting or export, not replayed)`)
         continue
       }
       const code = stepCode(session, step)
-      if (!code) { lines.push(`# step ${step.id} ${step.action || step.kind}: no call recorded, not replayed`); continue }
+      if (!code) { lines.push(`# step ${id} ${label}: no call recorded, not replayed`); continue }
       if (step.status !== 'ok') {
-        lines.push(`# step ${step.id} ${step.action || step.kind}: ${step.status === 'cleared' ? 'cleared in MONET' : `failed in MONET (${step.error})`}`, `#   ${code}`)
+        lines.push(`# step ${id} ${label}: ${step.status === 'cleared' ? 'cleared in MONET' : `failed in MONET (${line(step.error)})`}`, `#   ${code}`)
         continue
       }
       if (step.kind !== 'load') {

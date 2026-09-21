@@ -11,7 +11,8 @@ const P = require('../provenance.js')
 const C = require('../console.js')
 const R = require('../replaygen.js')
 const root = path.resolve(__dirname, '..')
-const python = path.resolve(process.env.PYTHON || 'python3')
+const rawPython = process.env.PYTHON || 'python3'
+const python = rawPython.includes('/') || rawPython.includes(path.sep) ? path.resolve(rawPython) : rawPython
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'monet-replay-'))
 const env = { ...process.env, MONET_CACHE_DIR: path.join(temp, 'cache') }
 let checks = 0
@@ -59,6 +60,28 @@ assert.match(script, new RegExp(`^S2 = s\\.derive\\(S1, "subsample", step=${sub.
 assert.match(script, new RegExp(`^s\\.rmsd\\(S2, step=${rmsd.id}, frame_step=1, align=True`, 'm')); checks++
 assert.match(script, new RegExp(`^# step ${cleared.id} dihedrals: cleared in MONET$`, 'm')); assert.match(script, /^# {3}s\.dihedrals\(/m); checks++
 assert.doesNotMatch(script, new RegExp(temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))); checks++
+// Regression: session files are shareable and every value in one is untrusted. Tampered values
+// must never become executable Python -- only a safe literal (via C.formatValue) or a single-line
+// comment with newlines stripped.
+const evil = s.toJSON()
+evil.steps[0].source = "S1\nimport os\nos.system('echo pwned')\nx"
+const evilFailStep = evil.steps.find(step => step.action === 'equilibration')
+evilFailStep.status = 'error'
+evilFailStep.error = 'boom\nimport os'
+evil.created = 'x"""\nimport os\n"""'
+const evilScript = R.replayScript(evil)
+// The fixed header legitimately has one 'import os' line (argparse needs os.environ); the
+// tampered session values must not add any more of these lines, nor any 'os.system(' call.
+const countLinesMatching = (text, re) => text.split('\n').filter(l => re.test(l)).length
+assert.equal(countLinesMatching(evilScript, /^import os\b/), countLinesMatching(script, /^import os\b/)); checks++
+assert.equal(countLinesMatching(evilScript, /^os\.system\(/), 0); checks++
+const normalPath = path.join(temp, 'normal_replay.py')
+const evilPath = path.join(temp, 'evil_replay.py')
+fs.writeFileSync(normalPath, script)
+fs.writeFileSync(evilPath, evilScript)
+assert.doesNotThrow(() => execFileSync(python, ['-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', evilPath], { encoding: 'utf8' })); checks++
+const countImports = file => execFileSync(python, ['-c', 'import ast,sys; t=ast.parse(open(sys.argv[1]).read()); print(sum(isinstance(n,(ast.Import,ast.ImportFrom)) for n in ast.walk(t)))', file], { encoding: 'utf8' }).trim()
+assert.equal(countImports(evilPath), countImports(normalPath)); checks++
 // Run it in a folder that holds a copy of the trajectory.
 const work = path.join(temp, 'work')
 fs.mkdirSync(work)
