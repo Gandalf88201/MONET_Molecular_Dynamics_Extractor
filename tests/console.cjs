@@ -38,6 +38,10 @@ for (const value of [0, -2.5, 1e-7, 1e21, 'say "hi"\n', true, false, null, [], [
   const text = C.format('rdf', { rmax: value })
   assert.deepEqual(C.parse(text).args.rmax, value, text); assert.equal(C.format('rdf', C.parse(text).args), text); checks++
 }
+// formatArgs keys reach replay.py verbatim as Python parameter names, so a non-identifier key
+// (as a crafted session could supply) must be rejected rather than spliced in as code.
+assert.throws(() => C.formatArgs({ 'a b': 1 }), /Invalid parameter name/); checks++
+assert.equal(C.formatArgs({ ok_1: 2 }), 'ok_1=2'); checks++
 // Unknown names and parameters, with suggestions.
 assert.throws(() => C.validate('acff', {}), /Unknown analysis 'acff'\. Did you mean 'acf'\?/); checks++
 assert.throws(() => C.validate('acf', { lag: 5 }), /acf has no parameter 'lag'\. Did you mean 'max_lag'\?/); checks++

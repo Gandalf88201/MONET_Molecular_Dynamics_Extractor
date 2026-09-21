@@ -144,7 +144,13 @@
     if (typeof v === 'object') return `{${Object.entries(v).map(([k, x]) => `${JSON.stringify(k)}: ${formatValue(x)}`).join(', ')}}`
     return JSON.stringify(String(v))
   }
-  const formatArgs = args => Object.entries(args).filter(([, v]) => v !== undefined).map(([k, v]) => `${k}=${formatValue(v)}`).join(', ')
+  // Keys reach the Python output verbatim (as a=... parameter names), so any key must look like an
+  // identifier before it is used; a session-supplied key such as ")\nimport os\n#" must never pass.
+  const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/
+  const formatArgs = args => Object.entries(args).filter(([, v]) => v !== undefined).map(([k, v]) => {
+    if (!NAME_RE.test(k)) throw new Error(`Invalid parameter name '${JSON.stringify(k).slice(0, 40)}'.`)
+    return `${k}=${formatValue(v)}`
+  }).join(', ')
   function format (name, args) {
     const order = ACTIONS[name] || []
     const keys = [...order.filter(k => k in args), ...Object.keys(args).filter(k => !order.includes(k)).sort()]

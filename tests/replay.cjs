@@ -69,12 +69,33 @@ const evilFailStep = evil.steps.find(step => step.action === 'equilibration')
 evilFailStep.status = 'error'
 evilFailStep.error = 'boom\nimport os'
 evil.created = 'x"""\nimport os\n"""'
+// A malicious parameter *name* (not just value): stepCode's `extract` branch used to spread
+// step.params straight into C.formatArgs, so a key like this became a live Python line. It must
+// now be dropped -- extract only forwards selected/frequency/compute_average/qm -- and any other
+// place formatArgs sees session-controlled keys (e.g. the 'cell' comment line) must degrade to a
+// comment rather than throw or emit the key as code.
+const evilKey = ")\nimport os\nos.system('pwned')\n#"
+evil.steps.push({
+  id: 901, time: s.data.updated, kind: 'extract', action: 'extract', source: 'S1', call: null,
+  params: { [evilKey]: 1, selected: [1, 2], frequency: 1 }, atoms: [], result: {}, outputs: [],
+  rerun_of: null, status: 'ok', error: null, note: '', final: false
+})
+evil.steps.push({
+  id: 902, time: s.data.updated, kind: 'cell', action: null, source: null, call: null,
+  params: { [evilKey]: 1, cell: [10, 10, 10, 90, 90, 90] }, atoms: [], result: {}, outputs: [],
+  rerun_of: null, status: 'ok', error: null, note: '', final: false
+})
 const evilScript = R.replayScript(evil)
 // The fixed header legitimately has one 'import os' line (argparse needs os.environ); the
 // tampered session values must not add any more of these lines, nor any 'os.system(' call.
 const countLinesMatching = (text, re) => text.split('\n').filter(l => re.test(l)).length
 assert.equal(countLinesMatching(evilScript, /^import os\b/), countLinesMatching(script, /^import os\b/)); checks++
 assert.equal(countLinesMatching(evilScript, /^os\.system\(/), 0); checks++
+// Stronger check: 'os.system(' must never appear except inside a '#' comment, anywhere on the line.
+for (const l of evilScript.split('\n')) if (l.includes('os.system(')) assert.ok(l.trimStart().startsWith('#'), l); checks++
+// The extract step's malicious param name was dropped, but the legitimate ones still made it in
+// as real (non-comment) replay code.
+assert.match(evilScript, /^s\.extract\(S1, step=901, selected=\[1, 2\], frequency=1/m); checks++
 const normalPath = path.join(temp, 'normal_replay.py')
 const evilPath = path.join(temp, 'evil_replay.py')
 fs.writeFileSync(normalPath, script)

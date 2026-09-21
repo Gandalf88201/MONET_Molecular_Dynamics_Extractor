@@ -8,6 +8,8 @@
   const P = node ? require('./provenance.js') : root.MonetProvenance
   // Hidden settings MONET sends with every command; replay.py sets them with s.options(...).
   const OPTIONS = ['cell', 'pbc', 'mic', 'bond_scale']
+  // Parameters monet_replay.Session.extract accepts; step.params may hold other, untrusted keys.
+  const EXTRACT_PARAMS = ['selected', 'frequency', 'compute_average', 'qm']
   const expected = result => Object.fromEntries(Object.entries(result || {}).filter(([key]) => !key.includes(':')))
   // Session files are shareable, so every value in one is untrusted. A source id is spliced into
   // the generated code as a bare Python identifier, so it must look like one before it is used.
@@ -50,7 +52,18 @@
     ]
   }
 
+  // A crafted session must never crash generation, and must never turn into live Python: any
+  // C.formatArgs failure below (e.g. a non-identifier key that slipped through) falls back to "not
+  // replayed" instead, same as the other reasons a step can't be replayed.
   function stepCode (session, step) {
+    try {
+      return stepCodeUnsafe(session, step)
+    } catch {
+      return null
+    }
+  }
+
+  function stepCodeUnsafe (session, step) {
     const expect = expected(step.result)
     const tail = step.status === 'ok' && Object.keys(expect).length ? { expect } : {}
     if (step.kind === 'load') {
@@ -71,7 +84,12 @@
     const assign = target ? `${target.source} = ` : ''
     if (step.kind === 'extract') {
       if (!validId(step.source)) return null
-      return `${assign}s.extract(${step.source}, ${C.formatArgs({ step: step.id, ...step.params, ...tail })})`
+      // Only the keys monet_replay.Session.extract actually accepts are forwarded; anything else in
+      // step.params (session data, untrusted) is ignored rather than spliced in as a Python name.
+      const params = step.params || {}
+      const extractArgs = {}
+      for (const key of EXTRACT_PARAMS) if (params[key] !== undefined) extractArgs[key] = params[key]
+      return `${assign}s.extract(${step.source}, ${C.formatArgs({ step: step.id, ...extractArgs, ...tail })})`
     }
     if (!step.call) return null
     const { args } = C.parse(step.call)
@@ -99,7 +117,9 @@
       if (step.kind === 'resume') { lines.push(`# step ${id}: history resumed at ${line(step.time)}`, ''); continue }
       if (step.kind === 'clear' || step.kind === 'logging_error') continue
       if (['time', 'cell', 'export'].includes(step.kind)) {
-        lines.push(`# step ${id} ${line(step.kind)}${step.action ? ' ' + line(step.action) : ''}: ${line(C.formatArgs(step.params || {}))} (setting or export, not replayed)`)
+        let paramsText
+        try { paramsText = C.formatArgs(step.params || {}) } catch { paramsText = '(unreadable parameters)' }
+        lines.push(`# step ${id} ${line(step.kind)}${step.action ? ' ' + line(step.action) : ''}: ${line(paramsText)} (setting or export, not replayed)`)
         continue
       }
       const code = stepCode(session, step)
