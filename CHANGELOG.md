@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Autocorrelation: Sokal (default) and Geyer estimators of τ_int with its error; run length in units of τ with warnings; residual correlation g and N_eff of the sampled configurations.
+- Changed: the default τ_int estimator is now Sokal's window (previously the first zero crossing), so τ_int, N_eff and the standard errors differ from 2.1; choose *first zero crossing* in the Autocorrelation tab to reproduce earlier results.
 - Block averaging (Flyvbjerg–Petersen) chart under the ACF, with plateau detection.
 - Detect equilibration (maximum N_eff, Chodera 2016) and crop to the production window.
 - Plot-note SEMs use the same Sokal window as the ACF panel.

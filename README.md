@@ -228,7 +228,7 @@ Choose a dihedral, bond angle, bond length or RMSD and one or more atom groups (
 - the normalised fluctuation autocorrelation C(t) = ⟨δx(0)δx(t)⟩/⟨δx²⟩, with dihedrals unwrapped across 0/360° first;
 - or, for angles, the **circular** autocorrelation of the unit vector z = e^{ikθ} with its mean removed, Re⟨δz*(0)δz(t)⟩/⟨|δz|²⟩. It decays to zero like the linear one. The raw ⟨cos[θ(t)−θ(0)]⟩ only drops to R² for a confined torsion, so its τ is meaningless;
 - **Dihedral range** *0–180° folded* uses period 180°, so jumps between equivalent orientations (θ ↔ θ+180°) do not decorrelate the signal. The distribution and statistics then also use 0–180°;
-- τ from a fit of exp(−t/τ) (up to the first zero crossing, three 1/e times or the whole lag range) with its standard error, and the integrated τ up to the first zero;
+- τ from a fit of exp(−t/τ) (up to the first zero crossing, three 1/e times or the whole lag range) with its standard error, and the integrated τ_int with the chosen estimator (below);
 - **τ_int estimator:**
   - *Sokal window* (default): the smallest M with M ≥ 5 τ_int(M);
   - *Geyer* initial monotone sequence;
@@ -278,7 +278,7 @@ For periodic ranges MONET uses Mardia's circular statistics:
 - the circular standard deviation is σ = √(−2 ln R)/k, with no n−1 correction.
 
 The note above the plot adds R and the **standard error of the mean**, corrected for time correlation in the same way as the autocorrelation panel:
-1. τ_int is the trapezoidal integral of the normalised ACF of the deviations from the mean, up to the first zero crossing, measured in analysed frames;
+1. τ_int is the integral of the normalised ACF of the deviations from the mean, measured in analysed frames, with Sokal's self-consistent window (the smallest M with M ≥ 5 τ_int(M), lags up to half the series) — the same estimator and default lag range as the Autocorrelation panel;
 2. N_eff = N/(2τ_int);
 3. SEM = σ/√N_eff.
 

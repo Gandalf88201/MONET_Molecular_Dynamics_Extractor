@@ -594,6 +594,19 @@ async function run () {
   assert.equal(el('restore-full-trajectory').classList.contains('hidden'), false); assert.match(el('analysis-source').textContent, /uncorrelated · every 13 frames/); checks++
   await click('restore-full-trajectory'); await tick()
   assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(el('md-stride').value, '5'); assert.equal(el('inp-freq').value, '13'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
+  // Cropping an already-derived trajectory (equilibration crop of the uncorrelated trajectory) must keep the
+  // derived md-stride, not fall back to the full trajectory's (renderer.js activateTrajectory regression).
+  el('acf-plateau-eps').dispatchEvent(new w.Event('change'))
+  assert.equal(el('acf-accept').disabled, false); checks++
+  await click('acf-accept'); await tick(); await tick()
+  assert.equal(el('md-stride').value, '65'); checks++
+  el('acf-groups').value = '1 2 3 4' // activating a trajectory clears the ACF inputs, as elsewhere in this flow
+  await click('btn-run-equil')
+  assert.equal(el('equil-crop').disabled, false); checks++
+  await click('equil-crop'); await tick(); await tick()
+  assert.equal(el('md-stride').value, '65', 'cropping the uncorrelated trajectory must not reset md-stride to the full-trajectory value'); checks++
+  await click('restore-full-trajectory'); await tick()
+  assert.equal(el('md-stride').value, '5'); checks++
   el('acf-groups').value = '1 2 3 4'; el('acf-fit-model').value = 'exp_offset'; await click('btn-run-acf')
   assert.equal(latestCommand.fit_model, 'exp_offset'); checks++
   await click('csv-acf')
@@ -605,6 +618,14 @@ async function run () {
   el('md-stride').value = '1'; el('md-stride').dispatchEvent(new w.Event('input'))
   el('acf-plateau-time').value = '0.5'; el('acf-plateau-time').dispatchEvent(new w.Event('input'))
   assert.match(el('acf-stride-text').textContent, /every 2 saved frames/); assert.match(el('acf-stride-text').textContent, /g ≈ 1\.6, N_eff ≈ 62\.5/); checks++
+  // g of the sampled configurations must divide the stride (in saved frames) by frame_step, since the ACF
+  // lags are frame_step saved frames apart: frame_step = 2 with stride = 4 lands on the same lag index (2,
+  // acf = 0.3) as stride = 2 with frame_step = 1 above, so g is unchanged but N_eff halves with fewer kept frames.
+  el('acf-step').value = '2'; await click('btn-run-acf')
+  assert.equal(latestCommand.frame_step, 2); checks++
+  el('acf-plateau-time').value = '1.9'; el('acf-plateau-time').dispatchEvent(new w.Event('input'))
+  assert.match(el('acf-stride-text').textContent, /every 4 saved frames/); assert.match(el('acf-stride-text').textContent, /g ≈ 1\.6, N_eff ≈ 31\.3/); checks++
+  el('acf-step').value = '1'
   el('acf-tauint').value = 'geyer'; await click('btn-run-acf')
   assert.equal(latestCommand.tau_int_method, 'geyer'); assert.match(el('acf-tau-text').textContent, /Geyer sequence/); checks++
   el('acf-tauint').value = 'sokal'

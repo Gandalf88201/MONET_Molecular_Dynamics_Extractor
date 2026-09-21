@@ -347,8 +347,12 @@ async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
   state.filePath = path
   state.fileInfo = info
   state.derivedLabel = label
-  // One saved frame of the new file spans `strideFactor` frames of the original run.
-  const stride = Number(state.fullTrajectory.mdStride) || 1
+  // One saved frame of the new file spans `strideFactor` frames of the file that was active just
+  // before this call. md-stride always holds the value of the ACTIVE file, not the full trajectory's,
+  // so it must be the base here: deriving from an already-derived file (e.g. cropping the
+  // equilibration transient out of an uncorrelated trajectory) would otherwise drop the stride
+  // already applied by the earlier crop and desynchronise the time axis from the frames.
+  const stride = Number($('md-stride').value) || 1
   setTimeStride(stride * strideFactor)
   $('inp-freq').value = 1
   await showActiveTrajectory()
@@ -2220,7 +2224,8 @@ function drawAcfBlockChart () {
   const plateau = Number.isInteger(b.plateau_index) ? b.times[b.plateau_index] : null
   const note = plateau === null
     ? 'No plateau: the standard error still grows at the longest blocks, so the run is too short for a reliable error bar.'
-    : `Plateau from blocks of ${fmt(plateau, 4)} fs: SEM = ${fmt(b.plateau_sem, 3)} ${r.unit}, g = ${fmt(b.g, 3)} (ACF: g = ${fmt(2 * r.tau_int / r.dt, 3)}).`
+    // tau_int can be null (fit/window not available): guard the division so fmt shows '—' instead of 0.
+    : `Plateau from blocks of ${fmt(plateau, 4)} fs: SEM = ${fmt(b.plateau_sem, 3)} ${r.unit}, g = ${fmt(b.g, 3)} (ACF: g = ${fmt(Number.isFinite(r.tau_int) ? 2 * r.tau_int / r.dt : NaN, 3)}).`
   charts.acfblock.setData({
     title: 'Block averaging of the mean (Flyvbjerg–Petersen)', source: charts.acf.source,
     xLabel: 'Block length (fs)', yLabel: `Standard error of the mean (${r.unit})`,
@@ -2247,8 +2252,12 @@ function showAcfResult () {
   $('acf-tau-text').textContent = [
     `τ (fit ${model}, ${r.fit_points} points up to ${fmt(r.fit_end, 4)} fs) = ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs${steps(r.tau_fit)}`,
     r.fit_model === 'exp_offset' ? `plateau c = ${fmt(r.plateau, 3)} ± ${fmt(r.plateau_error, 2)}` : null,
-    `τ_int (${TAU_INT_LABELS[r.tau_int_method] || 'integral'}${Number.isFinite(r.tau_int_window) ? `, ${r.tau_int_window} lags` : ''}) = ${fmt(r.tau_int, 4)} ± ${fmt(r.tau_int_error, 2)} fs` +
-      (r.tau_int_converged === false ? ' (window not reached: extend the lag range or the run)' : ''),
+    // Sokal/Geyer can return tau_int <= 0 for an anti-correlated series (e.g. a bond saved near half its
+    // vibrational period): printing it would show a negative time and a negative error, so say why instead.
+    Number.isFinite(r.tau_int) && r.tau_int <= 0
+      ? `τ_int (${TAU_INT_LABELS[r.tau_int_method] || 'integral'}): τ_int ≤ 0: no positive correlation resolved`
+      : `τ_int (${TAU_INT_LABELS[r.tau_int_method] || 'integral'}${Number.isFinite(r.tau_int_window) ? `, ${r.tau_int_window} lags` : ''}) = ${fmt(r.tau_int, 4)} ± ${fmt(r.tau_int_error, 2)} fs` +
+        (r.tau_int_converged === false ? ' (window not reached: extend the lag range or the run)' : ''),
     `Mean ${fmt(r.statistics[0].mean, 5)} ± ${fmt(r.statistics[0].sem, 2)} (std ${fmt(r.statistics[0].std, 4)}), N_eff ≈ ${fmt(r.n_effective, 3)} of ${r.n_frames} frames`
   ].filter(Boolean).join(' · ')
   const d = acfDecorrelation()

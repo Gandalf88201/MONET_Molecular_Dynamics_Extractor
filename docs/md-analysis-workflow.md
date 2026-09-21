@@ -4,7 +4,7 @@
 
 | | |
 | --- | --- |
-| Version | 0.1 (first draft), 2026-09-18 |
+| Version | 0.2, 2026-09-21 |
 | Scope | Analysis of equilibrium ab initio (AIMD: BOMD, CPMD, FPMD) and classical MD trajectories. The end goal is statistically sound averages and statistically independent configurations for QM post-processing. |
 | Status | Draft for discussion. Sections marked **[open]** need input, examples or a decision. |
 | Maintainer | T. Francese |
@@ -175,7 +175,7 @@ The table assumes a single-exponential ACF. For multi-exponential decays, apply 
 
 **MONET.** The ACF is the first tab of *Custom analyses*.
 - `autocorrelation` computes the linear or circular normalised ACF with the FFT and averages over groups.
-- `correlation_time` fits exp(−t/τ) or (1 − c)e^{−t/τ} + c, up to the first zero crossing, three 1/e times, or all lags. It also returns τ_int integrated up to the first zero crossing.
+- `correlation_time` fits exp(−t/τ) or (1 − c)e^{−t/τ} + c, up to the first zero crossing, three 1/e times, or all lags. It also returns τ_int with the chosen estimator (below; Sokal's window by default, not the fit's first-zero-crossing truncation).
 - MONET then computes t* = τ ln(1/ε) and the stride ⌈t*/Δt⌉. It writes the uncorrelated extXYZ with `source_frame` tags and can make it the active trajectory.
 - The SEM in the plot notes uses N_eff = N/(2τ_int), with τ_int from the same Sokal window as the ACF panel.
 - **τ_int estimator.** `integrated_time` in `monet_analysis.py` implements Sokal's self-consistent window (default, M ≥ 5 τ_int(M)) [17, 21], Geyer's initial monotone sequence [22], and the first-zero-crossing rule kept for MONET ≤ 2.1 [19]. The Autocorrelation tab exposes the choice, and shows τ_int with its error τ_int·√(2(2M+1)/N) (Madras & Sokal 1988 [21]; Wolff's Γ-method [18]) and the window M.
@@ -513,7 +513,7 @@ DOIs were checked against Crossref on 2026-09-18. Numbers match the citations in
 | --- | --- | --- |
 | 0 Sanity | Atom-identity check, explicit time axis, cells | Energy, T and CP fictitious-KE plots from engine output |
 | 1 Equilibration | Trend, drift and block significance (Fluctuations & trends); automatic t₀ by maximum N_eff [13], with cropping to the production window | – |
-| 3 ACF | Linear and circular ACF, exp and exp+offset fit, τ_int to first zero, t*, stride, uncorrelated extXYZ; Sokal/Geyer truncation of τ_int with its error; block-averaging plot; g of the subsample; T/τ indicator | Multi-exponential and stretched fits |
+| 3 ACF | Linear and circular ACF, exp and exp+offset fit, t*, stride, uncorrelated extXYZ; τ_int (Sokal window default, Geyer or first zero crossing) with its error; block-averaging plot; g of the subsample; T/τ indicator | Multi-exponential and stretched fits |
 | 5 RMSD | Kabsch RMSD, RMSF, Rg (NumPy and MDAnalysis) | Symmetry-aware RMSD |
 | 6 Landscape | Pairwise RMSD (NumPy and MDAnalysis), PCA, diffusion map | Clustering with populations and representatives; half-vs-half comparison; cosine content; dihedral PCA |
 | 7 Distributions | Circular statistics, fits, folded ranges, polar plots, g-corrected SEM | Convergence metric for distributions |
