@@ -62,4 +62,5 @@ clean.addSource({ name: 'a.xyz' })
 assert.doesNotMatch(R.methodsReport(clean.toJSON()), /Warning/); assert.match(R.methodsReport(clean.toJSON()), /## Gaps\n\nNone\.\n/); checks++
 assert.equal(R.resultText({ 'mean:0-1': 1.5, 'circmean:0-1-2-3': 10 }), 'mean of 0-1 = 1.5; circular mean of 0-1-2-3 = 10'); checks++
 assert.equal(R.stepText({ kind: 'cell', action: 'apply', params: { cell: [12, 12, 12, 90, 90, 90], mic: true } }), 'cell apply (cell=[12, 12, 12, 90, 90, 90], mic=True)'); checks++
+assert.equal(R.stepText({ kind: 'cell', action: 'apply', params: { 'a b': 1 } }), 'cell apply ((unreadable parameters))'); checks++
 console.log(`PASS: ${checks} report checks (software, checksums, steps, checklist, gaps).`)

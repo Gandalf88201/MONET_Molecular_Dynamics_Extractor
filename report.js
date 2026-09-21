@@ -31,7 +31,14 @@
   const resultText = result => Object.entries(result || {}).map(([key, v]) => `${label(key)} = ${number(v)}`).join('; ')
   function stepText (step) {
     if (step.call) return step.call
-    const args = step.params && Object.keys(step.params).length ? C.formatArgs(step.params) : ''
+    let args = ''
+    if (step.params && Object.keys(step.params).length) {
+      try {
+        args = C.formatArgs(step.params)
+      } catch (e) {
+        args = '(unreadable parameters)'
+      }
+    }
     return `${step.kind}${step.action ? ' ' + step.action : ''}${args ? ` (${args})` : ''}`
   }
 
