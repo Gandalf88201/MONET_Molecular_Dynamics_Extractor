@@ -607,6 +607,12 @@ async function run () {
   el('acf-tauint').value = 'geyer'; await click('btn-run-acf')
   assert.equal(latestCommand.tau_int_method, 'geyer'); assert.match(el('acf-tau-text').textContent, /Geyer sequence/); checks++
   el('acf-tauint').value = 'sokal'
+  // Block averaging (Flyvbjerg–Petersen) under the ACF; cleared with it.
+  assert.deepEqual([...w.testMonet.charts.acfblock.data.datasets[0].data], [0.5, 0.7]); assert.match(el('acfblock-text').textContent, /No plateau/); checks++
+  await click('csv-acfblock')
+  assert.equal(downloadName, 'MONET-acfblock.csv'); checks++
+  await click('clear-acf')
+  assert.equal(w.testMonet.charts.acfblock.data, null); assert.equal(el('acfblock-text').classList.contains('hidden'), true); checks++
   el('acf-quantity').value = 'bond'; el('acf-quantity').dispatchEvent(new w.Event('change'))
   assert.equal(w.testMonet.charts.acf.data, null); assert.equal(el('acf-result').classList.contains('hidden'), true); checks++
   el('acf-groups').value = '1 2 3'; await click('btn-run-acf')

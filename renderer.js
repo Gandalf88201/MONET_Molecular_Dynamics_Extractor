@@ -1379,6 +1379,7 @@ const charts = {
   msd: new MonetLineChart('chart-msd', 'chart-msd-ph'),
   vdos: new MonetLineChart('chart-vdos', 'chart-vdos-ph'),
   acf: new MonetLineChart('chart-acf', 'chart-acf-ph'),
+  acfblock: new MonetLineChart('chart-acfblock', 'chart-acfblock-ph'),
   rmsddist: new MonetLineChart('chart-rmsddist', 'chart-rmsddist-ph'),
   bondsdist: new MonetLineChart('chart-bondsdist', 'chart-bondsdist-ph'),
   anglesdist: new MonetLineChart('chart-anglesdist', 'chart-anglesdist-ph'),
@@ -1533,7 +1534,8 @@ function clearAnalysis (kind, report = true) {
   delete lastResults[kind]
   hideAseProgress(`${kind}-prog-row`)
   if ($(`${kind}-prog-label`)) $(`${kind}-prog-label`).textContent = '—'
-  if (kind === 'acf') $('acf-result').classList.add('hidden')
+  if (kind === 'acf') { $('acf-result').classList.add('hidden'); clearAnalysis('acfblock', false) }
+  if (kind === 'acfblock') $('acfblock-text').classList.add('hidden')
   if (charts[`${kind}dist`]) clearAnalysis(`${kind}dist`, false)
   for (const id of { msd: ['msd-info'], vdos: ['vdos-info'], mda: ['mda-download', 'mda-activate'] }[kind] || []) $(id).classList.add('hidden')
   if (kind === 'mda') {
@@ -2207,6 +2209,33 @@ function drawAcfChart () {
   }, { keepView })
 }
 
+// Block averaging (Flyvbjerg & Petersen 1989): the SEM grows with the block length and levels off once
+// blocks are longer than the correlation time; the plateau checks the ACF error bar independently.
+function drawAcfBlockChart () {
+  const r = lastResults.acf
+  const b = r?.blocking
+  if (!b?.sizes?.length) return clearAnalysis('acfblock', false)
+  const plateau = Number.isInteger(b.plateau_index) ? b.times[b.plateau_index] : null
+  const note = plateau === null
+    ? 'No plateau: the standard error still grows at the longest blocks, so the run is too short for a reliable error bar.'
+    : `Plateau from blocks of ${fmt(plateau, 4)} fs: SEM = ${fmt(b.plateau_sem, 3)} ${r.unit}, g = ${fmt(b.g, 3)} (ACF: g = ${fmt(2 * r.tau_int / r.dt, 3)}).`
+  charts.acfblock.setData({
+    title: 'Block averaging of the mean (Flyvbjerg–Petersen)', source: charts.acf.source,
+    xLabel: 'Block length (fs)', yLabel: `Standard error of the mean (${r.unit})`,
+    labels: b.times.map(t => String(Number(t.toPrecision(5)))),
+    datasets: [
+      { label: 'SEM of the block means', data: b.sem, colorIndex: 0 },
+      { label: 'SEM + error', data: b.sem.map((v, i) => v + b.sem_error[i]), dash: true, colorIndex: 1 },
+      { label: 'SEM − error', data: b.sem.map((v, i) => v - b.sem_error[i]), dash: true, colorIndex: 1 },
+      { label: `SEM from the ACF (N_eff = ${fmt(r.n_effective, 3)})`, data: b.times.map(() => r.statistics[0].sem), dash: true, colorIndex: 2 }
+    ],
+    markers: plateau === null ? [] : [{ value: plateau, label: `plateau ${fmt(b.plateau_sem, 3)} ${r.unit}` }],
+    notes: [note]
+  })
+  $('acfblock-text').textContent = note
+  $('acfblock-text').classList.remove('hidden')
+}
+
 function showAcfResult () {
   const r = lastResults.acf
   if (!r) return
@@ -2260,6 +2289,7 @@ function showAcfResult () {
   $('acf-accept').disabled = !ready || !aseState.available || aseState.busy || (d && d.kept < 2)
   $('acf-result').classList.remove('hidden')
   drawAcfChart()
+  drawAcfBlockChart()
 }
 $('acf-tau-manual').addEventListener('input', () => { acfPlateauEdited = false; showAcfResult() })
 $('acf-plateau-eps').addEventListener('change', () => { acfPlateauEdited = false; showAcfResult() })

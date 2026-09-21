@@ -1090,6 +1090,14 @@
         </div>
         <canvas class="chart-canvas" id="chart-acf"></canvas>
         <div class="chart-placeholder" id="chart-acf-ph">Autocorrelation function with exponential fit</div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-acfblock" disabled>Clear block analysis</button>
+          <button class="btn btn-sm" id="download-acfblock" disabled>Download block-averaging PNG</button>
+          <button class="btn btn-sm" id="csv-acfblock" disabled>Download block-averaging CSV</button>
+        </div>
+        <p class="panel-desc hidden" id="acfblock-text" aria-live="polite"></p>
+        <canvas class="chart-canvas" id="chart-acfblock"></canvas>
+        <div class="chart-placeholder" id="chart-acfblock-ph">Block averaging: standard error of the mean against block length (Flyvbjerg–Petersen)</div>
       </div>
 
       <!-- MDAnalysis analyses -->
