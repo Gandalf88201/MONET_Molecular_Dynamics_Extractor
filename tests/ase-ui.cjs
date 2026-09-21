@@ -188,6 +188,17 @@ async function mdaChecks () {
   await click('btn-run-mda')
   assert.equal(latestCommand.action, 'mda_align'); assert.equal(latestCommand.params.selection, 'all'); checks++
   assert.equal(el('mda-activate').classList.contains('hidden'), false); checks++
+  // The aligned file keeps every frame_step-th frame: activating it multiplies the MD steps per saved frame.
+  { const fullPath = w.testMonet.state.filePath, step = el('mda-step').value
+    el('mda-step').value = '2'
+    el('md-stride').value = '3'; el('md-stride').dispatchEvent(new w.Event('input'))
+    await click('btn-run-mda')
+    assert.equal(latestCommand.action, 'mda_align'); assert.equal(latestCommand.frame_step, 2); checks++
+    await click('mda-activate'); await tick()
+    assert.equal(w.testMonet.state.filePath, 'derived/torsion-aligned.extxyz'); assert.equal(el('md-stride').value, '6'); checks++
+    await click('restore-full-trajectory'); await tick()
+    assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(el('md-stride').value, '3'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
+    el('mda-step').value = step }
   // Switching the module keeps the other module's sub-tab.
   await click('vtab-ase')
   assert.ok(el('vtab-ase').classList.contains('active')); assert.equal(el('ase-sub-mda').classList.contains('active'), false); checks++

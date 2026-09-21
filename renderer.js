@@ -2847,6 +2847,8 @@ function renderTable (container, table, { title, mapping, mismatch } = {}) {
 }
 
 let mdaAlignedPath = null
+// The aligned file keeps only every frame_step-th frame: one of its frames spans that many of the active file.
+let mdaAlignedStep = 1
 $('btn-run-mda').addEventListener('click', async () => {
   const filename = extractedTrajPath()
   if (!filename) return setStatus('Load an XYZ file and click Next first.')
@@ -2876,6 +2878,7 @@ $('btn-run-mda').addEventListener('click', async () => {
   }
   if (analysis === 'align') {
     mdaAlignedPath = r.filePath || command.output
+    mdaAlignedStep = command.frame_step
     $('mda-activate').classList.remove('hidden')
     renderTable($('mda-table'), { columns: ['Aligned trajectory', 'Value'], rows: [['Frames', r.n_frames], ['Fit selection', r.selection], ['File', link.download || command.output]] })
     return setStatus(`Aligned ${r.n_frames} frames on "${r.selection}".`)
@@ -2916,7 +2919,7 @@ $('btn-run-mda').addEventListener('click', async () => {
 $('mda-activate').addEventListener('click', async () => {
   if (!mdaAlignedPath) return
   try {
-    await activateTrajectory(mdaAlignedPath, { label: 'aligned (MDAnalysis AlignTraj)' })
+    await activateTrajectory(mdaAlignedPath, { label: 'aligned (MDAnalysis AlignTraj)', strideFactor: mdaAlignedStep })
     setStatus('MONET now analyses and extracts the aligned trajectory (↩ Full trajectory to go back).')
   } catch (error) { setStatus('The aligned trajectory could not be loaded: ' + error.message) }
 })
