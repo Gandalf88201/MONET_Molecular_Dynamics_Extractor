@@ -205,6 +205,12 @@ async function run () {
   assert.equal(extract.status, 'ok'); assert.deepEqual(plain(extract.params.selected), [1, 2, 3, 4]); assert.equal(extract.result.totalFrames, 2); checks++
   const S3 = H.session.data.sources.at(-1)
   assert.equal(S3.parent.step, extract.id); assert.deepEqual(plain(S3.atom_ids), [1, 2, 3, 4]); assert.equal(H.activeSource, S3.id); checks++
+  // A failing history view never breaks an analysis.
+  w.eval('var renderHistory = () => { throw new Error("view broke") }')
+  latestCommand = null
+  await click('btn-run-rmsd')
+  assert.equal(latestCommand.action, 'rmsd'); assert.equal(w.testMonet.aseState.busy, false); checks++
+  w.eval('renderHistory = undefined')
   // ── more checks ──
   console.log(`PASS: ${checks} history UI checks (capture, derived sources, clear, pause, logging errors, autosave).`)
 }

@@ -55,7 +55,7 @@ function historyDo (fn) {
     try { monetHistory.session.record({ kind: 'logging_error', error: String(error?.message || error) }) } catch {}
     if (!monetHistory.warned) {
       monetHistory.warned = true
-      setStatus('The analysis history could not log a step: ' + (error?.message || error))
+      try { setStatus('The analysis history could not log a step: ' + (error?.message || error)) } catch {}
     }
     return null
   }
@@ -71,7 +71,7 @@ function historyRecord (fields) {
 function onHistoryChange () {
   clearTimeout(monetHistory.saveTimer)
   monetHistory.saveTimer = setTimeout(saveHistoryNow, 1000)
-  if (typeof renderHistory === 'function') renderHistory()
+  if (typeof renderHistory === 'function') { try { renderHistory() } catch (error) { console.warn('History view could not be updated:', error) } }
 }
 
 // Autosave in the launcher's session folder, keyed by the trajectory checksum.
