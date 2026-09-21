@@ -267,7 +267,41 @@ async function run () {
   // Ctrl+` toggles the drawer.
   w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: '`', ctrlKey: true }))
   assert.equal(el('history-drawer').classList.contains('hidden'), true); checks++
-  // ── session checks ──
+  // ── sessions ──
+  const readBlob = blob => new Promise(resolve => { const reader = new w.FileReader(); reader.onload = () => resolve(reader.result); reader.readAsText(blob) })
+  let exported
+  w.monet.sessionExport = async body => { exported = body; return { ok: true, downloadURL: '/api/download/z1' } }
+  await click('history-save-session'); await settle()
+  assert.match(exported.methods, /^# Methods: MONET analysis session/); assert.match(exported.replay, /from monet_replay import Session/); checks++
+  assert.equal(exported.name, 'MONET-session-torsion.zip'); assert.equal(exported.session.steps.length, steps().length); assert.equal(downloadName, 'MONET-session-torsion.zip'); checks++
+  await click('history-export-methods')
+  assert.equal(downloadName, 'MONET-methods-torsion.md'); assert.match(await readBlob(pngBlob), /## Reporting checklist/); checks++
+  await click('history-export-replay')
+  assert.equal(downloadName, 'replay.py'); assert.match(await readBlob(pngBlob), /sys\.exit\(s\.report\(\)\)/); checks++
+  // Open: read-only until the matching trajectory is loaded; nothing re-runs.
+  const openedData = plain(H.session.toJSON())
+  w.monet.sessionOpen = async () => ({ ok: true, session: openedData })
+  latestCommand = null
+  el('md-timestep').value = '2'
+  await click('history-open-session'); await settle()
+  assert.equal(H.readOnly, true); assert.equal(el('console-input').disabled, true); assert.match(el('status-msg').textContent, /read-only/); assert.equal(latestCommand, null); checks++
+  assert.equal(el('md-timestep').value, '0.5'); checks++
+  await click('btn-browse'); await click('next-1'); await settle()
+  assert.equal(H.readOnly, false); assert.equal(H.session.data.steps.length, openedData.steps.length); assert.equal(H.activeSource, 'S1'); checks++
+  // A different file: confirm starts a new history for it.
+  await click('history-open-session'); await settle()
+  w.monet.fileDigest = async () => ({ sha256: 'ef'.repeat(32), size: 1 })
+  w.confirm = () => true
+  await click('btn-browse'); await click('next-1'); await settle()
+  assert.equal(H.readOnly, false); assert.equal(H.session.data.sources[0].sha256, 'ef'.repeat(32)); assert.equal(H.session.data.steps.length, 1); checks++
+  // A previous autosaved history for the same checksum is offered.
+  w.monet.fileDigest = async () => ({ sha256: '12'.repeat(32), size: 1 })
+  const previous = { ...openedData, sources: [{ ...openedData.sources[0], sha256: '12'.repeat(32) }] }
+  let asked = ''
+  w.monet.sessionFind = async () => ({ ok: true, session: previous })
+  w.confirm = message => { asked = message; return true }
+  await click('btn-browse'); await click('next-1'); await settle()
+  assert.match(asked, /Previous history found for torsion\.xyz \(\d+ steps/); assert.equal(H.session.data.steps.length, previous.steps.length); assert.equal(H.activeSource, 'S1'); checks++
   console.log(`PASS: ${checks} history UI checks (capture, derived sources, clear, pause, logging errors, autosave).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => w.close())

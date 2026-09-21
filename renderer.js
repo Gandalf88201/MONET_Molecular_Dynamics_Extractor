@@ -3912,4 +3912,100 @@ function downloadText (text, name, type) {
   setTimeout(() => URL.revokeObjectURL(url), 10000)
 }
 
+// ── sessions: save, export, open (read-only until its trajectory is loaded), resume ──
+const sessionStem = () => fileName(monetHistory.session.data.sources[0]?.name || 'session').replace(/\.[^.]*$/, '') || 'session'
+
+function downloadLink (url, name) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+$('history-save-session').addEventListener('click', async () => {
+  const data = monetHistory.session.toJSON()
+  const name = `MONET-session-${sessionStem()}.zip`
+  if (window.monet.hasAseServer && window.monet.sessionExport) {
+    let r
+    try {
+      r = await window.monet.sessionExport({ session: data, methods: MonetReport.methodsReport(data), replay: MonetReplay.replayScript(data), name })
+    } catch (error) { r = { ok: false, error: error.message } }
+    if (!r?.ok) return setStatus('Could not save the session: ' + (r?.error || r?.message || 'unknown error'))
+    downloadLink(r.downloadURL, name)
+    return setStatus('Session ZIP download started: session.json, methods report and replay.py.')
+  }
+  downloadText(JSON.stringify(data, null, 1), `MONET-session-${sessionStem()}.json`, 'application/json')
+  setStatus('Session file download started (the ZIP with the report and replay.py needs the launcher).')
+})
+
+$('history-export-methods').addEventListener('click', () => {
+  const text = MonetReport.methodsReport(monetHistory.session.toJSON(), { finalOnly: $('history-final-only').checked })
+  downloadText(text, `MONET-methods-${sessionStem()}.md`, 'text/markdown')
+  setStatus('Methods report download started.')
+})
+
+$('history-export-replay').addEventListener('click', () => {
+  downloadText(MonetReplay.replayScript(monetHistory.session.toJSON()), 'replay.py', 'text/x-python')
+  setStatus('replay.py download started: run it with python replay.py --monet /path/to/MONET next to the trajectory.')
+})
+
+// The last logged time axis and applied cell are put back in the panel; nothing is re-run.
+function restoreSettings (data) {
+  const last = test => [...data.steps].reverse().find(step => step.status === 'ok' && test(step))
+  const time = last(step => step.kind === 'time')
+  if (time) {
+    $('md-timestep').value = time.params.timestep
+    $('md-timestep-unit').value = time.params.unit
+    $('md-stride').value = time.params.steps_per_frame
+    for (const id of ['md-timestep', 'md-timestep-unit', 'md-stride']) $(id).dispatchEvent(new Event('input'))
+    monetHistory.lastTime = JSON.stringify(time.params)
+  }
+  const cell = last(step => step.kind === 'cell' && step.action === 'apply')
+  if (cell?.params.cell) {
+    $('cell-system').value = 'triclinic'
+    cell.params.cell.forEach((value, i) => { $(`cell-${cellFields[i]}`).value = value })
+    ;['a', 'b', 'c'].forEach((axis, i) => { $(`cell-pbc-${axis}`).checked = Boolean(cell.params.pbc?.[i]) })
+    updateCellPreset()
+  }
+}
+
+$('history-open-session').addEventListener('click', async () => {
+  const r = await window.monet.sessionOpen?.()
+  if (!r) return
+  if (!r.ok) return setStatus('Could not open the session: ' + (r.error || r.message))
+  let restored
+  try { restored = MonetProvenance.fromJSON(r.session) } catch (error) { return setStatus('Could not open the session: ' + error.message) }
+  await saveHistoryNow()
+  monetHistory.session = restored
+  monetHistory.readOnly = true
+  monetHistory.stepByKind = {}
+  monetHistory.sourceByPath.clear()
+  monetHistory.stepByPath.clear()
+  monetHistory.activeSource = null
+  monetHistory.selected = null
+  restoreSettings(restored.data)
+  updateAseControls()
+  onHistoryChange()
+  const source = restored.data.sources[0]
+  setStatus(`Session opened read-only: ${restored.data.steps.length} steps. Load ${source?.name || 'its trajectory'}${source?.sha256 ? ` (SHA-256 ${source.sha256.slice(0, 12)}…)` : ''} to continue it; nothing is re-run automatically.`)
+})
+
+// After loading a trajectory: offer the newest autosaved history of the same file.
+async function offerPreviousHistory (digest) {
+  if (!digest?.sha256 || !window.monet.sessionFind) return
+  let found
+  try { found = await window.monet.sessionFind(digest.sha256) } catch { return }
+  const previous = found?.ok ? found.session : null
+  if (!previous || !Array.isArray(previous.steps) || previous.steps.length < 2) return
+  const name = fileName(state.source.original)
+  if (!window.confirm(`Previous history found for ${name} (${previous.steps.length} steps, last change ${String(previous.updated).slice(0, 10)}). Continue it? Cancel starts a new history.`)) return
+  let restored
+  try { restored = MonetProvenance.fromJSON(previous) } catch (error) { return setStatus('The previous history could not be read: ' + error.message) }
+  monetHistory.session = restored
+  attachSource(restored.data.sources[0].id)
+  onHistoryChange()
+}
+
 renderHistory()
