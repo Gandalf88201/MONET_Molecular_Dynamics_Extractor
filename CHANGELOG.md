@@ -27,7 +27,7 @@
 - Fix: opening a saved session no longer overwrites the (possibly newer) autosave it was opened from once its trajectory is attached and autosave resumes — opening now forks the session first.
 - Fix: an ASE step that is still running when *Open session*, a resume or a new trajectory load swaps the current session can no longer finish or fail onto an unrelated step of the newly current session; *Open session* is also disabled while an analysis is running.
 - Fix: `replay.py` generation no longer splices in a source id that was never assigned in the script (e.g. a trajectory derived while the history was paused, or not logged) — the step is skipped with an explanatory comment instead of raising `NameError` when the script runs.
-- Fix: bond/angle/dihedral/coordination series keys in the log and methods report are relabelled from file indices to MONET atom IDs.
+- Fix: bond/angle/dihedral series keys in the log and methods report are relabelled from file indices to MONET atom IDs (coordination labels keep the per-atom names from ASE).
 - Fix: continuing a session (resume, or reattaching an opened session's trajectory) refreshes the logged software versions so the report reflects the current environment.
 
 ## 2.1.0
