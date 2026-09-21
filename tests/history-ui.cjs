@@ -134,8 +134,13 @@ Object.assign(w.monet, {
     return command.action === 'subsample' ? { ...result, filePath: 'derived/production.extxyz', output: 'production.extxyz', sha256: 'cd'.repeat(32) } : result
   }
 })
+// renderer.js runs in strict mode, so its top-level bindings (monetHistory, renderHistory, …) live
+// in a declarative environment private to this one eval call, not as window properties: a later,
+// separate w.eval('...') cannot see them by name (only what this same call exposes on
+// window.testMonet can be reached from outside). __setRenderHistory/__getRenderHistory below let a
+// later check swap out renderHistory itself, which a plain identifier reference could not reach.
 for (const file of ['theme.js', 'qm-inputs.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) {
-  w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, monetHistory, saveHistoryNow };' : ''))
+  w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, monetHistory, saveHistoryNow, runConsoleLine, __getRenderHistory: () => renderHistory, __setRenderHistory: fn => { renderHistory = fn } };' : ''))
 }
 const el = id => w.document.getElementById(id)
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -206,12 +211,63 @@ async function run () {
   const S3 = H.session.data.sources.at(-1)
   assert.equal(S3.parent.step, extract.id); assert.deepEqual(plain(S3.atom_ids), [1, 2, 3, 4]); assert.equal(H.activeSource, S3.id); checks++
   // A failing history view never breaks an analysis.
-  w.eval('var renderHistory = () => { throw new Error("view broke") }')
+  const __savedRenderHistory = w.testMonet.__getRenderHistory()
+  w.testMonet.__setRenderHistory(() => { throw new Error('view broke') })
   latestCommand = null
   await click('btn-run-rmsd')
   assert.equal(latestCommand.action, 'rmsd'); assert.equal(w.testMonet.aseState.busy, false); checks++
-  w.eval('renderHistory = undefined')
-  // ── more checks ──
+  w.testMonet.__setRenderHistory(__savedRenderHistory)
+  // ── drawer and console ──
+  await click('history-toggle')
+  assert.equal(el('history-drawer').classList.contains('hidden'), false); assert.equal(el('history-pause').textContent, 'History: on'); checks++
+  const lines = () => [...el('console-lines').children].map(row => row.textContent)
+  assert.ok(lines().some(line => line.startsWith(`#${acf.id} acf(`) && line.includes('τ_int (fs) = 40')), lines().join('\n')); checks++
+  assert.ok(el('console-lines').querySelector(`[data-step="${acf.id}"]`).classList.contains('status-cleared')); checks++
+  // Click a line, edit it, Enter: the panel runs with the new value and the new step links to the original.
+  el('console-lines').querySelector(`[data-step="${acf.id}"]`).click()
+  assert.equal(el('console-input').value, acf.call); checks++
+  await w.testMonet.runConsoleLine(acf.call.replace('tau_int_method="sokal"', 'tau_int_method="geyer"')); await settle()
+  const rerun = steps().at(-1)
+  assert.equal(rerun.action, 'acf'); assert.equal(rerun.rerun_of, acf.id); assert.equal(latestCommand.tau_int_method, 'geyer'); assert.equal(el('acf-tauint').value, 'geyer'); checks++
+  assert.ok(el('ase-sub-acf').classList.contains('active')); checks++
+  // Errors are shown in the console and nothing runs.
+  await w.testMonet.runConsoleLine('acf(lag=3)')
+  assert.match(el('console-output').textContent, /acf has no parameter 'lag'\. Did you mean 'max_lag'\?/); assert.ok(el('console-output').classList.contains('console-error')); checks++
+  await w.testMonet.runConsoleLine('acf(dt=9)')
+  assert.match(el('console-output').textContent, /dt comes from the time axis/); checks++
+  await w.testMonet.runConsoleLine('import os')
+  assert.match(el('console-output').textContent, /Expected '\('/); checks++
+  await w.testMonet.runConsoleLine('help(acf)')
+  assert.match(el('console-output').textContent, /^acf\(quantity, groups/); assert.equal(el('console-output').classList.contains('console-error'), false); checks++
+  count = steps().length
+  await w.testMonet.runConsoleLine('bonds(pairs=[[1, 99]], frame_step=1)'); await settle()
+  assert.match(el('console-output').textContent, /MONET atom 99/); assert.equal(steps().length, count); checks++
+  // ↑ recalls the previous input.
+  el('console-input').value = ''
+  el('console-input').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowUp' }))
+  assert.equal(el('console-input').value, 'bonds(pairs=[[1, 99]], frame_step=1)'); checks++
+  // Pause and resume from the drawer.
+  await click('history-pause')
+  assert.equal(el('history-pause').textContent, 'History: paused'); assert.equal(H.session.data.paused, true); checks++
+  count = steps().length
+  await click('btn-run-rmsd')
+  assert.equal(steps().length, count); checks++
+  await click('history-pause')
+  assert.equal(el('history-pause').textContent, 'History: on'); assert.ok(lines().some(line => /history paused/.test(line))); checks++
+  // History tab: details, note, final mark, filters.
+  await click('history-tab-log')
+  el('history-list').querySelector(`[data-step="${acf.id}"]`).click()
+  assert.match(el('history-detail-text').textContent, new RegExp(`^#${acf.id} analysis acf · S1`)); checks++
+  el('history-note').value = 'use this'; el('history-note').dispatchEvent(new w.Event('input'))
+  el('history-final').checked = true; el('history-final').dispatchEvent(new w.Event('change'))
+  assert.equal(H.session.step(acf.id).note, 'use this'); assert.equal(H.session.step(acf.id).final, true); checks++
+  el('history-filters').querySelector('[data-filter="cleared"]').click()
+  assert.equal(el('history-list').querySelector(`[data-step="${acf.id}"]`), null); checks++
+  el('history-filters').querySelector('[data-filter="cleared"]').click()
+  // Ctrl+` toggles the drawer.
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: '`', ctrlKey: true }))
+  assert.equal(el('history-drawer').classList.contains('hidden'), true); checks++
+  // ── session checks ──
   console.log(`PASS: ${checks} history UI checks (capture, derived sources, clear, pause, logging errors, autosave).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => w.close())

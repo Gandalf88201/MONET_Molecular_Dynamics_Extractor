@@ -21,6 +21,7 @@
       <span class="ase-dot" id="ase-dot"></span>
       <span id="ase-badge-text">ASE …</span>
     </div>
+    <button class="theme-toggle" id="history-toggle" type="button" aria-pressed="false" title="Analysis history and console (Ctrl+`)">History</button>
     <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">☀ Day</button>
     <div class="titlebar-author">Dr. T. Francese &nbsp;·&nbsp; Univ. of Chicago</div>
   </div>
@@ -1274,6 +1275,50 @@
 </footer>
 
 <div id="viewer-context-menu" class="ase-context-menu viewer-context-menu hidden" role="menu"></div>
+
+<!-- ===== ANALYSIS HISTORY AND CONSOLE ===== -->
+<aside class="history-drawer hidden" id="history-drawer" aria-label="Analysis history and console">
+  <div class="history-head">
+    <button class="history-tab active" id="history-tab-console" data-htab="console" type="button">Console</button>
+    <button class="history-tab" id="history-tab-log" data-htab="log" type="button">History</button>
+    <button class="btn btn-sm" id="history-pause" type="button" aria-pressed="false">History: on</button>
+    <span class="history-badge hidden" id="history-save-badge">history not saved</span>
+    <span class="history-badge hidden" id="history-readonly">read-only</span>
+    <button class="history-close" id="history-close" type="button" title="Close">×</button>
+  </div>
+  <div class="history-pane active" id="history-pane-console">
+    <div class="console-lines" id="console-lines" role="log"></div>
+    <div class="console-output hidden" id="console-output"></div>
+    <div class="console-input-row">
+      <span class="console-prompt">›</span>
+      <input class="field-input console-input" id="console-input" spellcheck="false" autocomplete="off" placeholder='acf(quantity="dihedral", groups=[[1, 2, 3, 4]])   ·   help()' />
+    </div>
+  </div>
+  <div class="history-pane" id="history-pane-log">
+    <div class="history-filters" id="history-filters">
+      <label><input type="checkbox" data-filter="analysis" checked /> analyses</label>
+      <label><input type="checkbox" data-filter="derive" checked /> derived</label>
+      <label><input type="checkbox" data-filter="export" checked /> exports</label>
+      <label><input type="checkbox" data-filter="error" checked /> errors</label>
+      <label><input type="checkbox" data-filter="cleared" checked /> cleared</label>
+      <label><input type="checkbox" data-filter="other" checked /> inputs &amp; settings</label>
+    </div>
+    <ol class="history-list" id="history-list"></ol>
+    <div class="history-detail hidden" id="history-detail">
+      <pre id="history-detail-text"></pre>
+      <label class="field-label" for="history-note">Note</label>
+      <textarea class="field-input" id="history-note" rows="2"></textarea>
+      <label><input type="checkbox" id="history-final" /> ☆ final (use in the paper)</label>
+    </div>
+    <div class="history-actions">
+      <button class="btn btn-sm" id="history-save-session" type="button">Save session</button>
+      <button class="btn btn-sm" id="history-open-session" type="button">Open session</button>
+      <button class="btn btn-sm" id="history-export-methods" type="button">Export methods report</button>
+      <button class="btn btn-sm" id="history-export-replay" type="button">Export replay.py</button>
+      <label><input type="checkbox" id="history-final-only" /> final steps only</label>
+    </div>
+  </div>
+</aside>
 <script src="xyz.js"></script>
 <script src="viewer.js"></script>
 <script src="qm-inputs.js"></script>

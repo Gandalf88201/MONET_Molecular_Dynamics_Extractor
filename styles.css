@@ -935,3 +935,32 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 
 .acf-plateau-warn { color:var(--red, #c0392b); font-weight:600; }
 .acf-plateau-warn.hidden { display:none; }
+
+/* ── Analysis history drawer and console ── */
+.history-drawer { position: fixed; top: 56px; right: 0; bottom: 0; width: min(460px, 92vw); z-index: 40; display: flex; flex-direction: column; background: var(--bg2); border-left: 1px solid var(--border-strong); box-shadow: var(--shadow); font-size: 12px; }
+.history-drawer.hidden, .history-drawer .hidden { display: none !important; }
+.history-head { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--border); }
+.history-tab { background: none; border: 1px solid transparent; border-radius: 6px; padding: 4px 10px; color: inherit; cursor: pointer; font: inherit; }
+.history-tab.active { border-color: var(--accent); color: var(--accent); }
+.history-close { margin-left: auto; background: none; border: none; color: inherit; font-size: 18px; cursor: pointer; }
+.history-badge { color: #d9534f; font-weight: 600; }
+.history-pane { display: none; flex: 1; min-height: 0; flex-direction: column; padding: 8px; gap: 8px; }
+.history-pane.active { display: flex; }
+.console-lines, .history-list, .console-output, .history-detail pre { font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.console-lines { flex: 1; overflow: auto; }
+.console-line { padding: 2px 4px; border-radius: 4px; }
+.console-rerunnable { cursor: pointer; }
+.console-rerunnable:hover, .history-item:hover { background: var(--bg3); }
+.status-cleared { opacity: .55; text-decoration: line-through; }
+.status-error { color: #d9534f; }
+.kind-pause, .kind-resume { color: var(--gold); text-align: center; }
+.console-output { padding: 4px 6px; border-radius: 4px; background: var(--bg3); }
+.console-output.console-error { color: #d9534f; }
+.console-input-row { display: flex; align-items: center; gap: 6px; }
+.console-prompt { color: var(--accent); font-weight: 700; }
+.console-input { flex: 1; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.history-filters, .history-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.history-list { flex: 1; overflow: auto; margin: 0; padding-left: 0; list-style: none; }
+.history-item { padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.history-item.selected { background: var(--bg3); outline: 1px solid var(--accent); }
+.history-detail pre { margin: 0 0 6px; }
