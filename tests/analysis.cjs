@@ -14,6 +14,19 @@ const bridge = command => {
   return JSON.parse(out.trim().split('\n').pop())
 }
 const near = (a, b, tol, label) => assert.ok(Math.abs(a - b) <= tol, `${label}: ${a} vs ${b} (tol ${tol})`)
+// Run Python against monet_analysis and parse its JSON (NaN becomes null).
+const py = code => JSON.parse(execFileSync(python, ['-c', `import json, math, sys
+import numpy as np
+sys.path.insert(0, sys.argv[1])
+import monet_analysis as ma
+def dump(obj):
+    print(json.dumps(obj, allow_nan=True).replace('NaN', 'null'))
+def ou(n, tau=40.0, sd=15.0, seed=3):
+    rng = np.random.default_rng(seed); x = np.zeros(n)
+    for i in range(1, n):
+        x[i] = x[i - 1] * math.exp(-1 / tau) + sd * math.sqrt(1 - math.exp(-2 / tau)) * rng.normal()
+    return x
+${code}`, root]).toString())
 
 // Synthetic trajectories generated with a fixed seed.
 execFileSync(python, ['-c', `
@@ -288,5 +301,28 @@ assert.ok(Math.max(...r.statistics.map(st => st.rmsf)) < 1e-6); checks++
 r = bridge({ action: 'fluctuations', filename: chain, quantity: 'atoms', indices: [0, 1, 2, 3], mic: true, align: false })
 assert.ok(r.statistics[3].rmsf > r.statistics[1].rmsf); assert.ok(r.statistics[3].rmsf < 2, 'unwrapped across the boundary'); checks++
 
+// τ_int of an exact exponential ACF (τ = 40 lags): Sokal window (c = 5), Geyer sequence, first zero.
+const tauInt = py(`
+exact = math.exp(-1 / 40) ** np.arange(2000)
+white = np.zeros(200); white[0] = 1
+out = {m: ma.integrated_time(exact, 1.0, m, n_samples=20000) for m in ma.TAU_INT_METHODS}
+out['half_dt'] = ma.integrated_time(exact, 0.5, 'sokal')
+out['white'] = {m: ma.integrated_time(white, 1.0, m) for m in ma.TAU_INT_METHODS}
+try:
+    ma.integrated_time(exact, 1.0, 'magic'); out['bad'] = False
+except ValueError:
+    out['bad'] = True
+t = np.arange(0, 400.0)
+out['ct'] = ma.correlation_time(t, np.exp(-t / 40), 'zero', 'exp', 'sokal', 20000)
+dump(out)
+`)
+near(tauInt.sokal.tau_int, 39.7292, 1e-3, 'Sokal τ_int'); assert.equal(tauInt.sokal.window, 199); assert.equal(tauInt.sokal.converged, true); checks++
+near(tauInt.sokal.tau_int_error, 39.7292 * Math.sqrt(2 * 399 / 20000), 1e-3, 'Madras–Sokal error of τ_int'); checks++
+near(tauInt.geyer.tau_int, 40.0021, 1e-3, 'Geyer τ_int'); near(tauInt.zero.tau_int, 40.0021, 1e-3, 'first-zero τ_int'); assert.equal(tauInt.zero.converged, false); checks++
+near(tauInt.half_dt.tau_int, 39.7292 / 2, 1e-3, 'τ_int scales with dt'); checks++
+near(tauInt.white.sokal.tau_int, 0.5, 1e-12, 'white Sokal'); near(tauInt.white.geyer.tau_int, 0.5, 1e-12, 'white Geyer'); assert.equal(tauInt.white.zero.tau_int, null); checks++
+assert.equal(tauInt.bad, true); checks++
+near(tauInt.ct.tau_fit, 40, 1e-6, 'fit unchanged'); near(tauInt.ct.tau_int, 39.7292, 1e-3, 'correlation_time uses the chosen estimator'); assert.equal(tauInt.ct.tau_int_method, 'sokal'); assert.equal(tauInt.ct.tau_int_window, 199); checks++
+
 fs.rmSync(temp, { recursive: true, force: true })
-console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations).`)
+console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations, tau_int).`)
