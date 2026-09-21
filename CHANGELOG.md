@@ -9,6 +9,20 @@
 - Plot-note SEMs use the same Sokal window as the ACF panel.
 - Fix: markers, lag zoom and the player cursor now work on axes with values of 1,000 and above.
 - Fix: activating the MDAnalysis aligned trajectory multiplies the MD steps per saved frame by the frame step it was written with, so later times (ACF, τ, MSD, VDOS, t₀) are no longer too small.
+- Analysis history:
+  - MONET keeps a text log of every step that changes a result: input files with SHA-256, cell, time axis, analyses with their parameters and key numbers, derived trajectories, extraction and exports;
+  - it is autosaved in `~/.monet/sessions/` (launcher option `--sessions-dir`) and can be paused and resumed;
+  - cleared analyses stay in the log, marked *cleared*.
+- History drawer (History button or Ctrl+`):
+  - a console shows every analysis as a readable call such as `acf(quantity="dihedral", groups=[[1, 2, 3, 4]], …)`;
+  - click a line, edit it and press Enter to re-run it through its panel; the new step is linked to the original;
+  - the History tab has filters, notes and a *final* mark.
+- Sessions:
+  - *Save session* downloads a ZIP with `session.json`, a methods report (Markdown, and Word when pandoc is installed) and `replay.py`;
+  - *Open session* restores the log read-only until the trajectory with the same SHA-256 is loaded;
+  - loading a trajectory offers its previous history.
+- Methods report: software versions with citations, input checksums, the steps with their key numbers, and the reporting checklist of the workflow document pre-filled.
+- `replay.py`: re-runs the logged analyses without the browser (`python replay.py --monet /path/to/MONET`), checks the input checksums and reports every number that differs from the logged one (`--rtol`, default 1e-6).
 
 ## 2.1.0
 

@@ -322,6 +322,40 @@ With [MDAnalysis](https://www.mdanalysis.org/) installed (included in `requireme
 - **atoms**: every atom is moved into the cell;
 - **centre on selected atoms**: optionally, the atoms picked in the viewer are first moved to the cell centre. Every plot has **Download plot PNG** (2400 px wide, current theme) and **Download data CSV**.
 
+### Analysis history, console and replay
+
+MONET keeps a text log of every step that changes a result. The log contains:
+- the input file, with its SHA-256;
+- the cell and the time axis;
+- each analysis, with its parameters and key numbers;
+- derived trajectories, extraction and exports.
+
+View-only actions such as rotating, zooming or changing colours are not logged. The log stays on your computer: the launcher autosaves it in `~/.monet/sessions/` (change the folder with `--sessions-dir`), and it stores file names, never full paths.
+
+Open **History** (Ctrl+`) for the drawer:
+
+- **Console:**
+  - Each step appears as a call, for example `acf(quantity="dihedral", groups=[[228, 227, 289, 225]], dt=0.4838, tau_int_method="sokal")`.
+  - Click a line, edit it and press Enter. The analysis runs again through its panel, with the same checks as the Run button, and the new step is linked to the original.
+  - `help()` lists the analyses; `help(acf)` lists the parameters of one.
+  - Atoms are MONET IDs; `dt` comes from the time axis.
+- **History:**
+  - filters, details and parent chains (e.g. `S1 → #9 subsample → S2`);
+  - a note and a ☆ *final* mark on each step;
+  - *History: on / paused*: while paused, nothing is logged, and the report and `replay.py` warn about the gap.
+- **Save session:** a ZIP containing:
+  - `session.json`;
+  - `methods.md`, and `methods.docx` when pandoc is installed. The report lists the software versions with citations, the input checksums and the steps, and pre-fills the reporting checklist of `docs/md-analysis-workflow.md` §12.
+  - `replay.py`.
+- **Open session:**
+  - It restores a saved log read-only and never re-runs anything.
+  - Load the trajectory with the same SHA-256 to continue it.
+  - Loading a trajectory also offers its previous autosaved history.
+- **replay.py:**
+  - Run `python replay.py --monet /path/to/MONET` in the folder that holds the trajectory.
+  - It checks the input checksums (`--force` skips this), re-runs each step headless, writes `stepNN_<action>.json` to `--out`, and prints `OK` or `DIFF` against the logged numbers (`--rtol`, default 1e-6).
+  - Edit it like a notebook.
+
 ## Convert
 
 Open **Convert**, browse for an XYZ input, choose the output format, and set the download filename. **Convert first frame only** is enabled by default for compatibility with formats that store one structure. Click **Convert**, then **Download converted file**.
