@@ -37,6 +37,21 @@
 
   const done = (data, test) => data.steps.filter(step => step.status === 'ok' && test(step))
   const calls = steps => (steps.length ? steps.map(s => `${s.call || s.action} (#${s.id})`).join('; ') : null)
+  const TRUNCATION_RULES = { sokal: 'Sokal self-consistent window (c = 5)', geyer: 'Geyer initial monotone sequence', zero: 'first zero crossing' }
+  // ACF checklist line for one step: observable, call, τ with its fit model/window, τ_int with its
+  // truncation rule, and T/τ (run length over τ_int), or 'n/a' when any ingredient is missing.
+  function acfText (s) {
+    const p = s.params || {}
+    const r = s.result || {}
+    const fitModel = p.fit_model ?? 'default'
+    const fitWindow = p.fit_until != null ? `fit until ${p.fit_until}` : 'default window'
+    const method = r.tau_int_method ?? p.tau_int_method
+    const rule = method != null ? (TRUNCATION_RULES[method] ?? method) : 'n/a'
+    const runLength = (r.n_frames != null && p.dt != null) ? r.n_frames * p.dt * (p.frame_step || 1) : null
+    const ratio = (runLength != null && r.tau_int > 0) ? runLength / r.tau_int : null
+    const tOverTau = ratio != null ? `T/τ = ${number(ratio)}` : 'T/τ: n/a'
+    return `${s.call || 'acf'} → quantity: ${p.quantity ?? 'n/a'}, τ = ${number(r.tau_fit)} ± ${number(r.tau_fit_error)} fs (fit model ${fitModel}, ${fitWindow}), τ_int = ${number(r.tau_int)} ± ${number(r.tau_int_error)} fs (${rule}), ${tOverTau} (#${s.id})`
+  }
   // The reporting checklist of the workflow document (§12); each filler returns text or null.
   const CHECKLIST = [
     ['Engine, level of theory (functional, basis or cutoff, pseudopotentials) or force field, and the ensemble with its thermostat or barostat and coupling constants', () => null],
@@ -51,7 +66,7 @@
     ['Energy drift, and for CPMD the fictitious mass with evidence of adiabaticity', () => null],
     ['Observables used for the ACF; τ (the fit model and window, with its error) and τ_int (with the truncation rule); T/τ', data => {
       const steps = done(data, s => s.action === 'acf')
-      return steps.length ? steps.map(s => `${s.call || 'acf'} → τ = ${number(s.result.tau_fit)} ± ${number(s.result.tau_fit_error)} fs, τ_int = ${number(s.result.tau_int)} ± ${number(s.result.tau_int_error)} fs (${s.result.tau_int_method ?? s.params.tau_int_method ?? 'n/a'}) (#${s.id})`).join('; ') : null
+      return steps.length ? steps.map(acfText).join('; ') : null
     }],
     ['Stride and the resulting number of configurations; g of the subsample', data => {
       const steps = done(data, s => s.action === 'subsample')
@@ -62,7 +77,7 @@
     ['RDF bin width, r_max, and the frames used; H-bond criterion', data => calls(done(data, s => s.action === 'rdf' || (s.action === 'mda_run' && ['hbonds', 'interrdf'].includes(s.params.analysis))))],
     ['MSD fitting window, the finite-size correction applied or not, and the unwrapping method', data => {
       const steps = done(data, s => s.action === 'msd')
-      return steps.length ? steps.map(s => `fit ${number(s.result.fit_start)}–${number(s.result.fit_end)} fs, D = ${number(s.result['fits.selection.D_cm2_s'])} cm²/s, no finite-size correction (#${s.id})`).join('; ') : null
+      return steps.length ? steps.map(s => `fit ${number(s.result.fit_start)}–${number(s.result.fit_end)} fs, D = ${number(s.result['fits.selection.D_cm2_s'])} cm²/s, unwrapped with minimum-image steps (MONET's MSD always unwraps), no finite-size correction (#${s.id})`).join('; ') : null
     }],
     ['VDOS: the saving interval, window and smoothing', data => calls(done(data, s => s.action === 'vdos'))],
     ['How every error bar was computed; replicas, if any', data => {
