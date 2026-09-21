@@ -118,13 +118,14 @@
       fail (id, message) { const step = find(id); if (!step) return; step.status = 'error'; step.error = String(message); touch() },
       addOutput (id, output) { const step = find(id); if (!step) return; step.outputs.push(clone(output)); touch() },
       clear (id) {
+        if (data.paused) return null
         const step = find(id)
         if (!step || step.status === 'cleared') return null
         step.status = 'cleared'
         touch()
-        return data.paused ? null : push({ kind: 'clear', action: step.action, source: step.source, params: { step: id } })
+        return push({ kind: 'clear', action: step.action, source: step.source, params: { step: id } })
       },
-      pause () { if (data.paused) return; push({ kind: 'pause' }); data.paused = true; touch() },
+      pause () { if (data.paused) return; push({ kind: 'pause' }); data.paused = true },
       resume () { if (!data.paused) return; data.paused = false; push({ kind: 'resume' }) },
       annotate (id, { note, final } = {}) {
         const step = find(id)

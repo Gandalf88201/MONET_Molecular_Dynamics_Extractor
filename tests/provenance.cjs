@@ -30,6 +30,7 @@ assert.equal(s.step(again).rerun_of, acf); assert.equal(s.step(acf).status, 'cle
 assert.equal(s.hasGaps(), false)
 s.pause()
 assert.equal(s.data.paused, true); assert.equal(s.begin({ kind: 'analysis', action: 'rmsd' }), null); assert.equal(s.record({ kind: 'cell' }), null); checks++
+assert.equal(s.clear(again), null); assert.equal(s.step(again).status, 'ok'); checks++
 s.pause()
 s.resume()
 const kinds = s.data.steps.map(step => step.kind)
