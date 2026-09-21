@@ -1044,6 +1044,7 @@
             <option value="zero">integral to the first zero crossing (MONET ≤ 2.1)</option>
           </select>
           <button class="btn btn-sm btn-accent" id="btn-run-acf">Compute ACF</button>
+          <button class="btn btn-sm" id="btn-run-equil" title="Chodera 2016: start of production where N_eff is largest">Detect equilibration</button>
         </div>
         <div class="info-box hidden" id="acf-error" role="alert"></div>
         <div class="info-box hidden" id="acf-subsample-result" aria-live="polite">
@@ -1098,6 +1099,21 @@
         <p class="panel-desc hidden" id="acfblock-text" aria-live="polite"></p>
         <canvas class="chart-canvas" id="chart-acfblock"></canvas>
         <div class="chart-placeholder" id="chart-acfblock-ph">Block averaging: standard error of the mean against block length (Flyvbjerg–Petersen)</div>
+        <div class="info-box hidden" id="equil-result" aria-live="polite">
+          <span id="equil-text"></span>
+          <button class="btn btn-sm btn-accent" id="equil-crop" disabled>✂ Use the production window from t₀</button>
+        </div>
+        <div class="ase-prog-row hidden" id="equil-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="equil-prog-fill"></div></div>
+          <span id="equil-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-equil" disabled>Clear equilibration</button>
+          <button class="btn btn-sm" id="download-equil" disabled>Download equilibration PNG</button>
+          <button class="btn btn-sm" id="csv-equil" disabled>Download equilibration CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-equil"></canvas>
+        <div class="chart-placeholder" id="chart-equil-ph">Effective sample size N_eff against the start of production t₀ (Chodera 2016)</div>
       </div>
 
       <!-- MDAnalysis analyses -->

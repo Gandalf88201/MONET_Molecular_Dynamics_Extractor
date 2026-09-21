@@ -95,6 +95,7 @@ w.monet = {
     if (defer) return new Promise(resolve => { pendingResolve = resolve })
     if (command.action === 'dihedrals') return { ok: true, frame_indices: [0, 1], series: { [command.quads[0].join('-')]: [270, 90] } }
     if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, tau_int_error: 5, tau_int_window: 3, tau_int_converged: true, tau_int_method: command.tau_int_method, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), frame_step: command.frame_step || 1, n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3], blocking: { sizes: [1, 2], times: [command.dt, 2 * command.dt], sem: [0.5, 0.7], sem_error: [0.01, 0.05], plateau_index: null, plateau_sem: null, g: null } }
+    if (command.action === 'equilibration') { latestCommand = command; return { ok: true, starts: [0, 1, 2], times: [0, command.dt, 2 * command.dt], g: [4, 2, 2], n_effective: [1, 1.5, 0.5], t0: 1, t0_time: command.dt, t0_frame: 1, group: 0, per_group_t0: [1], n_frames: 4, frame_step: 1, dt: command.dt, g_t0: 2, n_effective_t0: 1.5, n_effective_full: 1 } }
     if (command.action === 'rmsd_matrix') return { ok: true, matrix: [[0, 1], [1, 0]], frame_indices: [0, 10], aligned: true, truncated: false }
     if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
     if (command.action === 'vdos') return { ok: true, wavenumber: [0, 500, 1000], intensity: [0, .002, 0], nyquist_cm: 33356, resolution_cm: 8.3, n_frames: 100, dt: command.dt }
@@ -613,6 +614,17 @@ async function run () {
   assert.equal(downloadName, 'MONET-acfblock.csv'); checks++
   await click('clear-acf')
   assert.equal(w.testMonet.charts.acfblock.data, null); assert.equal(el('acfblock-text').classList.contains('hidden'), true); checks++
+  // Equilibration: t₀ by maximum N_eff, then crop to the production window (a new active trajectory).
+  await click('btn-run-equil')
+  assert.equal(latestCommand.action, 'equilibration'); assert.equal(latestCommand.tau_int_method, 'sokal'); checks++
+  assert.match(el('equil-text').textContent, /Production starts at t₀ = .* \(saved frame 1\)/); assert.equal(el('equil-crop').disabled, false); checks++
+  assert.equal(w.testMonet.charts.equil.data.markers.length, 1); checks++
+  const beforeCrop = w.testMonet.state.filePath
+  await click('equil-crop'); await tick(); await tick()
+  assert.equal(latestCommand.action, 'subsample'); assert.equal(latestCommand.stride, 1); assert.equal(latestCommand.start, 1); checks++
+  assert.match(el('analysis-source').textContent, /production · from frame 1/); checks++
+  await click('restore-full-trajectory'); await tick()
+  assert.equal(w.testMonet.state.filePath, beforeCrop); checks++
   el('acf-quantity').value = 'bond'; el('acf-quantity').dispatchEvent(new w.Event('change'))
   assert.equal(w.testMonet.charts.acf.data, null); assert.equal(el('acf-result').classList.contains('hidden'), true); checks++
   el('acf-groups').value = '1 2 3'; await click('btn-run-acf')

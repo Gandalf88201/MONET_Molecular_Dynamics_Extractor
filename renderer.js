@@ -1380,6 +1380,7 @@ const charts = {
   vdos: new MonetLineChart('chart-vdos', 'chart-vdos-ph'),
   acf: new MonetLineChart('chart-acf', 'chart-acf-ph'),
   acfblock: new MonetLineChart('chart-acfblock', 'chart-acfblock-ph'),
+  equil: new MonetLineChart('chart-equil', 'chart-equil-ph'),
   rmsddist: new MonetLineChart('chart-rmsddist', 'chart-rmsddist-ph'),
   bondsdist: new MonetLineChart('chart-bondsdist', 'chart-bondsdist-ph'),
   anglesdist: new MonetLineChart('chart-anglesdist', 'chart-anglesdist-ph'),
@@ -1392,7 +1393,7 @@ const charts = {
 }
 bindPlayerCharts()
 for (const [kind, chart] of Object.entries(charts)) if (chart.enableZoom && !kind.endsWith('dist')) chart.enableZoom()
-const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf', 'mda', 'structure', 'coordination', 'topology', 'fluct']
+const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf', 'equil', 'mda', 'structure', 'coordination', 'topology', 'fluct']
 const lastResults = {}
 
 // Wire up ASE progress listener (once)
@@ -1536,6 +1537,7 @@ function clearAnalysis (kind, report = true) {
   if ($(`${kind}-prog-label`)) $(`${kind}-prog-label`).textContent = '—'
   if (kind === 'acf') { $('acf-result').classList.add('hidden'); clearAnalysis('acfblock', false) }
   if (kind === 'acfblock') $('acfblock-text').classList.add('hidden')
+  if (kind === 'equil') $('equil-result').classList.add('hidden')
   if (charts[`${kind}dist`]) clearAnalysis(`${kind}dist`, false)
   for (const id of { msd: ['msd-info'], vdos: ['vdos-info'], mda: ['mda-download', 'mda-activate'] }[kind] || []) $(id).classList.add('hidden')
   if (kind === 'mda') {
@@ -2353,6 +2355,7 @@ $('acf-quantity').addEventListener('change', () => {
   $('acf-groups').placeholder = { dihedral: '1 2 3 4', angle: '2 1 3', bond: '1 2', rmsd: '1 2 3 …' }[$('acf-quantity').value]
   $('acf-mode').value = 'linear'
   clearAnalysis('acf', false)
+  clearAnalysis('equil', false)
   if ($('ase-selection-target').value === 'acf') updateSelectionTarget()
 })
 
@@ -2392,6 +2395,51 @@ $('btn-run-acf').addEventListener('click', async () => {
   const d = acfDecorrelation()
   setStatus(`Autocorrelation computed: τ = ${fmt(r.tau_fit, 4)} fs${d ? `, plateau at t* = ${fmt(d.time, 4)} fs — please validate it below the plot` : ''}.`)
   $('acf-plateau').scrollIntoView?.({ block: 'nearest' })
+})
+
+// Equilibration (Chodera 2016): production starts at the t₀ that maximises N_eff = (N − t₀)/g(t₀).
+function showEquilibration () {
+  const r = lastResults.equil
+  if (!r) return
+  $('equil-text').textContent = r.t0 === 0
+    ? `No transient found: N_eff is largest with the whole run (N_eff ≈ ${fmt(r.n_effective_t0, 4)} of ${r.n_frames} analysed frames). Keep the full trajectory.`
+    : `Production starts at t₀ = ${fmt(r.t0_time, 5)} fs (saved frame ${r.t0_frame}): discarding the transient raises N_eff from ${fmt(r.n_effective_full, 4)} to ${fmt(r.n_effective_t0, 4)} (g = ${fmt(r.g_t0, 4)} analysed frames).`
+  $('equil-crop').disabled = r.t0 === 0 || !aseState.available
+  $('equil-result').classList.remove('hidden')
+  charts.equil.setData({
+    title: 'Equilibration: effective sample size against the start of production (Chodera 2016)', source: charts.acf.source,
+    xLabel: 'Start of production t₀ (fs)', yLabel: 'N_eff = (N − t₀) / g(t₀)',
+    labels: r.times.map(t => String(Number(t.toPrecision(6)))),
+    datasets: [{ label: 'N_eff(t₀)', data: r.n_effective, colorIndex: 0 }],
+    markers: [{ value: r.t0_time, label: `t₀ = ${fmt(r.t0_time, 4)} fs` }]
+  })
+}
+
+$('btn-run-equil').addEventListener('click', async () => {
+  acfError('')
+  if (!extractedTrajPath()) return acfError('Load a trajectory first.')
+  let command
+  try { command = acfCommand() } catch (error) { return acfError(error.message) }
+  const r = await runAse('equil', { ...command, action: 'equilibration' })
+  if (!r.ok) return acfError(r.message || r.error)
+  lastResults.equil = r
+  showEquilibration()
+  setStatus(r.t0 === 0 ? 'Equilibration: no transient found.' : `Equilibration: production starts at t₀ = ${fmt(r.t0_time, 4)} fs.`)
+})
+
+$('equil-crop').addEventListener('click', async () => {
+  const r = lastResults.equil
+  const filename = extractedTrajPath()
+  if (!r || !filename || r.t0_frame < 1) return
+  const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+  const output = await window.monet.aseSelectOutput(`${stem}-production.extxyz`)
+  if (!output) return
+  const s = await runAse('subsample', { action: 'subsample', filename, stride: 1, start: r.t0_frame, output })
+  if (!s.ok) return acfError(s.message || s.error)
+  try {
+    await activateTrajectory(s.filePath || output, { label: `production · from frame ${r.t0_frame} (t₀ = ${fmt(r.t0_time, 4)} fs)` })
+    setStatus(`Production window active: ${s.n_frames} frames from saved frame ${r.t0_frame}. Compute the ACF again on it (↩ Full trajectory to go back).`)
+  } catch (error) { acfError('The production window was written but could not be loaded: ' + error.message) }
 })
 
 // =============================================================================
