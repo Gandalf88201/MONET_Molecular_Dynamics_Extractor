@@ -136,7 +136,18 @@ def read_session(path):
                 info = archive.getinfo(names[0])
                 if info.file_size > MAX_JSON:
                     raise ValueError('session.json is too large.')
-                text = archive.read(info).decode('utf-8')
+                chunks = []
+                total = 0
+                with archive.open(info) as member:
+                    while True:
+                        chunk = member.read(64 * 1024)
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MAX_JSON:
+                            raise ValueError('session.json is too large.')
+                        chunks.append(chunk)
+                text = b''.join(chunks).decode('utf-8')
         else:
             if path.stat().st_size > MAX_JSON:
                 raise ValueError('The session file is too large.')

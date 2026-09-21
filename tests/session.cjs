@@ -14,6 +14,63 @@ const { File } = require('node:buffer')
 const { spawn, execFileSync } = require('node:child_process')
 const root = path.resolve(__dirname, '..')
 const python = process.env.PYTHON || 'python3'
+// Builds a ZIP whose session.json is a valid JSON string padded past MAX_JSON (16 MiB) with spaces, written
+// with ZIP_DEFLATED so it compresses to almost nothing on disk: a zip-bomb fixture with an honest declared size.
+const BUILD_BOMB = `
+import json, sys, zipfile
+out_path = sys.argv[1]
+payload = json.dumps({'padding': ' ' * (17 * 1024 * 1024)})
+with zipfile.ZipFile(out_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+    zf.writestr('session.json', payload)
+`
+// Unit-level probe for the *chunked* guard in read_session(): CPython's zipfile.ZipExtFile already truncates
+// whatever read() returns to the entry's declared (and CRC-checked) file_size, so a ZIP whose header lies about
+// a small file_size can never actually yield more bytes than that through the real zipfile module - lying only
+// earns a CRC mismatch ("damaged"), not extra bytes. That means the early `info.file_size > MAX_JSON` check and
+// the chunked-read total can never disagree via a real ZIP, so the second bound can't be exercised through the
+// HTTP API. Instead, this stubs out zipfile.is_zipfile/ZipFile so read_session() sees a member that reports a
+// tiny file_size (passing the fast-path check) but whose .read() keeps handing back data forever, simulating a
+// decompression backend that does not self-truncate, and checks that the chunked loop still bounds it.
+const CHUNKED_PROBE = `
+import sys
+sys.path.insert(0, ${JSON.stringify(root)})
+import zipfile
+import start_monet
+
+class FakeInfo:
+    file_size = 10  # lies: far under MAX_JSON, so the early fast-path check passes it through
+
+class FakeMember:
+    def read(self, n=65536):
+        return b' ' * 65536  # never returns empty: an unbounded reader, unlike the real zipfile module
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        return False
+
+class FakeArchive:
+    def namelist(self):
+        return ['session.json']
+    def getinfo(self, name):
+        return FakeInfo()
+    def open(self, info):
+        return FakeMember()
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        return False
+
+zipfile.is_zipfile = lambda path: True
+zipfile.ZipFile = lambda path: FakeArchive()
+
+try:
+    start_monet.read_session('dummy.zip')
+    print('NO_ERROR')
+except ValueError as error:
+    print(f'VALUE_ERROR:{error}')
+except Exception as error:
+    print(f'OTHER_ERROR:{error.__class__.__name__}:{error}')
+`
 const sessions = fs.mkdtempSync(path.join(os.tmpdir(), 'monet-sessions-'))
 const child = spawn(python, [path.join(root, 'start_monet.py'), '--port', '0', '--no-browser', '--sessions-dir', sessions])
 const text = fs.readFileSync(path.join(root, 'examples/water.XYZ'), 'utf8')
@@ -65,6 +122,13 @@ async function main () {
   assert.equal(r.status, 400); assert.match(r.body.error, /newer MONET/); checks++
   r = await post('/api/session/save', { session: { ...session, sources: [{ id: 'S1', name: 'x.xyz', sha256: null }] } })
   assert.equal(r.body.ok, false); assert.match(r.body.error, /checksum is not known/); checks++
+  // Autosave name sanitising: a path-traversal source name must not escape the sessions folder.
+  r = await post('/api/session/save', { session: { ...session, sources: [{ id: 'S1', name: '../../evil/x.xyz', sha256: sha }], created: '2026-09-24T08:00:00.000Z' } })
+  assert.equal(r.body.ok, true, JSON.stringify(r.body))
+  assert.ok(!r.body.saved.includes('/'), r.body.saved)
+  assert.ok(!r.body.saved.split(/[\\/]/).includes('..'), r.body.saved)
+  assert.ok(fs.existsSync(path.join(sessions, r.body.saved)), r.body.saved)
+  checks++
   // Export: a ZIP with the session, the report and replay.py (methods.docx only with pandoc).
   r = await post('/api/session/export', { session, methods: '# Methods', replay: 'print(1)\n', name: 'MONET-session-water.zip' })
   assert.equal(r.body.ok, true, JSON.stringify(r.body)); checks++
@@ -81,6 +145,19 @@ async function main () {
   const broken = await upload('broken.json', '{"schema": "monet-session/1", ')
   r = await post('/api/session/read', { file_id: broken.file_id })
   assert.equal(r.status, 400); assert.match(r.body.error, /damaged/); checks++
+  // Zip bomb, honest declared size: session.json's own (accurate) file_size already exceeds MAX_JSON,
+  // so the fast-path check rejects it before any decompression.
+  const bombHonestPath = path.join(os.tmpdir(), `monet-bomb-honest-${process.pid}.zip`)
+  execFileSync(python, ['-c', BUILD_BOMB, bombHonestPath])
+  const bombHonest = fs.readFileSync(bombHonestPath)
+  fs.rmSync(bombHonestPath)
+  const bombHonestUpload = await upload('bomb-honest.zip', bombHonest)
+  r = await post('/api/session/read', { file_id: bombHonestUpload.file_id })
+  assert.equal(r.status, 400); assert.match(r.body.error, /too large/); checks++
+  // Zip bomb, chunked-read guard: a member that reports a tiny file_size (bypassing the fast-path check) but
+  // whose .read() never stops handing back data must still be bounded by read_session()'s own running total.
+  const chunkedProbe = execFileSync(python, ['-c', CHUNKED_PROBE]).toString().trim()
+  assert.match(chunkedProbe, /^VALUE_ERROR:.*too large/); checks++
   // The browser adapter keeps the digests of uploaded and derived files.
   const context = {
     window: {}, File, Blob, TextEncoder, TextDecoder, setTimeout, clearTimeout,
