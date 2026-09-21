@@ -50,6 +50,9 @@ const sub = log('derive', { action: 'subsample', filename: traj, stride: 4, star
 const S2 = s.addSource({ name: 'torsion-long-uncorrelated.extxyz', frames: sub.result.n_frames, atoms: 4, parent: { source: S1, step: sub.id } })
 s.addOutput(sub.id, { source: S2 })
 const rmsd = log('analysis', { action: 'rmsd', filename: derivedFile, frame_step: 1, align: true, mic: true }, S2)
+// bonds has only 'mean:<key>' results (a statistic, not a logged raw number): replay runs it but has
+// nothing to compare, so it must print RAN rather than a false OK.
+const bonds = log('analysis', { action: 'bonds', filename: traj, pairs: [[0, 1]], frame_step: 1, mic: true }, S1)
 const cleared = log('analysis', { action: 'dihedrals', filename: traj, quads: [[0, 1, 2, 3]], frame_step: 1, angle_range: '360', mic: true }, S1)
 s.clear(cleared.id)
 const script = R.replayScript(s.toJSON())
@@ -58,8 +61,29 @@ assert.match(script, /^s\.options\(cell=None, pbc=None, mic=True, bond_scale=Non
 assert.match(script, new RegExp(`^s\\.acf\\(S1, step=${acf.id}, quantity="dihedral", groups=\\[\\[1, 2, 3, 4\\]\\], dt=0\\.5, tau_int_method="sokal", expect=\\{`, 'm')); checks++
 assert.match(script, new RegExp(`^S2 = s\\.derive\\(S1, "subsample", step=${sub.id}, start=0, stride=4, expect=`, 'm')); checks++
 assert.match(script, new RegExp(`^s\\.rmsd\\(S2, step=${rmsd.id}, frame_step=1, align=True`, 'm')); checks++
+// bonds has no raw key to compare (only 'mean:0-1', dropped by replaygen's expected()), so no
+// expect= kwarg is generated for it.
+assert.match(script, new RegExp(`^s\\.bonds\\(S1, step=${bonds.id}, pairs=\\[\\[1, 2\\]\\], frame_step=1\\)$`, 'm')); checks++
 assert.match(script, new RegExp(`^# step ${cleared.id} dihedrals: cleared in MONET$`, 'm')); assert.match(script, /^# {3}s\.dihedrals\(/m); checks++
 assert.doesNotMatch(script, new RegExp(temp.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))); checks++
+// A step on a source that was never assigned in the script (derived while the history was paused,
+// or not logged, or in Electron mode without a filePath) must be skipped with an explanatory
+// comment instead of splicing in a bare Sn that NameErrors when Python runs the line.
+const gap = P.create({ monet_version: '2.1.0' })
+const gapSha = crypto.createHash('sha256').update('gap').digest('hex')
+const GS1 = gap.addSource({ name: 'gap.xyz', sha256: gapSha, format: 'XYZ', frames: 2, atoms: 4 })
+gap.record({ kind: 'load', source: GS1, params: { name: 'gap.xyz' } })
+// GS2 exists as a source (addSource is never gated by pause) but no step in this session ever
+// assigned it, unlike S2 above.
+const GS2 = gap.addSource({ name: 'gap-derived.xyz', sha256: null, format: 'XYZ', frames: 2, atoms: 4, parent: { source: GS1, step: null } })
+const gapStepId = gap.begin({ kind: 'analysis', action: 'rmsd', source: GS2, call: 'rmsd(frame_step=1)', params: { frame_step: 1 }, atoms: [] })
+gap.finish(gapStepId, { ok: true, reference_index: 0, rmsd: [0, 0.1] })
+const gapScript = R.replayScript(gap.toJSON())
+assert.match(gapScript, new RegExp(`^# step ${gapStepId} rmsd: source ${GS2} is not defined in this script \\(it was derived while the history was paused or not logged\\), not replayed$`, 'm')); checks++
+assert.doesNotMatch(gapScript, new RegExp(`s\\.rmsd\\(${GS2}`)); checks++
+const gapPath = path.join(temp, 'gap_replay.py')
+fs.writeFileSync(gapPath, gapScript)
+assert.doesNotThrow(() => execFileSync(python, ['-c', 'import ast,sys; ast.parse(open(sys.argv[1]).read())', gapPath], { encoding: 'utf8' })); checks++
 // Regression: session files are shareable and every value in one is untrusted. Tampered values
 // must never become executable Python -- only a safe literal (via C.formatValue) or a single-line
 // comment with newlines stripped.
@@ -75,8 +99,16 @@ evil.created = 'x"""\nimport os\n"""'
 // place formatArgs sees session-controlled keys (e.g. the 'cell' comment line) must degrade to a
 // comment rather than throw or emit the key as code.
 const evilKey = ")\nimport os\nos.system('pwned')\n#"
+// A clean source/load of its own (not S1, whose own load id was just tampered above and is
+// therefore never assigned): the extract step below must still be replayed on this one, so this
+// check stays about the parameter allowlist, not about step 1's source id.
+evil.sources.push({ id: 'S9', name: 'evil-extra.xyz', size: 4, sha256: 'ab'.repeat(32), format: 'XYZ', frames: 1, atoms: 1, atom_ids: null, label: null, import: null, parent: null })
 evil.steps.push({
-  id: 901, time: s.data.updated, kind: 'extract', action: 'extract', source: 'S1', call: null,
+  id: 900, time: s.data.updated, kind: 'load', action: null, source: 'S9', call: null,
+  params: { name: 'evil-extra.xyz' }, atoms: [], result: {}, outputs: [], rerun_of: null, status: 'ok', error: null, note: '', final: false
+})
+evil.steps.push({
+  id: 901, time: s.data.updated, kind: 'extract', action: 'extract', source: 'S9', call: null,
   params: { [evilKey]: 1, selected: [1, 2], frequency: 1 }, atoms: [], result: {}, outputs: [],
   rerun_of: null, status: 'ok', error: null, note: '', final: false
 })
@@ -95,7 +127,7 @@ assert.equal(countLinesMatching(evilScript, /^os\.system\(/), 0); checks++
 for (const l of evilScript.split('\n')) if (l.includes('os.system(')) assert.ok(l.trimStart().startsWith('#'), l); checks++
 // The extract step's malicious param name was dropped, but the legitimate ones still made it in
 // as real (non-comment) replay code.
-assert.match(evilScript, /^s\.extract\(S1, step=901, selected=\[1, 2\], frequency=1/m); checks++
+assert.match(evilScript, /^s\.extract\(S9, step=901, selected=\[1, 2\], frequency=1/m); checks++
 const normalPath = path.join(temp, 'normal_replay.py')
 const evilPath = path.join(temp, 'evil_replay.py')
 fs.writeFileSync(normalPath, script)
@@ -113,6 +145,10 @@ let done = run()
 assert.equal(done.status, 0, done.stdout + done.stderr); checks++
 assert.match(done.stdout, new RegExp(`OK   step ${acf.id} acf \\(\\d+ values\\)`)); assert.match(done.stdout, new RegExp(`OK   step ${rmsd.id} rmsd`)); assert.doesNotMatch(done.stdout, /DIFF|FAIL/); checks++
 assert.ok(fs.existsSync(path.join(work, 'out', `step${String(acf.id).padStart(2, '0')}_acf.json`))); checks++
+// bonds has no raw keys to compare: it ran (not skipped, not failed) but there is nothing logged to
+// check it against, so it prints RAN rather than a false OK, and doesn't count toward "checked".
+assert.match(done.stdout, new RegExp(`RAN  step ${bonds.id} bonds \\(no logged values to compare\\)`)); checks++
+assert.match(done.stdout, /\n\d+ values compared: \d+ steps differ, \d+ failed, \d+ steps ran without logged values\. Outputs in /); checks++
 // A changed number is reported as DIFF, with exit code 1.
 fs.writeFileSync(path.join(work, 'replay.py'), script.replace(/"tau_int": ([-0-9.e+]+)/, (_, v) => `"tau_int": ${Number(v) * 1.5}`))
 done = run()

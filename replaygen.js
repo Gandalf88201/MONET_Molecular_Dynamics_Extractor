@@ -63,6 +63,15 @@
     }
   }
 
+  // The Python identifier a step's line assigns, if any: S<n> for a load, or the target source of a
+  // derive/extract line. Only a step that actually emitted real (non-comment) code defines its id --
+  // see the caller in replayScript.
+  function assignedId (step) {
+    if (step.kind === 'load') return validId(step.source) ? step.source : null
+    const target = (step.outputs || []).find(output => output.source)
+    return target && validId(target.source) ? target.source : null
+  }
+
   function stepCodeUnsafe (session, step) {
     const expect = expected(step.result)
     const tail = step.status === 'ok' && Object.keys(expect).length ? { expect } : {}
@@ -108,6 +117,11 @@
     const session = P.fromJSON(data)
     const lines = header(data)
     let options = null
+    // Ids the script has actually assigned so far, in step order: a load's source, or the target of
+    // a derive/extract that was itself replayed (status ok, real code, not a comment). A step that
+    // runs on a source never assigned here -- derived while the history was paused, not logged, or
+    // in Electron mode without a filePath -- would otherwise splice in a bare Sn that NameErrors.
+    const defined = new Set()
     for (const step of session.data.steps) {
       // Every session value spliced into a '#' comment below goes through line() first, so it can
       // never contain a real newline and break out into a line of executable Python.
@@ -122,6 +136,10 @@
         lines.push(`# step ${id} ${line(step.kind)}${step.action ? ' ' + line(step.action) : ''}: ${line(paramsText)} (setting or export, not replayed)`)
         continue
       }
+      if (['analysis', 'derive', 'extract'].includes(step.kind) && validId(step.source) && !defined.has(step.source)) {
+        lines.push(`# step ${id} ${label}: source ${line(step.source)} is not defined in this script (it was derived while the history was paused or not logged), not replayed`)
+        continue
+      }
       const code = stepCode(session, step)
       if (!code) { lines.push(`# step ${id} ${label}: no call recorded, not replayed`); continue }
       if (step.status !== 'ok') {
@@ -133,6 +151,8 @@
         if (JSON.stringify(next) !== JSON.stringify(options)) { lines.push(`s.options(${C.formatArgs(next)})`); options = next }
       }
       lines.push(code)
+      const newId = assignedId(step)
+      if (newId) defined.add(newId)
     }
     lines.push('', 'sys.exit(s.report())', '')
     return lines.join('\n')

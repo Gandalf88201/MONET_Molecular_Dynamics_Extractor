@@ -77,7 +77,7 @@ class Session:
         self.out.mkdir(parents=True, exist_ok=True)
         self.rtol, self.force = rtol, force
         self.opts = {}
-        self.checked = self.differences = self.failures = 0
+        self.checked = self.differences = self.failures = self.unchecked = 0
 
     def load(self, name, sha256=None, atoms=None, atom_ids=None, import_format=None, reference=None,
              cell_file=None, cell_vectors='rows', step=None):
@@ -154,8 +154,13 @@ class Session:
         if bad:
             self.differences += 1
             print(f'DIFF {label}: ' + '; '.join(bad))
+        elif not expect:
+            # Nothing logged for this step to compare against (e.g. bond lengths, whose report
+            # values are statistics, not raw numbers): it ran, but that is not the same as OK.
+            self.unchecked += 1
+            print(f'RAN  {label} (no logged values to compare)')
         else:
-            print(f'OK   {label}' + (f' ({len(expect)} values)' if expect else ''))
+            print(f'OK   {label} ({len(expect)} values)')
         return result
 
     def _fail(self, label, message):
@@ -209,5 +214,6 @@ class Session:
         return Source(full, len(selected), sorted(selected))
 
     def report(self):
-        print(f'\n{self.checked} values compared: {self.differences} steps differ, {self.failures} failed. Outputs in {self.out}/')
+        print(f'\n{self.checked} values compared: {self.differences} steps differ, {self.failures} failed, '
+              f'{self.unchecked} steps ran without logged values. Outputs in {self.out}/')
         return 1 if self.differences or self.failures else 0
