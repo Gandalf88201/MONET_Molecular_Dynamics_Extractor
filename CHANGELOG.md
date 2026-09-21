@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Autocorrelation: Sokal (default) and Geyer estimators of τ_int with its error; run length in units of τ with warnings; residual correlation g and N_eff of the sampled configurations.
+- Block averaging (Flyvbjerg–Petersen) chart under the ACF, with plateau detection.
+- Detect equilibration (maximum N_eff, Chodera 2016) and crop to the production window.
+- Plot-note SEMs use the same Sokal window as the ACF panel.
+- Fix: markers, lag zoom and the player cursor now work on axes with values of 1,000 and above.
+
 ## 2.1.0
 
 - Right-drag (or Shift-drag) moves the structure in both 3D viewers; right-click opens a selection menu instead of the browser menu.

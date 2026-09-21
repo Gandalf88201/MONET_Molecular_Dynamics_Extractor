@@ -229,6 +229,16 @@ Choose a dihedral, bond angle, bond length or RMSD and one or more atom groups (
 - or, for angles, the **circular** autocorrelation of the unit vector z = e^{ikθ} with its mean removed, Re⟨δz*(0)δz(t)⟩/⟨|δz|²⟩. It decays to zero like the linear one. The raw ⟨cos[θ(t)−θ(0)]⟩ only drops to R² for a confined torsion, so its τ is meaningless;
 - **Dihedral range** *0–180° folded* uses period 180°, so jumps between equivalent orientations (θ ↔ θ+180°) do not decorrelate the signal. The distribution and statistics then also use 0–180°;
 - τ from a fit of exp(−t/τ) (up to the first zero crossing, three 1/e times or the whole lag range) with its standard error, and the integrated τ up to the first zero;
+- **τ_int estimator:**
+  - *Sokal window* (default): the smallest M with M ≥ 5 τ_int(M);
+  - *Geyer* initial monotone sequence;
+  - *first zero crossing* (MONET ≤ 2.1).
+
+  MONET shows τ_int ± its error, τ_int·√(2(2M+1)/N), and the window M.
+- **Run length:** T in units of τ. There is a warning below 20 τ and a note below 50 τ.
+- **Residual correlation of the sampled configurations:** g = 1 + 2 Σ C(j·stride), and N_eff = kept/g.
+- **Block averaging** (Flyvbjerg–Petersen) under the ACF plot: SEM against block length, with its plateau and the ACF SEM for comparison.
+- **Detect equilibration** (Chodera 2016): N_eff(t₀) = (N − t₀)/g(t₀) for origins in the first half of the run. The largest value gives the start of production; ✂ *Use the production window* writes it as a new active trajectory, with `source_frame` kept and ↩ Full trajectory to go back.
 - the (circular) mean, standard deviation and a correlation-corrected standard error of the quantity (its distribution and fits are in the Bond / Angle / Dihedral / RMSD tabs).
 
 The **MD time step** (fs, a.u. or ps) and the **MD steps per saved frame** can be entered at the top of the ACF, MSD and VDOS panels or in the *Time axis* row: all copies share the same value, and a missing time step is highlighted in red. **Zoom:** drag across the ACF plot (or any time series) to zoom on a lag or frame window, and double-click to show everything again. *Show lags up to (fs)* sets the window numerically, and *Reset zoom* clears it. The y axis rescales to the visible part, and the exported PNG shows the zoomed view, while the CSV always contains all points. The lag range defaults to half of the run: longer lags are averaged over too few time origins, and their noisy tail would hide the decay. Missing inputs (time step, atom IDs) are reported inside the panel.
