@@ -43,6 +43,12 @@ assert.equal(stat([NaN]), null); checks++
 const hist = model.histogram([0.5, 1.5, 1.6], 2, 0, 2)
 assert.deepEqual(hist.density, [1 / 3, 2 / 3]); checks++
 
+// Sokal τ_int (same value as monet_analysis.integrated_time) and g of configurations taken every s lags.
+const expAcf = Array.from({ length: 2000 }, (_, k) => Math.exp(-k / 40))
+assert.ok(Math.abs(model.tauFromAcf(expAcf) - 39.7292) < 1e-3); checks++
+assert.ok(Math.abs(model.subsampleInefficiency(expAcf, 40) - (1 + 2 / (Math.E - 1))) < 1e-3); checks++
+assert.equal(model.subsampleInefficiency([1, 0, 0.5], 1), 1); assert.equal(model.subsampleInefficiency(expAcf, 39.6), model.subsampleInefficiency(expAcf, 40)); checks++
+
 // Grid bond search equals the brute-force result and scales to large systems.
 {
   const { findBonds } = require('../viewer.js')
