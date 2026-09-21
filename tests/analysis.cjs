@@ -79,6 +79,13 @@ write('waters.xyz', ['O', 'H', 'H'] * 6, [np.concatenate([wat + o + 0.2 * f for 
 # The same torsion, randomly flipped by 180 deg in each frame (equivalent orientations of a symmetric group).
 flips = np.radians(theta + 180 * rng.integers(0, 2, len(theta)))
 write('torsion-flip.xyz', ['C', 'C', 'C', 'C'], [[[1, 0, 0], [0, 0, 0], [0, 0, 1.5], [np.cos(th), np.sin(th), 1.5]] for th in flips])
+# 7) Torsion relaxing from 150 deg to 90 deg (tau = 200 fs) with OU noise (tau = 40 fs), dt = 1 fs.
+rr = np.random.default_rng(11)
+noise = np.zeros(6000)
+for i in range(1, 6000):
+    noise[i] = noise[i - 1] * np.exp(-1 / 40) + 15 * np.sqrt(1 - np.exp(-2 / 40)) * rr.normal()
+relax = np.radians(90 + 60 * np.exp(-np.arange(6000) / 200) + noise)
+write('torsion-relax.xyz', ['C', 'C', 'C', 'C'], [[[1, 0, 0], [0, 0, 0], [0, 0, 1.5], [np.cos(th), np.sin(th), 1.5]] for th in relax])
 `, temp])
 
 // Kabsch: rigid motion has zero aligned RMSD but a large raw RMSD.
@@ -351,6 +358,24 @@ dump({'relax': ma.detect_equilibration(60 * np.exp(-t / 200) + ou(6000, seed=11)
 assert.ok(equil.relax.t0 >= 250 && equil.relax.t0 <= 1000, `t0 = ${equil.relax.t0}`); assert.ok(equil.relax.n_effective_t0 > equil.relax.n_effective[0]); checks++
 assert.equal(equil.flat.t0, 0); checks++
 assert.equal(equil.relax.starts[0], 0); assert.equal(equil.relax.starts.at(-1), 3000); assert.equal(equil.relax.g.length, equil.relax.starts.length); checks++
+
+// Bridge: default Sokal τ_int with error and window, blocking output, equilibration action, launcher whitelist.
+const ou1 = { action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, max_lag: 300 }
+r = bridge(ou1)
+assert.equal(r.tau_int_method, 'sokal'); near(r.tau_int, 40, 8, 'Sokal τ_int on OU'); assert.ok(r.tau_int_error > 2 && r.tau_int_error < 15, r.tau_int_error); assert.equal(r.tau_int_converged, true); checks++
+assert.ok(Number.isInteger(r.blocking.plateau_index), JSON.stringify(r.blocking)); near(r.blocking.g, 2 * r.tau_int, 0.35 * 2 * r.tau_int, 'blocking g vs 2 τ_int'); assert.equal(r.blocking.times[1], 2); checks++
+r = bridge({ ...ou1, tau_int_method: 'zero' })
+assert.equal(r.tau_int_method, 'zero'); assert.equal(r.tau_int_converged, true); checks++
+assert.equal(bridge({ ...ou1, tau_int_method: 'magic' }).ok, false); checks++
+const relax = { action: 'equilibration', filename: path.join(temp, 'torsion-relax.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1 }
+r = bridge(relax)
+assert.equal(r.ok, true, JSON.stringify(r).slice(0, 300)); assert.ok(r.t0 >= 250 && r.t0 <= 1000, r.t0); assert.equal(r.t0_frame, r.t0); near(r.t0_time, r.t0, 1e-9, 't0 in fs'); checks++
+assert.ok(r.n_effective_t0 > r.n_effective_full); assert.equal(r.times.length, r.n_effective.length); checks++
+r = bridge({ ...relax, frame_step: 2 })
+assert.equal(r.t0_frame, 2 * r.t0); near(r.t0_time, 2 * r.t0, 1e-9, 't0 with frame step'); checks++
+assert.equal(bridge({ ...relax, quantity: 'volume' }).ok, false); checks++
+const launcher = fs.readFileSync(path.join(root, 'start_monet.py'), 'utf8')
+assert.match(launcher, /'equilibration'/); assert.match(launcher, /'tau_int_method'/); checks++
 
 fs.rmSync(temp, { recursive: true, force: true })
 console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations, tau_int).`)

@@ -27,12 +27,12 @@ STATIC = {'index.html', 'styles.css', 'theme.js', 'xyz.js', 'ase-model.js', 'fit
           'qm-inputs.js', 'viewer.js', 'renderer.js', 'examples/water.XYZ'}
 FORMATS = {'xyz', 'extxyz', 'vasp', 'cif', 'espresso-in', 'lammps-data', 'aims', 'turbomole', 'gaussian-in', 'dftb', 'json'}
 ACTIONS = {'scan', 'frame', 'read_info', 'molecule', 'rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'convert', 'extract', 'import',
-           'rmsd_matrix', 'rdf', 'msd', 'vdos', 'unwrap', 'acf', 'mda_select', 'mda_rmsf', 'mda_rgyr', 'mda_hbonds', 'cell_file', 'wrap', 'frames', 'subsample', 'mda_run', 'mda_align', 'topology', 'ase_structure', 'ase_coordination', 'fluctuations', 'select_atoms'}
+           'rmsd_matrix', 'rdf', 'msd', 'vdos', 'unwrap', 'acf', 'equilibration', 'mda_select', 'mda_rmsf', 'mda_rgyr', 'mda_hbonds', 'cell_file', 'wrap', 'frames', 'subsample', 'mda_run', 'mda_align', 'topology', 'ase_structure', 'ase_coordination', 'fluctuations', 'select_atoms'}
 ALLOWED = {'indices', 'quantity', 'groups', 'center', 'atom_ids', 'stride', 'start', 'fit_model', 'analysis', 'params', 'frame', 'symprec', 'frame_step', 'nbins', 'rmax', 'elements', 'pairs', 'triplets', 'quads', 'format',
            'first_frame_only', 'cell', 'pbc', 'mic', 'angle_range', 'angle_normal', 'seed', 'bond_scale',
            'index', 'selected', 'frequency', 'compute_average', 'generate_gaussian', 'atom_count', 'history', 'qm', 'source_name', 'cell_vectors',
            'align', 'unwrap', 'reference_index', 'max_frames', 'dt', 'fit_start', 'fit_end', 'remove_drift',
-           'by_element', 'mass_weighted', 'smooth_cm', 'max_cm', 'quantity', 'groups', 'max_lag', 'mode', 'fit_until',
+           'by_element', 'mass_weighted', 'smooth_cm', 'max_cm', 'quantity', 'groups', 'max_lag', 'mode', 'fit_until', 'tau_int_method',
            'selection', 'donors', 'hydrogens', 'acceptors', 'd_a_cutoff', 'angle', 'radius', 'pattern', 'restrict'}
 MAX_JOBS = 3
 MAX_JSON = 16 * 1024 * 1024
