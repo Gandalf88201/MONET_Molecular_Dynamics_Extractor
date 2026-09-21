@@ -2153,6 +2153,7 @@ $('btn-run-vdos').addEventListener('click', async () => {
 // ── ASE: autocorrelation and decorrelation stride ────────────────────────────
 // =============================================================================
 
+const TAU_INT_LABELS = { sokal: 'Sokal window', geyer: 'Geyer sequence', zero: 'integral to first zero' }
 function acfTau () {
   const r = lastResults.acf
   const manual = Number($('acf-tau-manual').value)
@@ -2215,11 +2216,22 @@ function showAcfResult () {
   $('acf-tau-text').textContent = [
     `τ (fit ${model}, ${r.fit_points} points up to ${fmt(r.fit_end, 4)} fs) = ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs${steps(r.tau_fit)}`,
     r.fit_model === 'exp_offset' ? `plateau c = ${fmt(r.plateau, 3)} ± ${fmt(r.plateau_error, 2)}` : null,
-    `τ (integral to first zero) = ${fmt(r.tau_int, 4)} fs${r.decorrelated ? '' : ' (ACF never crossed zero: extend the lag range or the run)'}`,
+    `τ_int (${TAU_INT_LABELS[r.tau_int_method] || 'integral'}${Number.isFinite(r.tau_int_window) ? `, ${r.tau_int_window} lags` : ''}) = ${fmt(r.tau_int, 4)} ± ${fmt(r.tau_int_error, 2)} fs` +
+      (r.tau_int_converged === false ? ' (window not reached: extend the lag range or the run)' : ''),
     `Mean ${fmt(r.statistics[0].mean, 5)} ± ${fmt(r.statistics[0].sem, 2)} (std ${fmt(r.statistics[0].std, 4)}), N_eff ≈ ${fmt(r.n_effective, 3)} of ${r.n_frames} frames`
   ].filter(Boolean).join(' · ')
   const d = acfDecorrelation()
+  // Run length in units of τ: below ~20 τ neither τ nor the error bars are reliable (workflow document §4.2).
+  const runLength = r.n_frames * r.dt
+  const ratio = runLength / (d?.tau ?? r.tau_fit)
+  $('acf-length-text').textContent = Number.isFinite(ratio)
+    ? `Run length T = ${fmt(runLength, 3)} fs = ${fmt(ratio, 3)} τ.` + (ratio < 20
+      ? ' ⚠ fewer than 20 τ: τ and the error bars are unreliable; extend the run or add replicas.'
+      : ratio < 50 ? ' Fewer than 50 τ: treat τ and the stride as approximate.' : '')
+    : ''
   if (d && !acfPlateauEdited) $('acf-plateau-time').value = Number(d.fitted.toPrecision(5))
+  // g of configurations taken every `stride` saved frames (the ACF lags are frame_step saved frames apart).
+  const gSub = d?.stride ? MonetASEModel.subsampleInefficiency(r.acf, d.stride / (r.frame_step || 1)) : NaN
   if (!d) {
     $('acf-plateau-text').textContent = 'No correlation time is available: the fit failed and the ACF never crossed zero. Enter τ by hand.'
     $('acf-stride-text').textContent = ''
@@ -2234,6 +2246,7 @@ function showAcfResult () {
           'Check it against the curve, then accept it or type another t*.'
     $('acf-stride-text').textContent = d.stride
       ? `→ t* = ${fmt(d.time, 5)} fs rounded up to a whole number of frames: one configuration every ${d.stride} saved frames (${fmt(d.stride * d.axis.stride, 6)} MD steps, effective spacing ${fmt(d.stride * d.axis.dt, 5)} fs): ${d.kept} uncorrelated configurations out of ${d.frames}`
+        + ` · residual correlation of the sampled configurations g ≈ ${fmt(gSub, 3)}, N_eff ≈ ${fmt(d.kept / gSub, 3)}`
       : 'Set the MD time step to convert t* into saved frames.'
     // τ close to the saving interval: the ACF is sampled by only a few points per decay time.
     const coarse = d.axis && d.tau < 5 * d.axis.dt
@@ -2313,25 +2326,30 @@ $('acf-quantity').addEventListener('change', () => {
   if ($('ase-selection-target').value === 'acf') updateSelectionTarget()
 })
 
+// The autocorrelation command built from the panel (also used by equilibration detection).
+function acfCommand () {
+  const quantity = $('acf-quantity').value
+  const axis = requireTime()
+  const groups = quantity === 'rmsd'
+    ? [MonetASEModel.selectedIndices($('acf-groups').value, aseState.analysisAtoms) || aseState.analysisAtoms.map(atom => atom.aseIndex)]
+    : MonetASEModel.groupsFromIds($('acf-groups').value, ACF_WIDTH[quantity], aseState.analysisAtoms)
+  const maxLag = $('acf-maxlag').value.trim()
+  return {
+    action: 'acf', filename: extractedTrajPath(), quantity, groups, dt: axis.dt, frame_step: Number($('acf-step').value),
+    mode: $('acf-mode').value, fit_until: $('acf-fit').value, fit_model: $('acf-fit-model').value, tau_int_method: $('acf-tauint').value,
+    ...(quantity === 'dihedral' ? { angle_range: $('acf-range').value } : {}),
+    ...(maxLag ? { max_lag: Number(maxLag) } : {})
+  }
+}
+
 $('btn-run-acf').addEventListener('click', async () => {
   const filename = extractedTrajPath()
   acfError('')
   if (!filename) return acfError('Load a trajectory first.')
-  const quantity = $('acf-quantity').value
-  let groups, axis
-  try {
-    axis = requireTime()
-    groups = quantity === 'rmsd'
-      ? [MonetASEModel.selectedIndices($('acf-groups').value, aseState.analysisAtoms) || aseState.analysisAtoms.map(atom => atom.aseIndex)]
-      : MonetASEModel.groupsFromIds($('acf-groups').value, ACF_WIDTH[quantity], aseState.analysisAtoms)
-  } catch (error) { return acfError(error.message) }
-  const maxLag = $('acf-maxlag').value.trim()
-  const r = await runAse('acf', {
-    action: 'acf', filename, quantity, groups, dt: axis.dt, frame_step: Number($('acf-step').value),
-    mode: $('acf-mode').value, fit_until: $('acf-fit').value, fit_model: $('acf-fit-model').value,
-    ...(quantity === 'dihedral' ? { angle_range: $('acf-range').value } : {}),
-    ...(maxLag ? { max_lag: Number(maxLag) } : {})
-  })
+  let command
+  try { command = acfCommand() } catch (error) { return acfError(error.message) }
+  const { quantity, groups } = command
+  const r = await runAse('acf', command)
   if (!r.ok) return acfError(r.message || r.error)
   lastResults.acf = r
   r.distLabel = quantity === 'rmsd' ? 'RMSD' : groups.map(group => MonetASEModel.seriesLabel(group.join('-'), r.atomMapping)).join(' | ')
