@@ -266,8 +266,8 @@ def integrated_time(acf, dt=1.0, method='sokal', c=5.0, n_samples=None):
         tau = float(np.minimum.accumulate(pairs[:stop]).sum() - 0.5) if stop else math.nan
         window = 2 * stop
     error = tau * math.sqrt(2 * (2 * window + 1) / n_samples) if n_samples and math.isfinite(tau) else math.nan
-    tau_int = tau * dt if math.isfinite(tau) else None
-    tau_int_error = error * dt if math.isfinite(error) else None
+    tau_int = tau * dt
+    tau_int_error = error * dt
     return {'tau_int': tau_int, 'tau_int_error': tau_int_error, 'window': window,
             'converged': converged, 'method': method}
 
@@ -312,11 +312,8 @@ def correlation_time(lags, acf, fit_until='zero', model='exp', tau_int_method='z
         error = float(np.sqrt(covariance[0, 0])) if np.isfinite(covariance).all() else float('nan')
     except (RuntimeError, ValueError):
         tau, error, plateau, plateau_error = float('nan'), float('nan'), float('nan'), float('nan')
-    # Convert NaN to None for JSON serialization (None becomes null).
-    def to_json(v):
-        return None if isinstance(v, float) and not math.isfinite(v) else v
-    return {'tau_fit': to_json(tau), 'tau_fit_error': to_json(error), 'tau_int': tau_int,
-            'plateau': to_json(plateau), 'plateau_error': to_json(plateau_error), 'fit_model': model,
+    return {'tau_fit': tau, 'tau_fit_error': error, 'tau_int': tau_int,
+            'plateau': plateau, 'plateau_error': plateau_error, 'fit_model': model,
             'fit_end': float(t[-1]), 'fit_points': int(end), 'decorrelated': bool(len(below)),
             'tau_int_error': integral['tau_int_error'], 'tau_int_window': integral['window'],
             'tau_int_method': tau_int_method, 'tau_int_converged': integral['converged']}

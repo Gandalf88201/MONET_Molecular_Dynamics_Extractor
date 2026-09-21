@@ -746,7 +746,7 @@ def action_acf(cmd):
     ok(lags=lags.tolist(), acf=acf.tolist(), fit_curve=curve, frame_indices=frames, dt=dt, frame_step=step,
        series=np.round(shown, 6).tolist(), distribution={'x': centres.tolist(), 'density': density.tolist()},
        statistics=per_group, n_frames=n, n_effective=float(min(n_eff, n)), mode=mode, quantity=quantity,
-       period=period if quantity == 'dihedral' else None, **fit)
+       period=period if quantity == 'dihedral' else None, **_finite(fit))
 
 
 def action_pdd(cmd):

@@ -179,7 +179,7 @@ sys.path.insert(0, sys.argv[1])
 import monet_analysis
 t = np.arange(0, 300.0)
 acf = 0.7 * np.exp(-t / 20) + 0.3 + 0.002 * np.sin(t)
-print(json.dumps(monet_analysis.correlation_time(t, acf, 'all', 'exp_offset')))
+print(json.dumps(monet_analysis.correlation_time(t, acf, 'all', 'exp_offset'), allow_nan=True).replace('NaN', 'null'))
 `, root]).toString())
 near(plateauFit.tau_fit, 20, 0.2, 'offset tau'); near(plateauFit.plateau, 0.3, 0.005, 'plateau c'); assert.equal(plateauFit.fit_model, 'exp_offset'); checks++
 r = bridge({ action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, max_lag: 300, fit_model: 'exp_offset', fit_until: 'all' })
@@ -323,6 +323,14 @@ near(tauInt.half_dt.tau_int, 39.7292 / 2, 1e-3, 'τ_int scales with dt'); checks
 near(tauInt.white.sokal.tau_int, 0.5, 1e-12, 'white Sokal'); near(tauInt.white.geyer.tau_int, 0.5, 1e-12, 'white Geyer'); assert.equal(tauInt.white.zero.tau_int, null); checks++
 assert.equal(tauInt.bad, true); checks++
 near(tauInt.ct.tau_fit, 40, 1e-6, 'fit unchanged'); near(tauInt.ct.tau_int, 39.7292, 1e-3, 'correlation_time uses the chosen estimator'); assert.equal(tauInt.ct.tau_int_method, 'sokal'); assert.equal(tauInt.ct.tau_int_window, 199); checks++
+// Regression test: correlation_time with non-positive ACF should return dict (not raise) and tau_int should be null in JSON.
+const negativeAcf = py(`
+lags = [0, 1, 2, 3]
+acf = [1.0, -0.2, -0.3, -0.1]
+result = ma.correlation_time(lags, acf)
+dump(result)
+`)
+assert.ok(typeof negativeAcf === 'object', 'correlation_time returns an object'); assert.equal(negativeAcf.tau_int, null, 'tau_int is null for non-positive ACF'); checks++
 
 fs.rmSync(temp, { recursive: true, force: true })
 console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations, tau_int).`)
