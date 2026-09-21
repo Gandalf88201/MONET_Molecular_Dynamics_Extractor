@@ -50,9 +50,12 @@ const monetHistory = {
 }
 const fileName = name => String(name || '').split(/[\\/]/).pop()
 
-function historyDo (fn) {
-  try { return fn(monetHistory.session) } catch (error) {
-    try { monetHistory.session.record({ kind: 'logging_error', error: String(error?.message || error) }) } catch {}
+// session defaults to the current one; a caller that captured a session earlier (e.g. before an
+// awaited ASE call) can pass it explicitly, so a session swap meanwhile logs onto the session the
+// step actually belongs to, never onto whatever session happens to be current when the call lands.
+function historyDo (fn, session = monetHistory.session) {
+  try { return fn(session) } catch (error) {
+    try { session.record({ kind: 'logging_error', error: String(error?.message || error) }) } catch {}
     if (!monetHistory.warned) {
       monetHistory.warned = true
       try { setStatus('The analysis history could not log a step: ' + (error?.message || error)) } catch {}
@@ -708,6 +711,7 @@ async function runProcessing () {
   const sourceAtoms = MonetASEModel.atomMap(state.firstFrame, processedIds)
   $('cancel-processing').classList.remove('hidden')
   $('cancel-processing').disabled = !window.monet.cancel
+  const extractSession = monetHistory.session
   const extractStep = monetHistory.readOnly ? null : historyDo(P => P.begin({
     kind: 'extract', action: 'extract', source: monetHistory.sourceByPath.get(state.filePath) ?? monetHistory.activeSource,
     params: { selected: processedIds, frequency: state.frequency, compute_average: Boolean(state.opts.computeAverage), ...(state.opts.qm ? { qm: state.opts.qm } : {}) },
@@ -727,7 +731,8 @@ async function runProcessing () {
   $('cancel-processing').classList.add('hidden')
 
   if (result.error) {
-    historyDo(P => P.fail(extractStep, result.error)); onHistoryChange()
+    if (extractStep != null && extractSession === monetHistory.session) historyDo(P => P.fail(extractStep, result.error))
+    onHistoryChange()
     log('ERROR: ' + result.error, 'error')
     setStatus('Processing failed: ' + result.error)
     $('retry-processing').classList.remove('hidden')
@@ -745,7 +750,7 @@ async function runProcessing () {
   }
   result.sourceAtoms = sourceAtoms
   state.lastResult = result
-  if (extractStep != null) await historyExtracted(extractStep, result, sourceAtoms)
+  if (extractStep != null) await historyExtracted(extractStep, extractSession, result, sourceAtoms)
   updateAnalysisSource()
   $('next-5').classList.remove('hidden')
 }
@@ -1690,18 +1695,39 @@ function historyBegin (kind, command, mapping) {
   return id
 }
 
-function historyEnd (stepId, kind, command, result) {
-  if (stepId == null) return
+// Series keys of bonds/angles/dihedrals/ase_coordination results are file indices (e.g. "0-1"), not
+// atom labels. Relabel every '-'-separated integer part through the step's mapping (aseIndex →
+// monetId) before it is logged, so the history and methods report read MONET atom IDs. A key whose
+// parts are not all mapped integers (coordination's "C (mean of 2)", "C1", …) is left unchanged.
+function relabelSeriesKeys (series, mapping) {
+  if (!series || typeof series !== 'object' || !Array.isArray(mapping) || !mapping.length) return series
+  const byIndex = new Map(mapping.map(atom => [atom.aseIndex, atom.monetId]))
+  const out = {}
+  for (const [key, value] of Object.entries(series)) {
+    const parts = key.split('-')
+    const mapped = parts.map(part => (/^\d+$/.test(part) && byIndex.has(Number(part)) ? byIndex.get(Number(part)) : null))
+    out[mapped.every(id => id !== null) ? mapped.join('-') : key] = value
+  }
+  return out
+}
+
+// session is the one captured when the step began (see runAse): if it isn't the current one any
+// more -- Open session, a resume or a new load swapped it while this step was in flight -- do
+// nothing, rather than finishing or failing a step id that may not even mean the same thing in
+// whatever session is current now.
+function historyEnd (stepId, session, kind, command, result, mapping) {
+  if (stepId == null || session !== monetHistory.session) return
   historyDo(P => {
     if (!result?.ok) return P.fail(stepId, result?.message || result?.error || 'failed')
     const outputs = []
     if (result.filePath) {
       monetHistory.stepByPath.set(result.filePath, stepId)
-      outputs.push({ file: result.output || fileName(result.filePath), sha256: result.sha256 || null })
+      outputs.push({ file: fileName(result.output) || fileName(result.filePath), sha256: result.sha256 || null })
     } else if (result.output) outputs.push({ file: fileName(result.output) })
-    P.finish(stepId, result, { outputs })
+    const forSummary = result.series ? { ...result, series: relabelSeriesKeys(result.series, mapping) } : result
+    P.finish(stepId, forSummary, { outputs })
     if (!DERIVING_ACTIONS.has(command.action)) monetHistory.stepByKind[kind] = stepId
-  })
+  }, session)
   onHistoryChange()
 }
 
@@ -1730,6 +1756,7 @@ async function historyLoad (info) {
     if (same) {
       monetHistory.readOnly = false
       attachSource(first.id)
+      historyDo(P => P.setEnvironment(monetHistory.env))
       setStatus(`${name} matches the opened session: its history continues.`)
       updateAseControls()
       onHistoryChange()
@@ -1783,10 +1810,11 @@ async function historyDerived (path, info, label) {
   onHistoryChange()
 }
 
-async function historyExtracted (stepId, result, sourceAtoms) {
+async function historyExtracted (stepId, session, result, sourceAtoms) {
   const path = extractedTrajPath()
   let digest = null
   try { digest = await window.monet.fileDigest?.(path) } catch {}
+  if (session !== monetHistory.session) return
   historyDo(P => {
     P.finish(stepId, result)
     const id = P.addSource({
@@ -1797,7 +1825,7 @@ async function historyExtracted (stepId, result, sourceAtoms) {
     P.addOutput(stepId, { source: id })
     monetHistory.sourceByPath.set(path, id)
     monetHistory.activeSource = id
-  })
+  }, session)
   onHistoryChange()
 }
 
@@ -1820,6 +1848,7 @@ async function runAse (kind, command) {
     if (scale >= 0.5 && scale <= 2) command.bond_scale = scale
   }
   const stepId = historyBegin(kind, command, mapping)
+  const stepSession = monetHistory.session
   const rmsdNote = command.align ? ' Kabsch-aligned RMSD.' : ' Raw Cartesian RMSD.'
   const source = $('analysis-source').textContent + (options.cell ? ` Cell: ${options.cell.join(', ')}; PBC ${options.pbc.map(v => v ? 1 : 0).join('')}.` : ' Source cell.') + (['rmsd', 'rmsdmatrix'].includes(kind) ? rmsdNote + (command.unwrap ? ' Unwrapped.' : '') : ` MIC ${options.mic ? 'on' : 'off'}.`)
   aseState.busy = true
@@ -1849,7 +1878,7 @@ async function runAse (kind, command) {
     outcome = { ok: false, error: error.message }
     return outcome
   } finally {
-    historyEnd(stepId, kind, command, outcome)
+    historyEnd(stepId, stepSession, kind, command, outcome, mapping)
     if (typeof unsubscribe === 'function') unsubscribe()
     hideAseProgress(`${kind}-prog-row`)
     aseState.busy = false
@@ -3973,11 +4002,19 @@ function restoreSettings (data) {
 }
 
 $('history-open-session').addEventListener('click', async () => {
+  if (aseState.busy) return setStatus('Another calculation is running: finish or cancel it before opening a session.')
   const r = await window.monet.sessionOpen?.()
   if (!r) return
   if (!r.ok) return setStatus('Could not open the session: ' + (r.error || r.message))
   let restored
   try { restored = MonetProvenance.fromJSON(r.session) } catch (error) { return setStatus('Could not open the session: ' + error.message) }
+  // Fork: an opened session keeps its own autosave file, and the trajectory-matching load below
+  // resumes writing to this in-memory copy, not to the file it was opened from. Without this, once
+  // the trajectory is attached and autosave picks back up, it would overwrite the original file
+  // with whatever the newer, possibly-diverged in-page history has become.
+  const openedCreated = restored.data.created
+  restored.data.created = new Date().toISOString()
+  restored.data.forked_from = openedCreated
   await saveHistoryNow()
   monetHistory.session = restored
   monetHistory.readOnly = true
@@ -4006,6 +4043,7 @@ async function offerPreviousHistory (digest) {
   try { restored = MonetProvenance.fromJSON(previous) } catch (error) { return setStatus('The previous history could not be read: ' + error.message) }
   monetHistory.session = restored
   attachSource(restored.data.sources[0].id)
+  historyDo(P => P.setEnvironment(monetHistory.env))
   onHistoryChange()
 }
 

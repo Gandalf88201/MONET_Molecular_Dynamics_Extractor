@@ -180,6 +180,13 @@ async function run () {
   await click('btn-run-rmsd')
   const rmsd = steps().at(-1)
   assert.equal(rmsd.action, 'rmsd'); assert.equal(rmsd.source, 'S2'); checks++
+  // Important 5: bonds/angles/dihedrals/ase_coordination series keys are file indices ("0-1"), not
+  // atom labels; historyEnd must relabel them through the step's mapping (aseIndex → monetId)
+  // before logging, so the history and methods report read MONET atom IDs.
+  el('bonds-pairs').value = '1 2'
+  await click('btn-run-bonds')
+  const bonds = steps().at(-1)
+  assert.equal(bonds.action, 'bonds'); assert.equal(bonds.result['mean:1-2'], 1); assert.equal('mean:0-1' in bonds.result, false); checks++
   // Exports and cell changes are logged; clearing by a cell change is not a user clear.
   await click('csv-rmsd')
   assert.equal(steps().at(-1).kind, 'export'); assert.equal(steps().at(-1).params.file, 'MONET-rmsd.csv'); checks++
@@ -291,6 +298,11 @@ async function run () {
   assert.equal(latestCommand, null); assert.match(el('status-msg').textContent, /read-only/); checks++
   await click('btn-browse'); await click('next-1'); await settle()
   assert.equal(H.readOnly, false); assert.equal(H.session.data.steps.length, openedData.steps.length); assert.equal(H.activeSource, 'S1'); checks++
+  // Important 1: opening a session forks it -- a new `created` and `forked_from` pointing at the
+  // original -- so once the trajectory is attached and autosave resumes, it writes a new file
+  // instead of overwriting the (older, now possibly diverged) autosave it was opened from.
+  assert.notEqual(H.session.data.created, openedData.created); checks++
+  assert.equal(H.session.data.forked_from, openedData.created); checks++
   // A different file: confirm starts a new history for it.
   await click('history-open-session'); await settle()
   w.monet.fileDigest = async () => ({ sha256: 'ef'.repeat(32), size: 1 })
@@ -305,6 +317,32 @@ async function run () {
   w.confirm = message => { asked = message; return true }
   await click('btn-browse'); await click('next-1'); await settle()
   assert.match(asked, /Previous history found for torsion\.xyz \(\d+ steps/); assert.equal(H.session.data.steps.length, previous.steps.length); assert.equal(H.activeSource, 'S1'); checks++
+  // Important 2: a step's session is captured when it begins, so a session swap while it is still
+  // in flight (Open session, a resume or a new load) can never finish onto -- and corrupt -- a step
+  // of whatever session turns out to be current when the call lands.
+  const beforeSwap = H.session
+  defer = true
+  await click('btn-run-rmsd')
+  assert.equal(typeof pendingResolve, 'function'); assert.equal(w.testMonet.aseState.busy, true); checks++
+  // Snapshot after historyBegin already pushed the running placeholder step for this call: that
+  // step must stay exactly as it is (still "running") once the call resolves onto a session that
+  // is no longer current, instead of being finished or failed in place.
+  const beforeSwapSteps = JSON.stringify(beforeSwap.data.steps)
+  // Open session is disabled while busy, so the swap can't be driven through the UI at all...
+  w.monet.sessionOpen = async () => ({ ok: true, session: openedData })
+  await click('history-open-session')
+  assert.equal(H.session, beforeSwap); assert.match(el('status-msg').textContent, /before opening a session/); checks++
+  // ...so the capture is tested directly: swap the session mid-flight the way a resume or a new
+  // load would, then resolve the pending call.
+  const fresh = w.MonetProvenance.create({ monet_version: null })
+  H.session = fresh
+  pendingResolve({ ok: true, rmsd: [0, 1], frame_indices: [0, 1] })
+  await tick(); await tick()
+  assert.equal(fresh.data.steps.length, 0); checks++
+  assert.equal(JSON.stringify(beforeSwap.data.steps), beforeSwapSteps); checks++
+  assert.equal(w.testMonet.aseState.busy, false); checks++
+  defer = false
+  H.session = beforeSwap
   console.log(`PASS: ${checks} history UI checks (capture, derived sources, clear, pause, logging errors, autosave).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => w.close())
