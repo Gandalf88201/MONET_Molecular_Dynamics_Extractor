@@ -332,5 +332,15 @@ dump(result)
 `)
 assert.ok(typeof negativeAcf === 'object', 'correlation_time returns an object'); assert.equal(negativeAcf.tau_int, null, 'tau_int is null for non-positive ACF'); checks++
 
+// Blocking (Flyvbjerg–Petersen): OU with τ = 40 (g ≈ 80, SEM ≈ 15·√(80/20000) ≈ 0.94), white noise, a too-short run.
+const blocks = py(`
+dump({'ou': ma.block_average(ou(20000)), 'white': ma.block_average(np.random.default_rng(5).normal(size=20000)),
+      'short': ma.block_average(ou(300))})
+`)
+assert.deepEqual(blocks.ou.sizes.slice(0, 4), [1, 2, 4, 8]); assert.equal(blocks.ou.sizes.at(-1), 2048); checks++
+assert.equal(blocks.ou.sizes[blocks.ou.plateau_index], 256); near(blocks.ou.plateau_sem, 0.943, 0.1, 'blocking SEM'); near(blocks.ou.g, 80, 12, 'blocking g'); checks++
+assert.equal(blocks.white.plateau_index, 0); near(blocks.white.g, 1, 1e-9, 'white g'); checks++
+assert.equal(blocks.short.plateau_index, null); assert.equal(blocks.short.g, null); checks++
+
 fs.rmSync(temp, { recursive: true, force: true })
 console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations, tau_int).`)

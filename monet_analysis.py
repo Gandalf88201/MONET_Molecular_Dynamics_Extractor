@@ -272,6 +272,37 @@ def integrated_time(acf, dt=1.0, method='sokal', c=5.0, n_samples=None):
             'converged': converged, 'method': method}
 
 
+def block_average(values, min_blocks=8):
+    """Blocking analysis of the mean of one series (Flyvbjerg & Petersen 1989).
+
+    Block sizes double from 1 while at least `min_blocks` blocks remain. For each size the standard
+    error of the mean is the scatter of the block means / sqrt(m), with error SEM / sqrt(2 (m - 1)).
+    The plateau is the first size whose SEM the next two sizes do not exceed by more than their own
+    error; None while the SEM keeps growing (run too short). g = N SEM^2 / sigma^2.
+    """
+    if min_blocks < 2:
+        raise ValueError('Blocking needs at least two blocks.')
+    x = np.asarray(values, dtype=float)
+    n = len(x)
+    sigma = float(x.std(ddof=1)) if n > 1 else 0.0
+    sizes, sems, errors = [], [], []
+    size = 1
+    while n // size >= min_blocks:
+        m = n // size
+        means = x[:m * size].reshape(m, size).mean(axis=1)
+        sem = float(means.std(ddof=1) / math.sqrt(m))
+        sizes.append(size)
+        sems.append(sem)
+        errors.append(sem / math.sqrt(2 * (m - 1)))
+        size *= 2
+    plateau = next((i for i in range(len(sizes) - 2)
+                    if sems[i + 1] <= sems[i] + errors[i + 1] and sems[i + 2] <= sems[i] + errors[i + 2]), None)
+    plateau_sem = sems[plateau] if plateau is not None else math.nan
+    g = n * plateau_sem ** 2 / sigma ** 2 if plateau is not None and sigma > 0 else math.nan
+    return {'sizes': sizes, 'sem': sems, 'sem_error': errors, 'plateau_index': plateau,
+            'plateau_sem': plateau_sem, 'g': g}
+
+
 def correlation_time(lags, acf, fit_until='zero', model='exp', tau_int_method='zero', n_samples=None):
     """Fit C(t) = exp(-t/tau) (as in the MONET reference workflow) and integrate C(t).
 
