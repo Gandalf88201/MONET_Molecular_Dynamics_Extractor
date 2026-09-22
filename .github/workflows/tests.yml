@@ -29,6 +29,7 @@ jobs:
           PYTHON: python
         run: |
           node tests/regression.cjs
+          node tests/units.cjs
           node tests/qm-parity.cjs
           node tests/qm-resolve.cjs
           node tests/formats.cjs

@@ -12,7 +12,7 @@ import math
 import os
 import re
 
-BOHR = 0.529177210903
+from monet_units import BOHR_ANGSTROM as BOHR
 STATES = {1: ('sing', 's0', 'singlet'), 2: ('doub', 'd0', 'doublet'), 3: ('trip', 't0', 'triplet'),
           4: ('quar', 'q0', 'quartet'), 5: ('quin', 'p0', 'quintet')}
 _PLACEHOLDER = re.compile(r'\{(\w+)\}')

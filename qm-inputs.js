@@ -6,7 +6,8 @@
 // with identical output (tests/qm-parity.cjs).
 ;(function (root) {
   const node = typeof module === 'object' && module.exports
-  const BOHR = 0.529177210903 // Å
+  const U = node ? require('./units.js') : root.MonetUnits
+  const BOHR = U.BOHR_ANGSTROM // Å
 
   // Standard atomic weights (IUPAC, abridged), used for Quantum ESPRESSO ATOMIC_SPECIES.
   const MASSES = {

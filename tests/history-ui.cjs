@@ -139,7 +139,7 @@ Object.assign(w.monet, {
 // separate w.eval('...') cannot see them by name (only what this same call exposes on
 // window.testMonet can be reached from outside). __setRenderHistory/__getRenderHistory below let a
 // later check swap out renderHistory itself, which a plain identifier reference could not reach.
-for (const file of ['theme.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) {
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) {
   w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, monetHistory, saveHistoryNow, runConsoleLine, __getRenderHistory: () => renderHistory, __setRenderHistory: fn => { renderHistory = fn } };' : ''))
 }
 const el = id => w.document.getElementById(id)

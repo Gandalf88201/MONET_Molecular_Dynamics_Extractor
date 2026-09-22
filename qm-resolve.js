@@ -5,14 +5,15 @@
 // {placeholders} that change per configuration are left for the engines (qm-inputs.js,
 // monet_qm.py), which render every extracted configuration identically.
 ;(function (root) {
+  const U = (typeof module === 'object' && module.exports) ? require('./units.js') : root.MonetUnits
   const LABELS = { gaussian: 'Gaussian', orca: 'ORCA', qe: 'Quantum ESPRESSO (pw.x)', vasp: 'VASP', cp2k: 'CP2K', qbox: 'Qbox' }
   const PLANE_WAVE = ['qe', 'vasp', 'cp2k', 'qbox']
   const MOLECULAR_CALCS = ['sp', 'opt', 'optfreq', 'freq', 'td', 'md']
   const PW_CALCS = ['sp', 'opt', 'optfreq', 'freq', 'vcrelax', 'md']
   const CALCS = { gaussian: MOLECULAR_CALCS, orca: MOLECULAR_CALCS, qe: PW_CALCS, vasp: PW_CALCS, cp2k: PW_CALCS, qbox: ['sp', 'opt', 'vcrelax', 'md'] }
   const CALC_LABELS = { sp: 'Single point', opt: 'Geometry optimisation', optfreq: 'Optimisation + frequencies', freq: 'Frequencies', td: 'Excited states (TD-DFT)', vcrelax: 'Variable-cell relaxation', md: 'Molecular dynamics' }
-  const RY_FS = 0.048377687
-  const HA_FS = 0.0241888433
+  const RY_FS = U.RY_TIME_FS
+  const HA_FS = U.AU_TIME_FS
   const MD = { ensemble: 'nvt', temperature: 300, timestep: 0.5, steps: 1000 }
   const GRID = [1, 1, 1]
   const PW = { isolated: false, padding: 10, pressure: 0, kpoints: 'gamma', grid: GRID, extra: '', species: null, md: MD }
