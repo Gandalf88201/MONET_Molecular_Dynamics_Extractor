@@ -58,4 +58,7 @@ assert.match(text('vasp', { functional: 'hse06', dispersion: 'd3bj', isolated: t
 assert.match(text('vasp', { functional: 'pbe0' }, 1), /NSW = 0\nLHFCALC = .TRUE.\nAEXX = 0.25\n$/); checks++
 assert.match(text('vasp', { functional: 'pbesol', dispersion: 'd3' }, 1), /NSW = 0\nGGA = PS\nIVDW = 11\n$/); checks++
 
+// Test ecutrho rounding with floating-point multiplication
+assert.match(text('qe', { ecutwfc: 33.3, ecutrhoFactor: 6 }), /  ecutrho = 199.8\n/); checks++
+
 console.log(`PASS: ${checks} QM resolve checks (keywords per code, defaults).`)

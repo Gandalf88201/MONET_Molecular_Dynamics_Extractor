@@ -180,7 +180,7 @@ EDIFF = 1E-6
         calculation: { sp: 'scf', opt: 'relax', optfreq: 'relax', freq: 'scf', vcrelax: 'vc-relax', md: 'md' }[s.calc],
         pseudo_dir: words(s.pseudoDir) || './pseudo',
         control_extra: s.calc === 'md' ? `  dt = ${fixed(md.timestep / RY_FS, 4)}\n  nstep = ${md.steps}\n` : '',
-        ecutwfc: String(s.ecutwfc), ecutrho: String(s.ecutwfc * s.ecutrhoFactor),
+        ecutwfc: String(s.ecutwfc), ecutrho: scaled(s.ecutwfc, s.ecutrhoFactor),
         system_extra: system, ions_cell: ions, kpoints
       }
       const files = [{ name: '{tag}.inp', template: fill(SKELETONS.qe, slots) }]
