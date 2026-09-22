@@ -114,6 +114,26 @@ spec, conf, runtime = json.load(sys.stdin)
 monet_qm.render(monet_qm.validate(spec), conf, runtime)
 `, root], { input: JSON.stringify(noZval), stdio: 'pipe' }), error => /ValueError: VASP: no ZVAL for N in the POTCAR\./.test(String(error.stderr))); checks++
 
+// The ZVAL check belongs to VASP only: Gaussian + VASP fails because of VASP, Gaussian alone renders.
+const both = [build(['gaussian', 'vasp'], { vasp: { isolated: true } }), conf, noZval[2]]
+const gaussianOnly = [build(['gaussian'], {}), conf, noZval[2]]
+assert.throws(() => QM.render(QM.validate(structuredClone(both[0])), both[1], both[2]), /^Error: VASP: no ZVAL for N in the POTCAR\.$/); checks++
+assert.equal(QM.render(QM.validate(structuredClone(gaussianOnly[0])), gaussianOnly[1], gaussianOnly[2]).length, 2); checks++
+const pyZval = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+out = []
+for spec, conf, runtime in json.load(sys.stdin):
+    try:
+        out.append([list(item) for item in monet_qm.render(monet_qm.validate(spec), conf, runtime)])
+    except ValueError as error:
+        out.append(str(error))
+print(json.dumps(out))
+`, root], { input: JSON.stringify([both, gaussianOnly]) }))
+assert.equal(pyZval[0], 'VASP: no ZVAL for N in the POTCAR.'); checks++
+assert.deepEqual(pyZval[1], QM.render(QM.validate(structuredClone(gaussianOnly[0])), gaussianOnly[1], gaussianOnly[2]).map(file => [file.path, file.text])); checks++
+
 // Validation (JS and Python reject the same specs)
 const legacySpec = () => ({ codes: { gaussian: { files: [{ name: '{tag}.dat', template: '{coords}' }] } }, params: { charge: 0, multiplicities: [1], nproc: 6, mem: '4gb', method: 'b3lyp', basis: 'sto-3g', padding: 10 }, masses: QM.MASSES, cell: null })
 const rejected = [

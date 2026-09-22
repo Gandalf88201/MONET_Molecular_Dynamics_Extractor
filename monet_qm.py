@@ -244,7 +244,7 @@ def _context(code, entry, conf, spec, states, mult, runtime):
     ks = {'u': 'UKS', 'r': 'RKS', 'ro': 'ROKS'}[ref]
     charge = states['charge']
     nelect = f'# Net charge {_num(charge)}: set NELECT = (sum of ZVAL in POTCAR) - ({_num(charge)}) for charged systems.'
-    potcar = runtime.get('potcar') if runtime else None
+    potcar = runtime.get('potcar') if runtime and code == 'vasp' else None
     if _truthy(potcar):
         zval = potcar.get('zval') or {}
         for s in species:

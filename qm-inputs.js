@@ -172,7 +172,7 @@
     const ks = { u: 'UKS', r: 'RKS', ro: 'ROKS' }[ref]
     const charge = states.charge
     let nelect = `# Net charge ${num(charge)}: set NELECT = (sum of ZVAL in POTCAR) - (${num(charge)}) for charged systems.`
-    if (runtime && runtime.potcar) {
+    if (code === 'vasp' && runtime && runtime.potcar) {
       const zval = runtime.potcar.zval || {}
       for (const s of species) if (typeof zval[s] !== 'number' || !Number.isFinite(zval[s])) throw new Error(`VASP: no ZVAL for ${s} in the POTCAR.`)
       const total = species.reduce((sum, s, k) => sum + zval[s] * counts[k], 0) - charge
