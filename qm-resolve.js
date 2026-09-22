@@ -66,7 +66,65 @@
 [[blocks]]# MONET configuration {index} (frame {frame}), {state}
 * xyz {charge} {mult}
 {coords}*
-`
+`,
+    qe:
+`! MONET configuration {index} (frame {frame}), {state}. {cell_note}
+&CONTROL
+  calculation = '[[calculation]]'
+  prefix = '{tag}_conf{index}'
+  pseudo_dir = '[[pseudo_dir]]'
+  outdir = './tmp'
+[[control_extra]]/
+&SYSTEM
+  ibrav = 0
+  nat = {nat}
+  ntyp = {ntyp}
+  ecutwfc = [[ecutwfc]]
+  ecutrho = [[ecutrho]]
+  tot_charge = {charge}
+  nspin = {nspin}
+{qe_magnetization}[[system_extra]]/
+&ELECTRONS
+  conv_thr = 1.0d-8
+/
+[[ions_cell]]ATOMIC_SPECIES
+{qe_species}
+CELL_PARAMETERS angstrom
+{cell_ang}
+ATOMIC_POSITIONS angstrom
+{coords}[[kpoints]]`,
+    ph:
+`MONET configuration {index} (frame {frame}), {state}: Gamma-point phonons after pw.x (apply the acoustic sum rule with dynmat.x)
+&INPUTPH
+  prefix = '{tag}_conf{index}'
+  outdir = './tmp'
+  fildyn = '{tag}_conf{index}.dyn'
+  tr2_ph = 1.0d-14
+/
+0.0 0.0 0.0
+`,
+    vasp_poscar:
+`MONET configuration {index} (frame {frame}); atoms grouped by element
+1.0
+{cell_ang}
+{vasp_species}
+{vasp_counts}
+Cartesian
+{vasp_coords}
+`,
+    vasp_incar:
+`SYSTEM = MONET configuration {index} {state}
+# {cell_note}
+{vasp_nelect}
+ENCUT = [[encut]]
+ISPIN = {nspin}
+NUPDOWN = {unpaired}
+ISMEAR = 0
+SIGMA = 0.01
+EDIFF = 1E-6
+[[body]]`,
+    vasp_kpoints: 'MONET k-points\n0\nGamma\n[[grid]]\n0 0 0\n',
+    vasp_potcar_spec: '{vasp_potcar_spec}\n'
   }
 
   function checkCalc (code, s) {
@@ -101,6 +159,59 @@
         blocks
       }
       return [{ name: '{tag}.inp', template: fill(SKELETONS.orca, slots) }]
+    },
+    qe (s) {
+      const md = s.md
+      const kpoints = s.kpoints === 'grid' ? `K_POINTS automatic\n${s.grid.join(' ')} 0 0 0\n` : 'K_POINTS gamma\n'
+      const system = [
+        ...(s.functional !== 'default' ? [`input_dft = '${s.functional}'`] : []),
+        ...(s.dispersion === 'd3bj' ? ["vdw_corr = 'dft-d3'", 'dftd3_version = 4'] : []),
+        ...(s.isolated ? ["assume_isolated = 'mt'"] : []),
+        ...lines(s.extra)
+      ].map(line => `  ${line}\n`).join('')
+      const ions = {
+        opt: '&IONS\n/\n', optfreq: '&IONS\n/\n',
+        vcrelax: `&IONS\n/\n&CELL\n  cell_dofree = 'all'\n  press = ${scaled(s.pressure, 10)}\n/\n`,
+        md: md.ensemble === 'nvt'
+          ? `&IONS\n  ion_temperature = 'svr'\n  tempw = ${md.temperature}\n  nraise = ${Math.round(100 / md.timestep)}\n/\n`
+          : "&IONS\n  ion_temperature = 'not_controlled'\n/\n"
+      }[s.calc] || ''
+      const slots = {
+        calculation: { sp: 'scf', opt: 'relax', optfreq: 'relax', freq: 'scf', vcrelax: 'vc-relax', md: 'md' }[s.calc],
+        pseudo_dir: words(s.pseudoDir) || './pseudo',
+        control_extra: s.calc === 'md' ? `  dt = ${fixed(md.timestep / RY_FS, 4)}\n  nstep = ${md.steps}\n` : '',
+        ecutwfc: String(s.ecutwfc), ecutrho: String(s.ecutwfc * s.ecutrhoFactor),
+        system_extra: system, ions_cell: ions, kpoints
+      }
+      const files = [{ name: '{tag}.inp', template: fill(SKELETONS.qe, slots) }]
+      if (s.phx && (s.calc === 'freq' || s.calc === 'optfreq')) files.push({ name: 'ph_{tag}.inp', template: SKELETONS.ph })
+      return files
+    },
+    vasp (s) {
+      const md = s.md
+      const calcLines = {
+        sp: 'NSW = 0\n', opt: 'IBRION = 2\nISIF = 2\nNSW = 200\n', freq: 'IBRION = 5\nNFREE = 2\nPOTIM = 0.015\nNSW = 1\n',
+        vcrelax: `IBRION = 2\nISIF = 3\nNSW = 200\nPSTRESS = ${scaled(s.pressure, 10)}\n`,
+        md: `IBRION = 0\nNSW = ${md.steps}\nPOTIM = ${md.timestep}\nISYM = 0\n` + (md.ensemble === 'nvt'
+          ? `MDALGO = 2\nSMASS = 0\nTEBEG = ${md.temperature}\nTEEND = ${md.temperature}\n`
+          : `MDALGO = 1\nANDERSEN_PROB = 0.0\nTEBEG = ${md.temperature}\n`)
+      }
+      const common = [
+        { pbe: '', pbesol: 'GGA = PS\n', pbe0: 'LHFCALC = .TRUE.\nAEXX = 0.25\n', hse06: 'LHFCALC = .TRUE.\nHFSCREEN = 0.2\n' }[s.functional],
+        { none: '', d3bj: 'IVDW = 12\n', d3: 'IVDW = 11\n' }[s.dispersion],
+        s.isolated ? 'LDIPOL = .TRUE.\nIDIPOL = 4\nDIPOL = 0.5 0.5 0.5\n' : '',
+        lines(s.extra).map(line => `${line}\n`).join('')
+      ].join('')
+      const incar = calc => fill(SKELETONS.vasp_incar, { encut: String(s.encut), body: calcLines[calc] + common })
+      const incars = s.calc === 'optfreq'
+        ? [{ name: 'INCAR_{tag}_relax', template: incar('opt') }, { name: 'INCAR_{tag}_freq', template: incar('freq') }]
+        : [{ name: 'INCAR_{tag}', template: incar(s.calc) }]
+      return [
+        { name: 'POSCAR', template: SKELETONS.vasp_poscar },
+        ...incars,
+        { name: 'KPOINTS', template: fill(SKELETONS.vasp_kpoints, { grid: (s.kpoints === 'grid' ? s.grid : [1, 1, 1]).join(' ') }) },
+        { name: 'POTCAR.spec', template: SKELETONS.vasp_potcar_spec }
+      ]
     }
   }
 
