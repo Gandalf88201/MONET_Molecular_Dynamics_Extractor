@@ -91,4 +91,47 @@ assert.match(text('qbox', { calc: 'md' }), /set atoms_dyn MD\nset dt 20.6707\nse
 assert.match(text('qbox', { isolated: true, extra: 'set scf_tol 1.e-8' }), /# Units are bohr. \{cell_note\}\n# Isolated system: Qbox applies no Poisson correction; keep the vacuum large.\nset cell[\s\S]*set delta_spin \{delta_spin\}\nset scf_tol 1.e-8\nrandomize_wf\n/); checks++
 assert.throws(() => R.resolve('qbox', R.settingsFor('qbox', { calc: 'freq' })), /not available for Qbox/); checks++
 
+// Species tables, spec, report line, readiness
+const syms = ['O', 'H', 'H', 'C']
+assert.deepEqual(R.defaultSpecies('qe', syms, R.settingsFor('qe')), { O: 'O.UPF', H: 'H.UPF', C: 'C.UPF' }); checks++
+assert.deepEqual(R.defaultSpecies('vasp', syms, R.settingsFor('vasp')), { O: 'O', H: 'H', C: 'C' }); checks++
+assert.deepEqual(R.defaultSpecies('qbox', ['O'], R.settingsFor('qbox')), { O: 'O_ONCV_PBE-1.0.xml' }); checks++
+assert.deepEqual(R.defaultSpecies('cp2k', ['O'], R.settingsFor('cp2k')), { O: { basis: 'DZVP-MOLOPT-SR-GTH', potential: 'GTH-PBE' } }); checks++
+assert.deepEqual(R.defaultSpecies('cp2k', ['O'], R.settingsFor('cp2k', { functional: 'b3lyp' })), { O: { basis: 'DZVP-MOLOPT-SR-GTH', potential: 'GTH-BLYP', aux: 'cFIT3' } }); checks++
+assert.deepEqual(R.cellWidths([[10, 0, 0], [0, 12, 0], [0, 0, 8]]).map(v => +v.toFixed(6)), [10, 12, 8]); checks++
+assert.equal(+R.hfCutoff([[10, 0, 0], [0, 12, 0], [0, 0, 8]]).toFixed(6), 3.9); assert.equal(R.hfCutoff([[20, 0, 0], [0, 20, 0], [0, 0, 20]]), 6); checks++
+{ const spec = R.buildSpec({ codes: ['gaussian', 'vasp'], common: { charge: 0, multiplicities: [1, 3] }, symbols: syms, cell: null,
+    cards: { gaussian: { reference: 'auto', brokenSymmetry: true }, vasp: { isolated: true, padding: 12, buildPotcar: true, potcarLibrary: ' /pp ' } }, custom: { vasp: { 1: 'CUSTOM {mult}' } } })
+  assert.deepEqual(spec.common, { charge: 0, multiplicities: [1, 3] }); checks++
+  assert.equal(spec.codes.gaussian.reference, 'auto'); assert.equal(spec.codes.gaussian.brokenSymmetry, true); assert.equal(spec.codes.gaussian.isolated, null); checks++
+  assert.deepEqual(spec.codes.vasp.isolated, { padding: 12 }); assert.deepEqual(spec.codes.vasp.potcar, { library: '/pp' }); assert.deepEqual(spec.codes.vasp.species, { O: 'O', H: 'H', C: 'C' }); checks++
+  assert.equal(spec.codes.vasp.files[1].template, 'CUSTOM {mult}'); assert.equal(spec.codes.vasp.files[1].name, 'INCAR_{tag}'); checks++
+  assert.equal(spec.summary.gaussian, 'Gaussian: b3lyp/6-31+g(d,p) (auto reference, broken-symmetry singlet), single point, singlet and triplet'); checks++
+  assert.equal(spec.summary.vasp, 'VASP: PBE, ENCUT 500 eV, Γ point, single point, isolated (dipole correction, vacuum 12 Å), singlet and triplet'); checks++ }
+assert.equal(R.describe('qe', R.settingsFor('qe', { calc: 'md', override: { charge: -1, multiplicities: [2] } }), { charge: 0, multiplicities: [1] }), "QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, molecular dynamics (NVT, 300 K, 0.5 fs × 1000 steps), charge -1, doublet"); checks++
+assert.equal(R.describe('cp2k', R.settingsFor('cp2k', { functional: 'pbe0', kpoints: 'grid', grid: [2, 2, 2], calc: 'vcrelax', pressure: 1 }), { charge: 0, multiplicities: [1] }), 'CP2K: PBE0 (ADMM), CUTOFF 400 Ry, 2×2×2 k-points, variable-cell relaxation (1 GPa), singlet'); checks++
+
+const ready = (codes, cards, ctx) => R.readiness(codes, Object.fromEntries(codes.map(code => [code, { ...R.settingsFor(code, cards[code] || {}), species: (cards[code] || {}).species || R.defaultSpecies(code, ctx.symbols, R.settingsFor(code, cards[code] || {})) }])), ctx)
+const noCell = { cell: null, extent: [3, 2, 1], symbols: syms, potcarAvailable: true }
+const cubic = { cell: { source: 'applied', rows: [[10, 0, 0], [0, 10, 0], [0, 0, 10]] }, extent: [3, 2, 1], symbols: syms, potcarAvailable: true }
+assert.deepEqual(ready(['gaussian', 'orca'], {}, noCell), { blocked: [], warnings: [] }); checks++
+assert.deepEqual(ready(['qe'], {}, noCell).blocked, ['Quantum ESPRESSO (pw.x): no cell. Apply a crystal cell (Structure analysis › Cell) or tick “Isolated system: vacuum box”.']); checks++
+assert.deepEqual(ready(['qe'], { qe: { isolated: true } }, noCell), { blocked: [], warnings: [] }); checks++
+assert.deepEqual(ready(['vasp'], {}, cubic).blocked, []); checks++
+assert.deepEqual(ready(['qe'], { qe: { isolated: true, padding: 2 } }, noCell).warnings, ['Quantum ESPRESSO (pw.x): vacuum 2 Å is smaller than the configuration extent (3 Å); isolated-system corrections need a box at least twice the size of the molecule.']); checks++
+assert.deepEqual(ready(['qe'], { qe: { species: { O: 'O.UPF', H: '', C: 'C.UPF' } } }, cubic).blocked, ['Quantum ESPRESSO (pw.x): no pseudopotential for H.']); checks++
+assert.deepEqual(ready(['cp2k'], { cp2k: { species: { O: { basis: 'X', potential: '' }, H: { basis: 'X', potential: 'Y' }, C: { basis: 'X', potential: 'Y' } } } }, cubic).blocked, ['CP2K: no pseudopotential for O.']); checks++
+assert.deepEqual(ready(['gaussian'], { gaussian: { calc: 'td', nstates: 0 } }, noCell).blocked, ['Gaussian: TD-DFT needs at least one excited state.']); checks++
+assert.deepEqual(ready(['orca'], { orca: { maxcorePct: 120 } }, noCell).blocked, ['ORCA: maxcore % must be between 1 and 100.']); checks++
+assert.deepEqual(ready(['vasp'], { vasp: { kpoints: 'grid', grid: [2, 0, 1] } }, cubic).blocked, ['VASP: k-point grid values must be integers ≥ 1.']); checks++
+assert.deepEqual(ready(['qbox'], { qbox: { ecut: 0 } }, cubic).blocked, ['Qbox: the cutoff must be positive.']); checks++
+assert.deepEqual(ready(['qbox'], { qbox: { calc: 'freq' } }, cubic).blocked, ['Qbox: Qbox has no built-in vibrational analysis.']); checks++
+assert.deepEqual(ready(['vasp'], { vasp: { calc: 'vcrelax', isolated: true } }, noCell).blocked, ['VASP: variable-cell relaxation is not possible with a vacuum box.']); checks++
+assert.deepEqual(ready(['cp2k'], { cp2k: { calc: 'md', md: { timestep: 0 } } }, cubic).blocked, ['CP2K: MD needs a positive time step, at least one step and (NVT) a positive temperature.']); checks++
+assert.deepEqual(ready(['vasp'], { vasp: { buildPotcar: true } }, cubic).blocked, ['VASP: choose the POTCAR library folder or untick “Build POTCAR”.']); checks++
+assert.deepEqual(ready(['vasp'], { vasp: { buildPotcar: true, potcarLibrary: '/pp' } }, { ...cubic, potcarAvailable: false }).blocked, ['VASP: building POTCAR needs the launcher or the desktop app.']); checks++
+assert.deepEqual(ready(['orca'], {}, cubic).warnings, ['ORCA: the configuration is written as an isolated cluster without PBC; molecules cut by the box must be made whole first.']); checks++
+assert.deepEqual(ready(['vasp'], { vasp: { functional: 'hse06', calc: 'vcrelax' } }, cubic).warnings, ['VASP: hybrid functionals are expensive with plane waves.', 'VASP: raise the cutoff by about 30 % to limit Pulay stress.']); checks++
+assert.deepEqual(ready(['cp2k'], { cp2k: { functional: 'pbe0' } }, { ...cubic, cell: { source: 'applied', rows: [[7, 0, 0], [0, 7, 0], [0, 0, 7]] } }).warnings, ['CP2K: hybrid functionals are expensive with plane waves.', 'CP2K: truncation radius 3.4 Å is below 4 Å; the cell is too small for the truncated Coulomb operator.']); checks++
+
 console.log(`PASS: ${checks} QM resolve checks (keywords per code, defaults).`)

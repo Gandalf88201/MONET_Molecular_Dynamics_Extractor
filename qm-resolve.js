@@ -333,7 +333,126 @@ save {tag}_conf{index}.xml
     return RESOLVERS[code](settings)
   }
 
-  const api = { LABELS, PLANE_WAVE, CALCS, CALC_LABELS, DEFAULTS, RY_FS, HA_FS, SKELETONS, settingsFor, memoryMB, resolve, fill, fixed, lines, words, scaled, HYBRIDS, isHybrid }
+  const STATE_NAMES = { 1: 'singlet', 2: 'doublet', 3: 'triplet', 4: 'quartet', 5: 'quintet' }
+  const stateList = mults => {
+    const names = mults.map(m => STATE_NAMES[m] || `multiplicity ${m}`)
+    return names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}` : names[0]
+  }
+
+  function cellWidths (rows) {
+    const [a, b, c] = rows
+    const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
+    const norm = v => Math.hypot(v[0], v[1], v[2])
+    const bc = cross(b, c), ca = cross(c, a), ab = cross(a, b)
+    const volume = Math.abs(a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2])
+    return [volume / norm(bc), volume / norm(ca), volume / norm(ab)]
+  }
+  const hfCutoff = rows => Math.min(6, Math.min(...cellWidths(rows)) / 2 - 0.1)
+
+  function defaultSpecies (code, symbols, s) {
+    const out = {}
+    for (const el of new Set(symbols)) {
+      if (code === 'qe') out[el] = `${el}.UPF`
+      else if (code === 'vasp') out[el] = el
+      else if (code === 'qbox') out[el] = `${el}_ONCV_PBE-1.0.xml`
+      else if (code === 'cp2k') {
+        out[el] = { basis: 'DZVP-MOLOPT-SR-GTH', potential: ['blyp', 'b3lyp'].includes(s.functional) ? 'GTH-BLYP' : 'GTH-PBE' }
+        if (isHybrid('cp2k', s.functional)) out[el].aux = 'cFIT3'
+      }
+    }
+    return out
+  }
+
+  const FUNCTIONAL_LABELS = { default: 'functional from the pseudopotentials', pbe: 'PBE', pbesol: 'PBEsol', pbe0: 'PBE0', hse: 'HSE', hse06: 'HSE06', blyp: 'BLYP', revpbe: 'revPBE', b3lyp: 'B3LYP' }
+  const REFERENCE_LABELS = { u: 'unrestricted', auto: 'auto reference', r: 'restricted' }
+  function calcText (code, s) {
+    const md = s.md
+    if (s.calc === 'md') return `molecular dynamics (${code === 'gaussian' ? 'NVE' : md.ensemble.toUpperCase()}, ${md.temperature} K, ${md.timestep} fs × ${md.steps} steps)`
+    if (s.calc === 'vcrelax') return `variable-cell relaxation (${s.pressure} GPa)`
+    if (s.calc === 'td') return `excited states (TD-DFT, ${s.nstates} states)`
+    return CALC_LABELS[s.calc].toLowerCase()
+  }
+  function describe (code, s, common) {
+    const states = s.override || common
+    const charge = states.charge ? `, charge ${states.charge}` : ''
+    const kp = s.kpoints === 'grid' ? `${s.grid.join('×')} k-points` : 'Γ point'
+    const iso = corr => (s.isolated ? `, isolated (${corr}, vacuum ${s.padding} Å)` : '')
+    let head
+    if (code === 'gaussian' || code === 'orca') {
+      const notes = [REFERENCE_LABELS[s.reference], ...(code === 'gaussian' && s.brokenSymmetry ? ['broken-symmetry singlet'] : [])]
+      head = `${LABELS[code]}: ${s.method}/${s.basis} (${notes.join(', ')}), ${calcText(code, s)}`
+    } else if (code === 'qe') head = `QE pw.x: ${FUNCTIONAL_LABELS[s.functional]}, ecutwfc ${s.ecutwfc} Ry, ${kp}, ${calcText(code, s)}${iso('MT')}`
+    else if (code === 'vasp') head = `VASP: ${FUNCTIONAL_LABELS[s.functional]}, ENCUT ${s.encut} eV, ${kp}, ${calcText(code, s)}${iso('dipole correction')}`
+    else if (code === 'cp2k') head = `CP2K: ${FUNCTIONAL_LABELS[s.functional]}${isHybrid('cp2k', s.functional) ? ' (ADMM)' : ''}, CUTOFF ${s.cutoff} Ry, ${kp}, ${calcText(code, s)}${iso('MT Poisson solver')}`
+    else head = `Qbox: ${FUNCTIONAL_LABELS[s.functional]}, ecut ${s.ecut} Ry, ${calcText(code, s)}${iso('no Poisson correction')}`
+    return `${head}${charge}, ${stateList(states.multiplicities)}`
+  }
+
+  function buildSpec ({ codes, common, cards = {}, symbols = [], cell = null, custom = {} }) {
+    const spec = { common: { charge: common.charge, multiplicities: [...common.multiplicities] }, codes: {}, cell, summary: {} }
+    for (const code of codes) {
+      const s = settingsFor(code, cards[code] || {})
+      const files = resolve(code, s).map((file, i) => (custom[code] && Object.prototype.hasOwnProperty.call(custom[code], i) ? { ...file, template: custom[code][i] } : file))
+      spec.codes[code] = {
+        files,
+        override: s.override ? { charge: s.override.charge, multiplicities: [...s.override.multiplicities] } : null,
+        isolated: PLANE_WAVE.includes(code) && s.isolated ? { padding: s.padding } : null,
+        species: s.species || defaultSpecies(code, symbols, s),
+        reference: code === 'gaussian' || code === 'orca' ? s.reference : 'u',
+        brokenSymmetry: code === 'gaussian' ? Boolean(s.brokenSymmetry) : false,
+        potcar: code === 'vasp' && s.buildPotcar ? { library: words(s.potcarLibrary) } : null
+      }
+      spec.summary[code] = describe(code, s, spec.common)
+    }
+    return spec
+  }
+
+  function readiness (codes, cards, ctx) {
+    const blocked = []
+    const warnings = []
+    const elements = [...new Set(ctx.symbols || [])]
+    for (const code of codes) {
+      const s = cards[code]
+      const label = LABELS[code]
+      const pw = PLANE_WAVE.includes(code)
+      const block = message => blocked.push(`${label}: ${message}`)
+      const warn = message => warnings.push(`${label}: ${message}`)
+      if (!CALCS[code].includes(s.calc)) block(code === 'qbox' ? 'Qbox has no built-in vibrational analysis.' : `${CALC_LABELS[s.calc]} is not available.`)
+      if (pw && !ctx.cell && !s.isolated) block('no cell. Apply a crystal cell (Structure analysis › Cell) or tick “Isolated system: vacuum box”.')
+      if (pw) {
+        for (const el of elements) {
+          const entry = s.species && s.species[el]
+          const missing = code === 'cp2k' ? !entry || !words(entry.basis) || !words(entry.potential) || (isHybrid('cp2k', s.functional) && !words(entry.aux)) : !words(entry)
+          if (missing) block(`no pseudopotential for ${el}.`)
+        }
+      }
+      if (s.calc === 'td' && !(Number.isInteger(s.nstates) && s.nstates >= 1)) block('TD-DFT needs at least one excited state.')
+      if (code === 'orca' && !(s.maxcorePct >= 1 && s.maxcorePct <= 100)) block('maxcore % must be between 1 and 100.')
+      if (pw && s.kpoints === 'grid' && !s.grid.every(n => Number.isInteger(n) && n >= 1)) block('k-point grid values must be integers ≥ 1.')
+      const cutoffs = { qe: [s.ecutwfc, s.ecutrhoFactor], vasp: [s.encut], cp2k: [s.cutoff, s.relCutoff], qbox: [s.ecut] }[code] || []
+      if (cutoffs.some(v => !(v > 0))) block('the cutoff must be positive.')
+      if (s.calc === 'vcrelax' && s.isolated) block('variable-cell relaxation is not possible with a vacuum box.')
+      if (s.calc === 'md' && !(s.md.timestep > 0 && Number.isInteger(s.md.steps) && s.md.steps >= 1 && (s.md.ensemble !== 'nvt' || code === 'gaussian' || s.md.temperature > 0))) block('MD needs a positive time step, at least one step and (NVT) a positive temperature.')
+      if (code === 'vasp' && s.buildPotcar) {
+        if (!words(s.potcarLibrary)) block('choose the POTCAR library folder or untick “Build POTCAR”.')
+        else if (!ctx.potcarAvailable) block('building POTCAR needs the launcher or the desktop app.')
+      }
+      if (pw && s.isolated && ctx.extent) {
+        const extent = Math.max(...ctx.extent)
+        if (s.padding < extent) warn(`vacuum ${s.padding} Å is smaller than the configuration extent (${Number(extent.toFixed(2))} Å); isolated-system corrections need a box at least twice the size of the molecule.`)
+      }
+      if (!pw && ctx.cell) warn('the configuration is written as an isolated cluster without PBC; molecules cut by the box must be made whole first.')
+      if (pw && isHybrid(code, s.functional)) warn('hybrid functionals are expensive with plane waves.')
+      if (s.calc === 'vcrelax') warn('raise the cutoff by about 30 % to limit Pulay stress.')
+      if (code === 'cp2k' && ['pbe0', 'b3lyp'].includes(s.functional) && !s.isolated && ctx.cell) {
+        const radius = hfCutoff(ctx.cell.rows)
+        if (radius < 4) warn(`truncation radius ${Number(radius.toFixed(2))} Å is below 4 Å; the cell is too small for the truncated Coulomb operator.`)
+      }
+    }
+    return { blocked, warnings }
+  }
+
+  const api = { LABELS, PLANE_WAVE, CALCS, CALC_LABELS, DEFAULTS, RY_FS, HA_FS, SKELETONS, settingsFor, memoryMB, resolve, fill, fixed, lines, words, scaled, HYBRIDS, isHybrid, cellWidths, hfCutoff, defaultSpecies, buildSpec, describe, readiness }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.MonetQMResolve = api
 })(globalThis)
