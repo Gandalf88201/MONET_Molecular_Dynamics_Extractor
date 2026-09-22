@@ -357,6 +357,17 @@ $('next-1').addEventListener('click', async () => {
       window.monet.releaseFile?.(state.filePath)
       state.filePath = state.source.original
     }
+    // Re-analysing the original file drops any derived trajectory (uncorrelated, cropped, aligned):
+    // its time stride, sampling frequency and frame numbering no longer apply.
+    const full = state.fullTrajectory
+    if (full) {
+      setTimeStride(full.mdStride)
+      $('inp-freq').value = full.frequency
+    }
+    state.fullTrajectory = null
+    state.derivedLabel = null
+    state.frameMap = null
+    $('restore-full-trajectory').classList.add('hidden')
     state.source.label = null
     if (needsImport()) {
       if (!window.monet.importFile) throw new Error('Importing this format needs the launcher (python3 start_monet.py) or the desktop app.')

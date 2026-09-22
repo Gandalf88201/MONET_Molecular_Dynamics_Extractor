@@ -5,6 +5,7 @@
 - Equilibration: with several groups the text names the group that sets t₀ (the one that equilibrates last) and lists t₀ per group; the chart legend names it too.
 - Equilibration on a derived trajectory: the text and the cropped trajectory's label give the frame number of the full trajectory, not only the frame of the active file.
 - The ✂ production-window button is disabled while a calculation runs.
+- Going back to step 1 and re-analysing the original file drops a derived (uncorrelated, cropped, aligned) trajectory: its time stride, sampling frequency and full-trajectory frame numbering no longer carry over.
 - README: *Max lag (fs)* limits the ACF calculation and the τ fit and τ_int windows, not only the view.
 - Autocorrelation: Sokal (default) and Geyer estimators of τ_int with its error; run length in units of τ with warnings; residual correlation g and N_eff of the sampled configurations.
 - Changed: the default τ_int estimator is now Sokal's window (previously the first zero crossing), so τ_int, N_eff and the standard errors differ from 2.1; choose *first zero crossing* in the Autocorrelation tab to reproduce earlier results.
