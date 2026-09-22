@@ -170,4 +170,42 @@ for (const bad of [{ multiplicities: [] }, { multiplicities: [1, 1] }, { charge:
 { const spec = QM.defaultSpec(['gaussian']); spec.codes.gaussian.reference = 'x'; assert.throws(() => QM.validate(spec)); checks++ }
 const evil = QM.defaultSpec(); evil.codes.gaussian.files[0].name = '../x'
 assert.throws(() => QM.validate(evil)); checks++
+// POTCAR assembly from a local library (launcher writer and desktop helper).
+{
+  const fs = require('node:fs')
+  const os = require('node:os')
+  const lib = fs.mkdtempSync(path.join(os.tmpdir(), 'potcar-'))
+  for (const [variant, zval] of [['O_s', 6], ['H', 1], ['C', 4]]) {
+    fs.mkdirSync(path.join(lib, variant))
+    fs.writeFileSync(path.join(lib, variant, 'POTCAR'), `  PAW_PBE ${variant}\n   POMASS =   1.000; ZVAL   =    ${zval}.000    mass and valenz\nEnd of Dataset\n`)
+  }
+  const io = { read: f => fs.readFileSync(f, 'utf8'), join: path.join, real: f => fs.realpathSync(f), sep: path.sep }
+  const js = QM.loadPotcar(lib, ['O_s', 'H', 'C'], io)
+  assert.deepEqual(js.zval, [6, 1, 4]); assert.match(js.text, /PAW_PBE O_s[\s\S]*PAW_PBE H[\s\S]*PAW_PBE C/); checks++
+  assert.throws(() => QM.loadPotcar(lib, ['N'], io), /POTCAR variant N not found/); checks++
+  assert.throws(() => QM.loadPotcar(lib, ['../x'], io), /Invalid POTCAR variant/); checks++
+  const out = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+text, zval = monet_qm.load_potcar(sys.argv[2], ['O_s', 'H', 'C'])
+print(json.dumps([text, zval]))
+`, root, lib]))
+  assert.deepEqual(out, [js.text, js.zval]); checks++
+  // Writer end to end: extract command through ase_bridge.py writes POTCAR and NELECT per configuration.
+  const outDir = fs.mkdtempSync(path.join(os.tmpdir(), 'qm-extract-'))
+  const xyz = path.join(outDir, 'w.xyz')
+  fs.writeFileSync(xyz, '3\nframe 0\nO 0 0 0\nH 0.96 0 0\nH -0.24 0.93 0\n3\nframe 1\nO 0 0 0.1\nH 0.96 0 0\nH -0.24 0.93 0\n')
+  const spec = { ...R.buildSpec({ codes: ['vasp', 'qe'], common: { charge: -1, multiplicities: [2] }, symbols: ['O', 'H', 'H'], cell: null,
+    cards: { vasp: { isolated: true, buildPotcar: true, potcarLibrary: lib, species: { O: 'O_s', H: 'H' } }, qe: { isolated: true, calc: 'freq', phx: true } } }), masses: QM.MASSES }
+  execFileSync(process.env.PYTHON || 'python3', [path.join(root, 'ase_bridge.py')], { input: JSON.stringify({ action: 'extract', filename: xyz, output_dir: path.join(outDir, 'out'), selected: [1, 2, 3], frequency: 1, compute_average: false, qm: spec }) })
+  const conf1 = path.join(outDir, 'out/2-SAMPLED_CONFIGURATIONS/conf1')
+  assert.match(fs.readFileSync(path.join(conf1, 'vasp/POTCAR'), 'utf8'), /PAW_PBE O_s[\s\S]*PAW_PBE H/); checks++
+  assert.match(fs.readFileSync(path.join(conf1, 'vasp/INCAR_doub'), 'utf8'), /\nNELECT = 9\n/); checks++
+  assert.ok(fs.existsSync(path.join(conf1, 'vasp/KPOINTS'))); assert.ok(fs.existsSync(path.join(conf1, 'vasp/POTCAR.spec'))); assert.ok(fs.existsSync(path.join(conf1, 'qe/ph_doub.inp'))); checks++
+  const bad = { ...spec, codes: { ...spec.codes, vasp: { ...spec.codes.vasp, species: { O: 'O_h', H: 'H' } } } }
+  const failed = execFileSync(process.env.PYTHON || 'python3', [path.join(root, 'ase_bridge.py')], { input: JSON.stringify({ action: 'extract', filename: xyz, output_dir: path.join(outDir, 'bad'), selected: [1, 2, 3], frequency: 1, compute_average: false, qm: bad }) }).toString()
+  assert.match(failed, /POTCAR variant O_h not found/); assert.ok(!fs.existsSync(path.join(outDir, 'bad/2-SAMPLED_CONFIGURATIONS/conf1'))); checks++
+}
+
 console.log(`PASS: ${checks} QM input checks (JS/Python parity per code, legacy Gaussian, cells, species, POTCAR).`)

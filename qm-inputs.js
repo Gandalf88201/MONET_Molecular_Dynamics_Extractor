@@ -217,6 +217,25 @@
 
   const fill = (text, values) => text.replace(/\{(\w+)\}/g, (match, key) => Object.prototype.hasOwnProperty.call(values, key) ? values[key] : match)
 
+  // POTCAR text and valences for the given variants, read from a local library (<library>/<variant>/POTCAR).
+  function loadPotcar (library, variants, io) {
+    const base = io.real(library)
+    const parts = []
+    const zval = []
+    for (const variant of variants) {
+      if (!/^[A-Za-z0-9_.-]+$/.test(variant) || variant === '.' || variant === '..') throw new Error(`Invalid POTCAR variant ${variant}.`)
+      let file
+      try { file = io.real(io.join(base, variant, 'POTCAR')) } catch (e) { throw new Error(`POTCAR variant ${variant} not found in ${library}.`) }
+      if (!file.startsWith(base + io.sep)) throw new Error(`Invalid POTCAR variant ${variant}.`)
+      const text = io.read(file)
+      const match = /ZVAL\s*=\s*([-+0-9.Ee]+)/.exec(text)
+      if (!match) throw new Error(`No ZVAL in POTCAR of ${variant}.`)
+      parts.push(text.endsWith('\n') ? text : text + '\n')
+      zval.push(Number(match[1]))
+    }
+    return { text: parts.join(''), zval }
+  }
+
   // conf = { index (1-based), frame, symbols, positions: [[x,y,z]...], lattice?: 3x3 }
   // runtime.potcar = { text, zval: { El: number } } adds vasp/POTCAR and the exact NELECT.
   function render (spec, conf, runtime = {}) {
@@ -239,7 +258,7 @@
     return out
   }
 
-  const api = { CODES, MASSES, BOHR, PLANE_WAVE, defaultSpec, normalize, render, validate, stateOf, memoryMB }
+  const api = { CODES, MASSES, BOHR, PLANE_WAVE, defaultSpec, normalize, render, validate, stateOf, memoryMB, loadPotcar }
   if (node) module.exports = api
   else root.MonetQM = api
 })(globalThis)

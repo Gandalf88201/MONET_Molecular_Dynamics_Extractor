@@ -94,6 +94,7 @@
 
   async function localExtraction (options) {
     const { filePath, frequency, selectedAtoms, computeAverage, generateGaussian, qm } = options
+    if (qm && qm.codes && qm.codes.vasp && qm.codes.vasp.potcar) throw new Error('Building POTCAR needs the launcher or the desktop app.')
     const selected = new Set(selectedAtoms)
     const entries = [['0-HISTORY/run.json', JSON.stringify({ ...options, date: new Date().toISOString() }, null, 2)]]
     const full = [], sampled = []

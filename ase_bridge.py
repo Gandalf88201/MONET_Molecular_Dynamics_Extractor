@@ -209,6 +209,7 @@ def action_extract(cmd):
     qm = cmd.get('qm')
     if qm is not None:
         import monet_qm
+        monet_qm.preflight(qm, traj.symbols_list(), cmd.get('selected') or [])
         qm = monet_qm.writer(qm)
     prog('Reading trajectory …', 0)
     summary = monet_io.extract(

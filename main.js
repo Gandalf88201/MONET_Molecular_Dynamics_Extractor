@@ -169,6 +169,24 @@ async function processTrajectory (event, options) {
   let elements = null
   let frameIndex = 0
   let sampledCount = 0
+  let qmRuntime = null
+  const potcarCache = new Map()
+
+  // POTCAR text and NELECT for a set of species, read once from the local library and cached.
+  function runtimeFor (symbols) {
+    const vasp = qm.codes.vasp
+    if (!vasp || !vasp.potcar) return null
+    const species = [...new Set(symbols)]
+    const key = species.join(',')
+    if (!potcarCache.has(key)) {
+      const table = vasp.species || {}
+      const { text, zval } = QM.loadPotcar(vasp.potcar.library, species.map(s => table[s] || s), {
+        read: f => fs.readFileSync(f, 'utf8'), join: path.join, real: f => fs.realpathSync(f), sep: path.sep
+      })
+      potcarCache.set(key, { potcar: { text, zval: Object.fromEntries(species.map((s, i) => [s, zval[i]])) } })
+    }
+    return potcarCache.get(key)
+  }
 
   send({ step: 'extraction', status: 'started', message: 'Reading trajectory …' })
 
@@ -176,7 +194,11 @@ async function processTrajectory (event, options) {
     for await (const frame of XYZ.frames(trajectoryLines(filePath))) {
       const atoms = frame.atoms
       if (atoms.length !== atomCount) throw new Error('Atom count changed. Load the trajectory again.')
-      if (!elements) elements = atoms.map(a => a.element)
+      if (!elements) {
+        elements = atoms.map(a => a.element)
+        // Load the POTCARs of the selected atoms once so a missing variant fails before any output is written.
+        if (qm) qmRuntime = runtimeFor(selected.map(i => elements[i]))
+      }
       if (sums) {
         for (let i = 0; i < atomCount; i++) {
           sums[3 * i] += atoms[i].x; sums[3 * i + 1] += atoms[i].y; sums[3 * i + 2] += atoms[i].z
@@ -196,7 +218,7 @@ async function processTrajectory (event, options) {
         if (qm) {
           const atomsSel = selected.map(i => atoms[i])
           const conf = { index: sampledCount, frame: frameIndex, symbols: atomsSel.map(a => a.element), positions: atomsSel.map(a => [a.x, a.y, a.z]), lattice: frame.lattice }
-          for (const file of QM.render(qm, conf)) {
+          for (const file of QM.render(qm, conf, qmRuntime)) {
             const target = path.join(confDir, ...file.path.split('/'))
             fs.mkdirSync(path.dirname(target), { recursive: true })
             fs.writeFileSync(target, file.text)

@@ -24,6 +24,31 @@ PLANE_WAVE = ('qe', 'vasp', 'cp2k', 'qbox')
 _SAFE = re.compile(r'^[A-Za-z0-9_.+()-]+$')
 _ELEMENT = re.compile(r'^[A-Z][a-z]?$')
 _DEFAULTS = (('override', None), ('isolated', None), ('species', {}), ('reference', 'u'), ('brokenSymmetry', False), ('potcar', None))
+_VARIANT = re.compile(r'^[A-Za-z0-9_.-]+$')
+_ZVAL = re.compile(r'ZVAL\s*=\s*([-+0-9.Ee]+)')
+
+
+def load_potcar(library, variants):
+    """POTCAR text and valences for the variants, read from <library>/<variant>/POTCAR."""
+    base = os.path.realpath(library)
+    parts, zval = [], []
+    for variant in variants:
+        if not _VARIANT.match(variant) or variant in ('.', '..'):
+            raise ValueError(f'Invalid POTCAR variant {variant}.')
+        path = os.path.realpath(os.path.join(base, variant, 'POTCAR'))
+        if not path.startswith(base + os.sep):
+            raise ValueError(f'Invalid POTCAR variant {variant}.')
+        if not os.path.isfile(path):
+            raise ValueError(f'POTCAR variant {variant} not found in {library}.')
+        with open(path, encoding='utf-8', errors='replace') as fh:
+            text = fh.read()
+        match = _ZVAL.search(text)
+        if not match:
+            raise ValueError(f'No ZVAL in POTCAR of {variant}.')
+        parts.append(text if text.endswith('\n') else text + '\n')
+        v = float(match.group(1))
+        zval.append(int(v) if v.is_integer() else v)
+    return ''.join(parts), zval
 
 
 def _num(value):
@@ -321,13 +346,35 @@ def render(spec, conf, runtime=None):
     return out
 
 
+def preflight(spec, symbols, selected):
+    """Load the POTCARs of the selected atoms once so a missing variant stops the run before extraction."""
+    vasp = spec['codes'].get('vasp')
+    if vasp and vasp.get('potcar'):
+        chosen = [symbols[i - 1] for i in selected] if selected else list(symbols)
+        table = vasp.get('species') or {}
+        load_potcar(vasp['potcar']['library'], [table.get(s) or s for s in dict.fromkeys(chosen)])
+
+
 def writer(spec):
     """Callback for monet_io.extract: writes the inputs of one configuration."""
     validate(spec)
+    vasp = spec['codes'].get('vasp')
+    potcar = vasp.get('potcar') if vasp else None
+    cache = {}
+
+    def runtime_for(symbols):
+        if not potcar:
+            return None
+        species = tuple(dict.fromkeys(symbols))
+        if species not in cache:
+            table = vasp.get('species') or {}
+            text, zval = load_potcar(potcar['library'], [table.get(s) or s for s in species])
+            cache[species] = {'potcar': {'text': text, 'zval': dict(zip(species, zval))}}
+        return cache[species]
 
     def write(folder, index, frame, symbols, positions, lattice=None):
         conf = {'index': index, 'frame': frame, 'symbols': symbols, 'positions': positions.tolist(), 'lattice': lattice}
-        for path, text in render(spec, conf):
+        for path, text in render(spec, conf, runtime_for(symbols)):
             target = os.path.join(folder, path)
             os.makedirs(os.path.dirname(target), exist_ok=True)
             with open(target, 'w', newline='') as fh:
