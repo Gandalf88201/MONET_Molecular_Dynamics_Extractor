@@ -225,6 +225,7 @@ function syncSelectionUI () {
 function clearTrajectory () {
   state.fullTrajectory = null
   state.derivedLabel = null
+  state.frameMap = null
   $('restore-full-trajectory')?.classList.add('hidden')
   state.fileInfo = null
   state.firstFrame = null
@@ -395,7 +396,7 @@ $('next-1').addEventListener('click', async () => {
 })
 
 // Make another trajectory file (e.g. the uncorrelated configurations) the one MONET analyses and extracts.
-async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
+async function activateTrajectory (path, { label, strideFactor = 1, start = 0 } = {}) {
   if (typeof playerStop === 'function') playerStop()
   const info = await window.monet.analyzeFile(path)
   if (info.error) throw new Error(info.error)
@@ -405,6 +406,9 @@ async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
       lastResult: state.lastResult, mdStride: $('md-stride').value, frequency: $('inp-freq').value
     }
   }
+  // Frame k of the new file is frame offset + k·step of the full trajectory.
+  const base = state.frameMap || { offset: 0, step: 1 }
+  state.frameMap = { offset: base.offset + start * base.step, step: base.step * strideFactor }
   state.lastResult = null
   state.filePath = path
   state.fileInfo = info
@@ -420,6 +424,12 @@ async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
   $('inp-freq').value = 1
   await showActiveTrajectory()
   $('restore-full-trajectory').classList.remove('hidden')
+}
+
+// Frame number of the full trajectory for a saved frame of the active (possibly derived) file.
+function fullFrame (frame) {
+  const map = state.frameMap
+  return map ? map.offset + frame * map.step : frame
 }
 
 function setTimeStride (value) {
@@ -444,6 +454,7 @@ $('restore-full-trajectory').addEventListener('click', async () => {
   if (!full) return
   state.fullTrajectory = null
   state.derivedLabel = null
+  state.frameMap = null
   state.filePath = full.filePath
   state.fileInfo = full.fileInfo
   monetHistory.activeSource = monetHistory.sourceByPath.get(full.filePath) ?? monetHistory.activeSource
@@ -1571,6 +1582,7 @@ function updateAseControls () {
   $('ase-cancel').disabled = !aseState.busy || !window.monet.cancel
   $('ase-mic').disabled = aseState.busy
   if ($('console-input')) $('console-input').disabled = aseState.busy || monetHistory.readOnly
+  $('equil-crop').disabled = !lastResults.equil || lastResults.equil.t0 === 0 || !aseState.available || aseState.busy
 }
 
 async function checkAseStatus () {
@@ -2673,14 +2685,19 @@ function showEquilibration () {
   if (!r) return
   $('equil-text').textContent = r.t0 === 0
     ? `No transient found: N_eff is largest with the whole run (N_eff ≈ ${fmt(r.n_effective_t0, 4)} of ${r.n_frames} analysed frames). Keep the full trajectory.`
-    : `Production starts at t₀ = ${fmt(r.t0_time, 5)} fs (saved frame ${r.t0_frame}): discarding the transient raises N_eff from ${fmt(r.n_effective_full, 4)} to ${fmt(r.n_effective_t0, 4)} (g = ${fmt(r.g_t0, 4)} analysed frames).`
-  $('equil-crop').disabled = r.t0 === 0 || !aseState.available
+    : `Production starts at t₀ = ${fmt(r.t0_time, 5)} fs (saved frame ${r.t0_frame}${state.frameMap ? `, frame ${fullFrame(r.t0_frame)} of the full trajectory` : ''}): discarding the transient raises N_eff from ${fmt(r.n_effective_full, 4)} to ${fmt(r.n_effective_t0, 4)} (g = ${fmt(r.g_t0, 4)} analysed frames).`
+  const labels = r.groupLabels || []
+  if (labels.length > 1) {
+    const perGroup = (r.per_group_t0 || []).map((t0, k) => `${labels[k] ?? `group ${k + 1}`} ${fmt(t0 * r.dt, 4)} fs`).join(', ')
+    $('equil-text').textContent += ` t₀ is set by ${labels[r.group] ?? `group ${r.group + 1}`}, the group that equilibrates last (t₀ per group: ${perGroup}); the curve is that group's.`
+  }
+  $('equil-crop').disabled = r.t0 === 0 || !aseState.available || aseState.busy
   $('equil-result').classList.remove('hidden')
   charts.equil.setData({
     title: 'Equilibration: effective sample size against the start of production (Chodera 2016)', source: charts.acf.source,
     xLabel: 'Start of production t₀ (fs)', yLabel: 'N_eff = (N − t₀) / g(t₀)',
     labels: r.times.map(t => String(Number(t.toPrecision(6)))),
-    datasets: [{ label: 'N_eff(t₀)', data: r.n_effective, colorIndex: 0 }],
+    datasets: [{ label: `N_eff(t₀)${r.groupLabels?.length > 1 ? ` · ${r.groupLabels[r.group]}` : ''}`, data: r.n_effective, colorIndex: 0 }],
     markers: [{ value: r.t0_time, label: `t₀ = ${fmt(r.t0_time, 4)} fs` }]
   })
 }
@@ -2692,6 +2709,7 @@ $('btn-run-equil').addEventListener('click', async () => {
   try { command = acfCommand() } catch (error) { return acfError(error.message) }
   const r = await runAse('equil', { ...command, action: 'equilibration' })
   if (!r.ok) return acfError(r.message || r.error)
+  r.groupLabels = command.quantity === 'rmsd' ? ['RMSD'] : command.groups.map(group => MonetASEModel.seriesLabel(group.join('-'), r.atomMapping))
   lastResults.equil = r
   showEquilibration()
   setStatus(r.t0 === 0 ? 'Equilibration: no transient found.' : `Equilibration: production starts at t₀ = ${fmt(r.t0_time, 4)} fs.`)
@@ -2707,8 +2725,10 @@ $('equil-crop').addEventListener('click', async () => {
   const s = await runAse('subsample', { action: 'subsample', filename, stride: 1, start: r.t0_frame, output })
   if (!s.ok) return acfError(s.message || s.error)
   try {
-    await activateTrajectory(s.filePath || output, { label: `production · from frame ${r.t0_frame} (t₀ = ${fmt(r.t0_time, 4)} fs)` })
-    setStatus(`Production window active: ${s.n_frames} frames from saved frame ${r.t0_frame}. Compute the ACF again on it (↩ Full trajectory to go back).`)
+    const first = fullFrame(r.t0_frame)
+    const derived = Boolean(state.frameMap)
+    await activateTrajectory(s.filePath || output, { label: `production · from frame ${first} of the full trajectory (t₀ = ${fmt(r.t0_time, 4)} fs${derived ? ' into the active file' : ''})`, start: r.t0_frame })
+    setStatus(`Production window active: ${s.n_frames} frames from frame ${first} of the full trajectory. Compute the ACF again on it (↩ Full trajectory to go back).`)
   } catch (error) { acfError('The production window was written but could not be loaded: ' + error.message) }
 })
 
