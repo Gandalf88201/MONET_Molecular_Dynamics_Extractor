@@ -117,7 +117,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'qm-resolve.js', 'qm-inputs.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player };' : ''))
+for (const file of ['theme.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -521,6 +521,16 @@ async function run () {
   assert.match(el('qm-status').textContent, /distinct/); checks++
   await click('retry-processing'); await click('next-4')
   assert.match(el('status-msg').textContent, /distinct/); checks++
+  // Per-code cards: one card per ticked code; old shared fields are gone.
+  assert.equal(el('qm-nproc'), null); assert.equal(el('qm-method'), null); assert.equal(el('qm-padding'), null); checks++
+  w.document.querySelector('[data-qm-code="qe"]').click()
+  assert.ok(el('qm-card-gaussian')); assert.ok(el('qm-card-orca')); assert.ok(el('qm-card-qe')); assert.equal(el('qm-card-vasp'), null); checks++
+  el('qm-qe-calc').value = 'freq'; el('qm-qe-calc').dispatchEvent(new w.Event('change'))
+  assert.equal(el('qm-qe-phx').checked, true); checks++
+  assert.equal(el('qm-qe-padding').closest('.field-label').hidden, true)
+  el('qm-qe-isolated').click(); assert.equal(el('qm-qe-padding').closest('.field-label').hidden, false); checks++
+  w.document.querySelector('[data-qm-code="qbox"]').click()
+  assert.deepEqual([...el('qm-qbox-calc').options].map(o => o.value), ['sp', 'opt', 'vcrelax', 'md']); checks++
   // New analyses: the MD time step must be set by the user; nothing is assumed.
   activeAtoms = atoms; nextFile = 'torsion.xyz'
   el('inp-format').value = 'auto'; el('inp-format').dispatchEvent(new w.Event('change'))

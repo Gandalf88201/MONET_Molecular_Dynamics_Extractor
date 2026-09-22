@@ -596,18 +596,19 @@ $('next-3').addEventListener('click', () => goTo(4))
 
 $('opt-average').addEventListener('change',  e => { state.opts.computeAverage   = e.target.checked })
 
-// Quantum-chemistry inputs: step-4 fields → per-code spec (qm-resolve.js); template edits kept per session.
-// Temporary bridge until the per-code cards replace the step-4 fields.
+// Quantum-chemistry inputs: per-code cards (qm-panel.js) → per-code spec (qm-resolve.js); template edits kept per session.
+// Minimal wiring; readiness, cell status and previews are connected in the next step.
 const qmCustom = {} // code → { file index → edited template }
 let qmFiles = {} // code → resolved files (with edits) of the last spec built
 const qmCodes = () => [...$$('[data-qm-code]')].filter(input => input.checked).map(input => input.dataset.qmCode)
+const qmPanel = MonetQMPanel.mount($('qm-cards'), { onChange: updateQmUI })
 
 function rawQmSpec () {
   const codes = qmCodes()
   if (!codes.length) return null
   const mults = $('qm-mults').value.trim().split(/[\s,]+/).filter(Boolean).map(Number)
-  const shared = { nproc: Number($('qm-nproc').value), mem: $('qm-mem').value.trim(), method: $('qm-method').value.trim(), basis: $('qm-basis').value.trim() }
-  const cards = Object.fromEntries(codes.map(code => [code, MonetQMResolve.PLANE_WAVE.includes(code) ? { isolated: !aseState.cellParameters, padding: Number($('qm-padding').value) } : { ...shared }]))
+  qmPanel.show(codes)
+  const cards = qmPanel.read()
   return { ...MonetQMResolve.buildSpec({ codes, common: { charge: Number($('qm-charge').value), multiplicities: mults }, cards, symbols: [], cell: aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, custom: qmCustom }), masses: MonetQM.MASSES }
 }
 
@@ -618,6 +619,7 @@ function buildQmSpec () {
 
 function updateQmUI () {
   const codes = qmCodes()
+  qmPanel.show(codes)
   state.opts.generateGaussian = codes.includes('gaussian')
   $('gaussian-details').classList.toggle('disabled', !codes.length)
   const select = $('qm-template-file'), previous = select.value
@@ -653,7 +655,7 @@ function showTemplate () {
   $('qm-template-text').disabled = !target
 }
 $$('[data-qm-code]').forEach(input => input.addEventListener('change', updateQmUI))
-for (const id of ['qm-charge', 'qm-mults', 'qm-nproc', 'qm-mem', 'qm-method', 'qm-basis', 'qm-padding']) $(id).addEventListener('input', updateQmUI)
+for (const id of ['qm-charge', 'qm-mults']) $(id).addEventListener('input', updateQmUI)
 $('qm-template-file').addEventListener('change', showTemplate)
 $('qm-template-text').addEventListener('input', () => {
   const target = selectedTemplate()
