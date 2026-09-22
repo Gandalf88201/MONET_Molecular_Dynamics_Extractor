@@ -264,8 +264,10 @@ def _context(code, entry, conf, spec, states, mult, runtime):
         seen[s] = seen.get(s, 0) + 1
         qbox_atoms.append(f'atom {s}{seen[s]} {s.lower()} ' + ' '.join(_fixed(v / BOHR, 8) for v in pos))
     # u: unrestricted always; auto: restricted singlet, unrestricted otherwise; r: restricted / restricted open-shell.
+    # Broken-symmetry singlet needs an unrestricted reference (guess=mix on a restricted singlet is meaningless).
     reference = entry.get('reference')
-    ref = 'u' if reference == 'u' else 'r' if mult == 1 else 'u' if reference == 'auto' else 'ro'
+    broken_singlet = _truthy(entry.get('brokenSymmetry')) and mult == 1
+    ref = 'u' if broken_singlet else 'u' if reference == 'u' else 'r' if mult == 1 else 'u' if reference == 'auto' else 'ro'
     ks = {'u': 'UKS', 'r': 'RKS', 'ro': 'ROKS'}[ref]
     charge = states['charge']
     nelect = f'# Net charge {_num(charge)}: set NELECT = (sum of ZVAL in POTCAR) - ({_num(charge)}) for charged systems.'

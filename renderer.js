@@ -627,7 +627,7 @@ function buildQmSpec () {
   return MonetQM.validate(spec)
 }
 function qmReadiness () {
-  return MonetQMResolve.readiness(qmCodes(), qmPanel.read(), { cell: qmCellInfo(), extent: qmExtent(), symbols: qmSymbols(), potcarAvailable: qmPotcarAvailable() })
+  return MonetQMResolve.readiness(qmCodes(), qmPanel.read(), { cell: qmCellInfo(), extent: qmExtent(), symbols: qmSymbols(), potcarAvailable: qmPotcarAvailable(), common: qmCommon() })
 }
 
 function updateQmUI () {
@@ -662,6 +662,7 @@ function updateQmUI () {
     const summary = $(`qm-card-${code}`).querySelector('summary')
     const edited = spec ? spec.codes[code].files.map(file => file.name).filter(name => qmCustom[code] && Object.prototype.hasOwnProperty.call(qmCustom[code], name)) : Object.keys(qmCustom[code] || {})
     summary.textContent = MonetQMResolve.LABELS[code] + (edited.length ? ` · custom template (${edited.join(', ')})` : '')
+    qmPanel.setCustomNote(code, edited.length > 0)
     let preview = ''
     if (spec && atoms.length) {
       try {

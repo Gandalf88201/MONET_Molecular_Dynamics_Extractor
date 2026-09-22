@@ -41,6 +41,9 @@ cases.push([build(['gaussian'], {}, { custom: { gaussian: { '{tag}.dat': '[{cp2k
 // 8: CP2K user species table with AUX_FIT, isolated padding 7.5
 const kinds = { C: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, O: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, H: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, N: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' } }
 cases.push([build(['cp2k', 'qe'], { cp2k: { functional: 'pbe0', isolated: true, padding: 7.5, species: kinds }, qe: { isolated: true, padding: 7.5 } }), conf, {}])
+// 9: broken-symmetry singlet forces an unrestricted reference regardless of the configured reference;
+// higher multiplicities keep the configured reference (restricted open-shell here) as before.
+cases.push([build(['gaussian'], { gaussian: { reference: 'r', brokenSymmetry: true } }), conf, {}])
 
 const js = cases.map(([spec, c, runtime]) => QM.render(QM.validate(spec), c, runtime).map(file => [file.path, file.text]))
 const py = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
@@ -60,7 +63,8 @@ assert.equal(legacy[0].text, `%nproc=6\n%chk=s0.chk\n%mem=4gb\n#p ub3lyp/6-31+g(
 
 const text = i => Object.fromEntries(js[i])
 // References, broken symmetry, override
-assert.match(text(1)['sing.dat'], /#p rb3lyp\/6-31\+g\(d,p\) opt freq maxdisk=300gb nosymm scf=tight guess=mix gfinput/); checks++
+// Broken-symmetry singlet forces an unrestricted reference (guess=mix on a restricted singlet is meaningless).
+assert.match(text(1)['sing.dat'], /#p ub3lyp\/6-31\+g\(d,p\) opt freq maxdisk=300gb nosymm scf=tight guess=mix gfinput/); checks++
 assert.match(text(1)['doub.dat'], /#p rob3lyp\/[\s\S]*\n-1 2\n/); assert.equal(text(1)['trip.dat'], undefined); checks++
 assert.match(text(1)['orca/sing.inp'], /^! RKS /); assert.match(text(1)['orca/trip.inp'], /^! UKS /); checks++
 // Species tables, ph.x, VASP POTCAR.spec, MD
@@ -90,6 +94,10 @@ assert.match(text(8)['cp2k/sing.inp'], /    &KIND C\n      BASIS_SET TZV2P-MOLOP
 assert.match(text(8)['cp2k/sing.inp'], /A 10.5400000000 0.0000000000 0.0000000000\n/); assert.match(text(8)['qe/sing.inp'], /Cell: vacuum box = extent \+ 7.5 A, configuration centred/); checks++
 // POTCAR runtime and exact NELECT: 4 + 6 + 2·1 + 5 − 1 = 16
 assert.equal(text(5)['vasp/POTCAR'], 'PAW C\nPAW O\nPAW H\nPAW N\n'); assert.match(text(5)['vasp/INCAR_doub'], /\nNELECT = 16\n/); checks++
+// Case 9: broken-symmetry singlet (reference 'r') → unrestricted for the singlet, restricted open-shell for the triplet.
+assert.match(text(9)['sing.dat'], /#p ub3lyp\/6-31\+g\(d,p\) maxdisk=300gb nosymm scf=tight guess=mix gfinput/); checks++
+assert.match(text(9)['trip.dat'], /#p rob3lyp\/6-31\+g\(d,p\) maxdisk=300gb nosymm scf=tight gfinput/); checks++
+assert.doesNotMatch(text(9)['trip.dat'], /guess=mix/); checks++
 assert.match(text(0)['vasp/INCAR_sing'], /\n# Net charge 0: set NELECT = \(sum of ZVAL in POTCAR\) - \(0\) for charged systems.\n/); checks++
 
 // Plane-wave code without any cell: both engines refuse.
@@ -206,6 +214,13 @@ print(json.dumps([text, zval]))
   const bad = { ...spec, codes: { ...spec.codes, vasp: { ...spec.codes.vasp, species: { O: 'O_h', H: 'H' } } } }
   const failed = execFileSync(process.env.PYTHON || 'python3', [path.join(root, 'ase_bridge.py')], { input: JSON.stringify({ action: 'extract', filename: xyz, output_dir: path.join(outDir, 'bad'), selected: [1, 2, 3], frequency: 1, compute_average: false, qm: bad }) }).toString()
   assert.match(failed, /POTCAR variant O_h not found/); assert.ok(!fs.existsSync(path.join(outDir, 'bad/2-SAMPLED_CONFIGURATIONS/conf1'))); checks++
+  // Validation runs before preflight: a malformed spec fails with the validation message, not a POTCAR
+  // error, even when the library/variant is also broken (fail-fast still happens before extraction).
+  const malformed = { ...spec, codes: { ...spec.codes, vasp: { ...spec.codes.vasp, species: { O: 'O_s\nEVIL', H: 'H' }, potcar: { library: path.join(outDir, 'no-such-library') } } } }
+  const malformedOut = execFileSync(process.env.PYTHON || 'python3', [path.join(root, 'ase_bridge.py')], { input: JSON.stringify({ action: 'extract', filename: xyz, output_dir: path.join(outDir, 'malformed'), selected: [1, 2, 3], frequency: 1, compute_average: false, qm: malformed }) }).toString()
+  assert.match(malformedOut, /Invalid pseudopotential entry for O/); checks++
+  assert.doesNotMatch(malformedOut, /POTCAR variant|no-such-library/); checks++
+  assert.ok(!fs.existsSync(path.join(outDir, 'malformed/2-SAMPLED_CONFIGURATIONS/conf1'))); checks++
 }
 
 console.log(`PASS: ${checks} QM input checks (JS/Python parity per code, legacy Gaussian, cells, species, POTCAR).`)

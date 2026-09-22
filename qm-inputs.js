@@ -168,7 +168,8 @@
     const order = species.flatMap(s => symbols.map((x, i) => x === s ? i : -1).filter(i => i >= 0))
     const seen = {}
     // u: unrestricted always; auto: restricted singlet, unrestricted otherwise; r: restricted / restricted open-shell.
-    const ref = entry.reference === 'u' ? 'u' : mult === 1 ? 'r' : entry.reference === 'auto' ? 'u' : 'ro'
+    // Broken-symmetry singlet needs an unrestricted reference (guess=mix on a restricted singlet is meaningless).
+    const ref = entry.brokenSymmetry && mult === 1 ? 'u' : entry.reference === 'u' ? 'u' : mult === 1 ? 'r' : entry.reference === 'auto' ? 'u' : 'ro'
     const ks = { u: 'UKS', r: 'RKS', ro: 'ROKS' }[ref]
     const charge = states.charge
     let nelect = `# Net charge ${num(charge)}: set NELECT = (sum of ZVAL in POTCAR) - (${num(charge)}) for charged systems.`

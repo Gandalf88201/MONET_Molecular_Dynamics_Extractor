@@ -209,8 +209,12 @@ def action_extract(cmd):
     qm = cmd.get('qm')
     if qm is not None:
         import monet_qm
+        # writer() validates the spec first, so a malformed spec fails with the validation message
+        # rather than being masked by a preflight (POTCAR) error; preflight then fails fast, before
+        # any frame is extracted, if a POTCAR variant is missing from the library.
+        qm_writer = monet_qm.writer(qm)
         monet_qm.preflight(qm, traj.symbols_list(), cmd.get('selected') or [])
-        qm = monet_qm.writer(qm)
+        qm = qm_writer
     prog('Reading trajectory …', 0)
     summary = monet_io.extract(
         traj, out_dir, cmd.get('selected') or [], cmd.get('frequency'),

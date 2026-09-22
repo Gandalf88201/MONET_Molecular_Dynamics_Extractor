@@ -554,11 +554,16 @@ async function run () {
   // Override, preview, custom template marker (the ORCA edit made above is reset first).
   el('qm-template-file').value = 'orca:0'; el('qm-template-file').dispatchEvent(new w.Event('change')); el('qm-template-reset').click()
   assert.doesNotMatch(el('qm-card-orca').querySelector('summary').textContent, /custom template/); checks++
+  assert.equal(el('qm-orca-custom-note').hidden, true); checks++
   el('qm-orca-override').click(); el('qm-orca-override-mults').value = '2'; el('qm-orca-override-mults').dispatchEvent(new w.Event('input'))
   assert.match(el('qm-orca-preview').textContent, /\* xyz 0 2\n/); checks++
   el('qm-template-file').value = 'orca:0'; el('qm-template-file').dispatchEvent(new w.Event('change'))
   el('qm-template-text').value = '! custom {mult}\n{coords}'; el('qm-template-text').dispatchEvent(new w.Event('input'))
   assert.match(el('qm-card-orca').querySelector('summary').textContent, /custom template \(\{tag\}\.inp\)/); checks++
+  // A custom template makes the card's Calculation select (etc.) misleading for that file; a note explains why.
+  assert.equal(el('qm-orca-custom-note').hidden, false); checks++
+  assert.match(el('qm-orca-custom-note').textContent, /Edited templates replace the card settings for those files\./); checks++
+  assert.equal(el('qm-gaussian-custom-note').hidden, true); checks++ // untouched cards show no note
   assert.match(el('qm-orca-preview').textContent, /! custom 2\n/); checks++
   // Define cell… opens Structure analysis › Cell (ASE workspace, cell panel unfolded); the workflow stays on Options.
   el('qm-qe-isolated').click(); el('qm-qe-isolated').click() // ensure blocked state

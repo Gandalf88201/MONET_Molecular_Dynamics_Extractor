@@ -142,6 +142,11 @@
       const el = make('details', { className: 'qm-card', id: `qm-card-${code}` })
       el.open = true
       el.appendChild(make('summary', { text: R.LABELS[code] }))
+      // A custom template overrides the resolved one file-for-file, so some card fields (e.g. Calculation,
+      // when the file name doesn't change with it) stop having any visible effect; shown next to the marker.
+      const customNote = make('p', { className: 'panel-desc qm-note', id: id('custom-note'), text: 'Edited templates replace the card settings for those files.' })
+      customNote.hidden = true
+      el.appendChild(customNote)
       const cell = pw ? make('p', { className: 'qm-cell', id: id('cell') }) : null
       if (cell) el.appendChild(cell)
 
@@ -296,7 +301,8 @@
           return out
         },
         setCell (text, blocked) { if (cell) { cell.textContent = text; cell.classList.toggle('blocked', Boolean(blocked)) } },
-        setPreview (text) { preview.textContent = text }
+        setPreview (text) { preview.textContent = text },
+        setCustomNote (has) { customNote.hidden = !has }
       }
     }
 
@@ -322,6 +328,7 @@
       },
       setCellStatus (code, text, blocked) { if (cards[code]) cards[code].setCell(text, blocked) },
       setPreview (code, text) { if (cards[code]) cards[code].setPreview(text) },
+      setCustomNote (code, has) { if (cards[code]) cards[code].setCustomNote(has) },
       setPotcarAvailable (available) {
         potcarAvailable = Boolean(available)
         if (cards.vasp) cards.vasp.sync()
