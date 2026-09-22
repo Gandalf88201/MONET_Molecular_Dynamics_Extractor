@@ -600,7 +600,7 @@ $('opt-average').addEventListener('change',  e => { state.opts.computeAverage   
 // Quantum-chemistry inputs: shared electronic states + one card per code (qm-panel.js) → per-code spec (qm-resolve.js).
 // Template edits are kept per session; previews render configuration 1 of the current selection.
 const qmCodes = () => [...$$('[data-qm-code]')].filter(input => input.checked).map(input => input.dataset.qmCode)
-const qmCustom = {} // code → { file index → edited template }
+const qmCustom = {} // code → { file name pattern → edited template }
 const qmPanel = MonetQMPanel.mount($('qm-cards'), { onChange: () => updateQmUI() })
 let qmSymbolsKey = null // species tables are rebuilt only when the selected elements change
 
@@ -660,7 +660,8 @@ function updateQmUI () {
   const atoms = qmAtoms()
   for (const code of codes) {
     const summary = $(`qm-card-${code}`).querySelector('summary')
-    summary.textContent = MonetQMResolve.LABELS[code] + (qmCustom[code] && Object.keys(qmCustom[code]).length ? ' · custom template' : '')
+    const edited = spec ? spec.codes[code].files.map(file => file.name).filter(name => qmCustom[code] && Object.prototype.hasOwnProperty.call(qmCustom[code], name)) : Object.keys(qmCustom[code] || {})
+    summary.textContent = MonetQMResolve.LABELS[code] + (edited.length ? ` · custom template (${edited.join(', ')})` : '')
     let preview = ''
     if (spec && atoms.length) {
       try {
@@ -672,31 +673,37 @@ function updateQmUI () {
     qmPanel.setPreview(code, preview)
   }
   // Template selector lists the resolved files of every selected code.
-  const select = $('qm-template-file'), previous = select.value
+  const select = $('qm-template-file'), previous = selectedTemplate()
   select.replaceChildren()
   if (spec) {
     for (const code of codes) {
       spec.codes[code].files.forEach((file, i) => {
         const option = document.createElement('option')
         option.value = `${code}:${i}`
+        option.dataset.name = file.name
         option.textContent = `${MonetQMResolve.LABELS[code]} — ${file.name}`
         select.appendChild(option)
       })
     }
   }
-  if ([...select.options].some(option => option.value === previous)) select.value = previous
+  // Keep the same file selected (by name) when a calculation change shifts the file list.
+  const same = previous && [...select.options].find(option => option.value.startsWith(`${previous.code}:`) && option.dataset.name === previous.name)
+  if (same) select.value = same.value
   showTemplate(spec)
 }
 
+// The selector value is `${code}:${index}`; edits are stored by the file's name pattern so they follow their file.
 function selectedTemplate () {
   const [code, index] = ($('qm-template-file').value || '').split(':')
-  return code ? { code, index: Number(index) } : null
+  if (!code) return null
+  const option = $('qm-template-file').selectedOptions[0]
+  return { code, index: Number(index), name: option ? option.dataset.name : '' }
 }
 function showTemplate (spec = null) {
   const target = selectedTemplate()
   let text = ''
   if (target) {
-    const custom = qmCustom[target.code] && qmCustom[target.code][target.index]
+    const custom = qmCustom[target.code] && qmCustom[target.code][target.name]
     if (custom !== undefined) text = custom
     else {
       try { text = (spec || buildQmSpec()).codes[target.code].files[target.index].template } catch { text = '' }
@@ -711,13 +718,13 @@ $('qm-template-file').addEventListener('change', () => showTemplate())
 $('qm-template-text').addEventListener('input', () => {
   const target = selectedTemplate()
   if (!target) return
-  ;(qmCustom[target.code] ||= {})[target.index] = $('qm-template-text').value
+  ;(qmCustom[target.code] ||= {})[target.name] = $('qm-template-text').value
   updateQmUI()
 })
 $('qm-template-reset').addEventListener('click', () => {
   const target = selectedTemplate()
   if (!target || !qmCustom[target.code]) return
-  delete qmCustom[target.code][target.index]
+  delete qmCustom[target.code][target.name]
   updateQmUI()
 })
 $('qm-define-cell').addEventListener('click', () => {

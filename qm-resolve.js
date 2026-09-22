@@ -392,7 +392,9 @@ save {tag}_conf{index}.xml
     const spec = { common: { charge: common.charge, multiplicities: [...common.multiplicities] }, codes: {}, cell, summary: {} }
     for (const code of codes) {
       const s = settingsFor(code, cards[code] || {})
-      const files = resolve(code, s).map((file, i) => (custom[code] && Object.prototype.hasOwnProperty.call(custom[code], i) ? { ...file, template: custom[code][i] } : file))
+      // custom[code]: file name pattern → edited template; edits for files this calculation no longer writes are ignored.
+      const edits = custom[code] || {}
+      const files = resolve(code, s).map(file => (Object.prototype.hasOwnProperty.call(edits, file.name) ? { ...file, template: edits[file.name] } : file))
       spec.codes[code] = {
         files,
         override: s.override ? { charge: s.override.charge, multiplicities: [...s.override.multiplicities] } : null,

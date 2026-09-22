@@ -101,15 +101,24 @@ assert.deepEqual(R.defaultSpecies('cp2k', ['O'], R.settingsFor('cp2k', { functio
 assert.deepEqual(R.cellWidths([[10, 0, 0], [0, 12, 0], [0, 0, 8]]).map(v => +v.toFixed(6)), [10, 12, 8]); checks++
 assert.equal(+R.hfCutoff([[10, 0, 0], [0, 12, 0], [0, 0, 8]]).toFixed(6), 3.9); assert.equal(R.hfCutoff([[20, 0, 0], [0, 20, 0], [0, 0, 20]]), 6); checks++
 { const spec = R.buildSpec({ codes: ['gaussian', 'vasp'], common: { charge: 0, multiplicities: [1, 3] }, symbols: syms, cell: null,
-    cards: { gaussian: { reference: 'auto', brokenSymmetry: true }, vasp: { isolated: true, padding: 12, buildPotcar: true, potcarLibrary: ' /pp ' } }, custom: { vasp: { 1: 'CUSTOM {mult}' } } })
+    cards: { gaussian: { reference: 'auto', brokenSymmetry: true }, vasp: { isolated: true, padding: 12, buildPotcar: true, potcarLibrary: ' /pp ' } }, custom: { vasp: { 'INCAR_{tag}': 'CUSTOM {mult}' } } })
   assert.deepEqual(spec.common, { charge: 0, multiplicities: [1, 3] }); checks++
   assert.equal(spec.codes.gaussian.reference, 'auto'); assert.equal(spec.codes.gaussian.brokenSymmetry, true); assert.equal(spec.codes.gaussian.isolated, null); checks++
   assert.deepEqual(spec.codes.vasp.isolated, { padding: 12 }); assert.deepEqual(spec.codes.vasp.potcar, { library: '/pp' }); assert.deepEqual(spec.codes.vasp.species, { O: 'O', H: 'H', C: 'C' }); checks++
   assert.equal(spec.codes.vasp.files[1].template, 'CUSTOM {mult}'); assert.equal(spec.codes.vasp.files[1].name, 'INCAR_{tag}'); checks++
+  assert.equal(spec.codes.vasp.files[0].template === 'CUSTOM {mult}', false); checks++
   assert.equal(spec.summary.gaussian, 'Gaussian: b3lyp/6-31+g(d,p) (auto reference, broken-symmetry singlet), single point, singlet and triplet'); checks++
   assert.equal(spec.summary.vasp, 'VASP: PBE, ENCUT 500 eV, Γ point, single point, isolated (dipole correction, vacuum 12 Å), singlet and triplet'); checks++ }
 assert.equal(R.describe('qe', R.settingsFor('qe', { calc: 'md', override: { charge: -1, multiplicities: [2] } }), { charge: 0, multiplicities: [1] }), "QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, molecular dynamics (NVT, 300 K, 0.5 fs × 1000 steps), charge -1, doublet"); checks++
 assert.equal(R.describe('cp2k', R.settingsFor('cp2k', { functional: 'pbe0', kpoints: 'grid', grid: [2, 2, 2], calc: 'vcrelax', pressure: 1 }), { charge: 0, multiplicities: [1] }), 'CP2K: PBE0 (ADMM), CUTOFF 400 Ry, 2×2×2 k-points, variable-cell relaxation (1 GPa), singlet'); checks++
+
+// Custom templates follow their file name: a calc switch that inserts files keeps each edit on its own file.
+{ const custom = { vasp: { KPOINTS: 'MY KPOINTS', 'INCAR_{tag}': 'CUSTOM {mult}' } }
+  const spec = R.buildSpec({ codes: ['vasp'], common: { charge: 0, multiplicities: [1] }, symbols: syms, cards: { vasp: { calc: 'optfreq', isolated: true } }, custom })
+  const files = spec.codes.vasp.files
+  assert.deepEqual(files.map(f => f.name), ['POSCAR', 'INCAR_{tag}_relax', 'INCAR_{tag}_freq', 'KPOINTS', 'POTCAR.spec']); checks++
+  assert.equal(files.find(f => f.name === 'KPOINTS').template, 'MY KPOINTS'); checks++
+  assert.equal(files.filter(f => f.template === 'CUSTOM {mult}').length, 0); checks++ }
 
 const ready = (codes, cards, ctx) => R.readiness(codes, Object.fromEntries(codes.map(code => [code, { ...R.settingsFor(code, cards[code] || {}), species: (cards[code] || {}).species || R.defaultSpecies(code, ctx.symbols, R.settingsFor(code, cards[code] || {})) }])), ctx)
 const noCell = { cell: null, extent: [3, 2, 1], symbols: syms, potcarAvailable: true }

@@ -522,6 +522,8 @@ async function run () {
   assert.match(el('qm-status').textContent, /distinct/); checks++
   await click('retry-processing')
   assert.equal(el('next-4').disabled, true); checks++ // an invalid spec disables Run
+  el('next-4').disabled = false; await click('next-4') // the handler still refuses an invalid spec
+  assert.match(el('status-msg').textContent, /distinct/); assert.match(el('qm-status').textContent, /distinct/); checks++
   // Per-code cards: one card per ticked code; old shared fields are gone.
   assert.equal(el('qm-nproc'), null); assert.equal(el('qm-method'), null); assert.equal(el('qm-padding'), null); checks++
   w.document.querySelector('[data-qm-code="qe"]').click()
@@ -556,7 +558,7 @@ async function run () {
   assert.match(el('qm-orca-preview').textContent, /\* xyz 0 2\n/); checks++
   el('qm-template-file').value = 'orca:0'; el('qm-template-file').dispatchEvent(new w.Event('change'))
   el('qm-template-text').value = '! custom {mult}\n{coords}'; el('qm-template-text').dispatchEvent(new w.Event('input'))
-  assert.match(el('qm-card-orca').querySelector('summary').textContent, /custom template/); checks++
+  assert.match(el('qm-card-orca').querySelector('summary').textContent, /custom template \(\{tag\}\.inp\)/); checks++
   assert.match(el('qm-orca-preview').textContent, /! custom 2\n/); checks++
   // Define cell… opens Structure analysis › Cell (ASE workspace, cell panel unfolded); the workflow stays on Options.
   el('qm-qe-isolated').click(); el('qm-qe-isolated').click() // ensure blocked state

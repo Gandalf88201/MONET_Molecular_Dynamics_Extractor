@@ -29,7 +29,7 @@ cases.push([build(['gaussian', 'orca', 'qe', 'vasp', 'cp2k', 'qbox'], {
 // 2: trajectory lattice (NPT frame), CP2K HSE06, VASP optfreq
 cases.push([build(['vasp', 'cp2k'], { vasp: { calc: 'optfreq' }, cp2k: { functional: 'hse06' } }), { ...conf, lattice }, {}])
 // 3: custom template, legacy spec shape
-cases.push([build(['gaussian'], {}, { custom: { gaussian: { 0: '{unknown} {ref}{guess} {state}\n{coords}' } } }), conf, {}])
+cases.push([build(['gaussian'], {}, { custom: { gaussian: { '{tag}.dat': '{unknown} {ref}{guess} {state}\n{coords}' } } }), conf, {}])
 cases.push([{ codes: { gaussian: { folder: '', files: [{ name: 'conf{index}_{tag}.gjf', template: '{mem} {maxcore} {method}/{basis} {nproc}\n{coords}' }] }, qe: { folder: 'qe', files: [{ name: '{tag}.pwi', template: '{cell_note}\n{cell_ang}\n' }] } },
   params: { charge: 0, multiplicities: [1], nproc: 6, mem: '4gb', method: 'b3lyp', basis: 'sto-3g', padding: 10 }, masses: QM.MASSES, cell: null }, conf, {}])
 // 5: POTCAR runtime, charged
@@ -37,7 +37,7 @@ cases.push([build(['vasp'], { vasp: { isolated: true, override: { charge: 1, mul
 // 6-7: degenerate (all-zero) trajectory lattice: Gaussian still renders, no CP2K truncation radius
 const zero = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
 cases.push([build(['gaussian', 'cp2k'], { cp2k: { isolated: true } }), { ...conf, lattice: zero }, {}])
-cases.push([build(['gaussian'], {}, { custom: { gaussian: { 0: '[{cp2k_hf_cutoff}] {cell_note}\n{cell_ang}\n' } } }), { ...conf, lattice: zero }, {}])
+cases.push([build(['gaussian'], {}, { custom: { gaussian: { '{tag}.dat': '[{cp2k_hf_cutoff}] {cell_note}\n{cell_ang}\n' } } }), { ...conf, lattice: zero }, {}])
 // 8: CP2K user species table with AUX_FIT, isolated padding 7.5
 const kinds = { C: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, O: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, H: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, N: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' } }
 cases.push([build(['cp2k', 'qe'], { cp2k: { functional: 'pbe0', isolated: true, padding: 7.5, species: kinds }, qe: { isolated: true, padding: 7.5 } }), conf, {}])
