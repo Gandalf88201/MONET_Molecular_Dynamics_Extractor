@@ -228,7 +228,17 @@ Choose a dihedral, bond angle, bond length or RMSD and one or more atom groups (
 - the normalised fluctuation autocorrelation C(t) = ⟨δx(0)δx(t)⟩/⟨δx²⟩, with dihedrals unwrapped across 0/360° first;
 - or, for angles, the **circular** autocorrelation of the unit vector z = e^{ikθ} with its mean removed, Re⟨δz*(0)δz(t)⟩/⟨|δz|²⟩. It decays to zero like the linear one. The raw ⟨cos[θ(t)−θ(0)]⟩ only drops to R² for a confined torsion, so its τ is meaningless;
 - **Dihedral range** *0–180° folded* uses period 180°, so jumps between equivalent orientations (θ ↔ θ+180°) do not decorrelate the signal. The distribution and statistics then also use 0–180°;
-- τ from a fit of exp(−t/τ) (up to the first zero crossing, three 1/e times or the whole lag range) with its standard error, and the integrated τ up to the first zero;
+- τ from a fit of exp(−t/τ) (up to the first zero crossing, three 1/e times or the whole lag range) with its standard error, and the integrated τ_int with the chosen estimator (below);
+- **τ_int estimator:**
+  - *Sokal window* (default): the smallest M with M ≥ 5 τ_int(M);
+  - *Geyer* initial monotone sequence;
+  - *first zero crossing* (MONET ≤ 2.1).
+
+  MONET shows τ_int ± its error, τ_int·√(2(2M+1)/N), and the window M.
+- **Run length:** T in units of τ. There is a warning below 20 τ and a note below 50 τ.
+- **Residual correlation of the sampled configurations:** g = 1 + 2 Σ C(j·stride), and N_eff = kept/g.
+- **Block averaging** (Flyvbjerg–Petersen) under the ACF plot: SEM against block length, with its plateau and the ACF SEM for comparison.
+- **Detect equilibration** (Chodera 2016): N_eff(t₀) = (N − t₀)/g(t₀) for origins in the first half of the run. The largest value gives the start of production; ✂ *Use the production window* writes it as a new active trajectory, with `source_frame` kept and ↩ Full trajectory to go back.
 - the (circular) mean, standard deviation and a correlation-corrected standard error of the quantity (its distribution and fits are in the Bond / Angle / Dihedral / RMSD tabs).
 
 The **MD time step** (fs, a.u. or ps) and the **MD steps per saved frame** can be entered at the top of the ACF, MSD and VDOS panels or in the *Time axis* row: all copies share the same value, and a missing time step is highlighted in red. **Zoom:** drag across the ACF plot (or any time series) to zoom on a lag or frame window, and double-click to show everything again. *Show lags up to (fs)* sets the window numerically, and *Reset zoom* clears it. The y axis rescales to the visible part, and the exported PNG shows the zoomed view, while the CSV always contains all points. The lag range defaults to half of the run: longer lags are averaged over too few time origins, and their noisy tail would hide the decay. Missing inputs (time step, atom IDs) are reported inside the panel.
@@ -268,7 +278,7 @@ For periodic ranges MONET uses Mardia's circular statistics:
 - the circular standard deviation is σ = √(−2 ln R)/k, with no n−1 correction.
 
 The note above the plot adds R and the **standard error of the mean**, corrected for time correlation in the same way as the autocorrelation panel:
-1. τ_int is the trapezoidal integral of the normalised ACF of the deviations from the mean, up to the first zero crossing, measured in analysed frames;
+1. τ_int is the integral of the normalised ACF of the deviations from the mean, measured in analysed frames, with Sokal's self-consistent window (the smallest M with M ≥ 5 τ_int(M), lags up to half the series) — the same estimator and default lag range as the Autocorrelation panel;
 2. N_eff = N/(2τ_int);
 3. SEM = σ/√N_eff.
 
@@ -311,6 +321,42 @@ With [MDAnalysis](https://www.mdanalysis.org/) installed (included in `requireme
 - **whole molecules**: MONET rebuilds molecules split by the boundary (every atom follows its bonded neighbour by the minimum image), then moves each molecule so that its centroid lies inside the cell;
 - **atoms**: every atom is moved into the cell;
 - **centre on selected atoms**: optionally, the atoms picked in the viewer are first moved to the cell centre. Every plot has **Download plot PNG** (2400 px wide, current theme) and **Download data CSV**.
+
+### Analysis history, console and replay
+
+MONET keeps a text log of every step that changes a result. The log contains:
+- the input file, with its SHA-256;
+- the cell and the time axis;
+- each analysis, with its parameters and key numbers;
+- derived trajectories, extraction and exports.
+
+View-only actions such as rotating, zooming or changing colours are not logged. The log stays on your computer: the launcher autosaves it in `~/.monet/sessions/` (change the folder with `--sessions-dir`), and it stores file names, never full paths.
+
+Open **History** (Ctrl+`) for the drawer:
+
+- **Console:**
+  - Each step appears as a call, for example `acf(quantity="dihedral", groups=[[228, 227, 289, 225]], dt=0.4838, tau_int_method="sokal")`.
+  - Click a line, edit it and press Enter. The analysis runs again through its panel, with the same checks as the Run button, and the new step is linked to the original.
+  - `help()` lists the analyses; `help(acf)` lists the parameters of one.
+  - Atoms are MONET IDs; `dt` comes from the time axis.
+- **History:**
+  - filters, details and parent chains (e.g. `S1 → #9 subsample → S2`);
+  - a note and a ☆ *final* mark on each step;
+  - *History: on / paused*: while paused, nothing is logged, and the report and `replay.py` warn about the gap.
+- **Save session:** a ZIP containing:
+  - `session.json`;
+  - `methods.md`, and `methods.docx` when pandoc is installed. The report lists the software versions with citations, the input checksums and the steps, and pre-fills the reporting checklist of `docs/md-analysis-workflow.md` §12.
+  - `replay.py`.
+- **Open session:**
+  - It restores a saved log read-only and never re-runs anything. While it stays read-only, no analysis runs until its trajectory is loaded.
+  - Opening a session starts a fork: the restored copy gets a new creation time (`forked_from` records the one it was opened from), so it is autosaved to its own file and never overwrites the history it came from.
+  - Load the trajectory with the same SHA-256 to continue it.
+  - Loading a trajectory also offers its previous autosaved history.
+- **replay.py:**
+  - Run `python replay.py --monet /path/to/MONET` in the folder that holds the trajectory.
+  - It checks the input checksums (`--force` skips this), re-runs each step headless, writes `stepNN_<action>.json` to `--out`, and compares the logged raw numbers (τ, τ_int, t₀, D, frame counts, …), printing `OK` or `DIFF` against them (`--rtol`, default 1e-6). Steps with nothing raw logged to compare (bond/angle/dihedral series, whose report values are statistics such as a mean) print `RAN` instead of a false `OK`.
+  - Session files are shareable; every value in one is untrusted. replay.py embeds them only as safe literals or single-line comments, never as executable code, so a crafted or shared session file cannot inject code into the generated script.
+  - Edit it like a notebook.
 
 ## Convert
 

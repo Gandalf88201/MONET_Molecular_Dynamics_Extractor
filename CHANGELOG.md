@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+- Autocorrelation: Sokal (default) and Geyer estimators of τ_int with its error; run length in units of τ with warnings; residual correlation g and N_eff of the sampled configurations.
+- Changed: the default τ_int estimator is now Sokal's window (previously the first zero crossing), so τ_int, N_eff and the standard errors differ from 2.1; choose *first zero crossing* in the Autocorrelation tab to reproduce earlier results.
+- Block averaging (Flyvbjerg–Petersen) chart under the ACF, with plateau detection.
+- Detect equilibration (maximum N_eff, Chodera 2016) and crop to the production window.
+- Plot-note SEMs use the same Sokal window as the ACF panel.
+- Fix: markers, lag zoom and the player cursor now work on axes with values of 1,000 and above.
+- Fix: activating the MDAnalysis aligned trajectory multiplies the MD steps per saved frame by the frame step it was written with, so later times (ACF, τ, MSD, VDOS, t₀) are no longer too small.
+- Analysis history:
+  - MONET keeps a text log of every step that changes a result: input files with SHA-256, cell, time axis, analyses with their parameters and key numbers, derived trajectories, extraction and exports;
+  - it is autosaved in `~/.monet/sessions/` (launcher option `--sessions-dir`) and can be paused and resumed;
+  - cleared analyses stay in the log, marked *cleared*.
+- History drawer (History button or Ctrl+`):
+  - a console shows every analysis as a readable call such as `acf(quantity="dihedral", groups=[[1, 2, 3, 4]], …)`;
+  - click a line, edit it and press Enter to re-run it through its panel; the new step is linked to the original;
+  - the History tab has filters, notes and a *final* mark.
+- Sessions:
+  - *Save session* downloads a ZIP with `session.json`, a methods report (Markdown, and Word when pandoc is installed) and `replay.py`;
+  - *Open session* restores the log read-only until the trajectory with the same SHA-256 is loaded; while it stays read-only, no analysis runs;
+  - opening a session starts a fork (a new creation time, `forked_from` the original), so it never overwrites the history it came from;
+  - loading a trajectory offers its previous history.
+- Methods report: software versions with citations, input checksums, the steps with their key numbers, and the reporting checklist of the workflow document pre-filled.
+- `replay.py`: re-runs the logged analyses without the browser (`python replay.py --monet /path/to/MONET`), checks the input checksums and compares the logged raw numbers (τ, τ_int, t₀, D, frame counts, …), reporting every one that differs (`--rtol`, default 1e-6); steps without such numbers (e.g. bond lengths, whose report values are statistics) print `RAN` rather than a false `OK`. Session files are shareable and untrusted, so `replay.py` embeds their values only as safe literals or single-line comments, never as executable code.
+- Fix: opening a saved session no longer overwrites the (possibly newer) autosave it was opened from once its trajectory is attached and autosave resumes — opening now forks the session first.
+- Fix: an ASE step that is still running when *Open session*, a resume or a new trajectory load swaps the current session can no longer finish or fail onto an unrelated step of the newly current session; *Open session* is also disabled while an analysis is running.
+- Fix: `replay.py` generation no longer splices in a source id that was never assigned in the script (e.g. a trajectory derived while the history was paused, or not logged) — the step is skipped with an explanatory comment instead of raising `NameError` when the script runs.
+- Fix: bond/angle/dihedral series keys in the log and methods report are relabelled from file indices to MONET atom IDs (coordination labels keep the per-atom names from ASE).
+- Fix: continuing a session (resume, or reattaching an opened session's trajectory) refreshes the logged software versions so the report reflects the current environment.
+
 ## 2.1.0
 
 - Right-drag (or Shift-drag) moves the structure in both 3D viewers; right-click opens a selection menu instead of the browser menu.

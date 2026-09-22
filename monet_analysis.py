@@ -229,11 +229,110 @@ def autocorrelation(series, mode='linear', max_lag=None, period=360.0):
     return acf[:max_lag + 1]
 
 
-def correlation_time(lags, acf, fit_until='zero', model='exp'):
+TAU_INT_METHODS = ('sokal', 'geyer', 'zero')
+
+
+def integrated_time(acf, dt=1.0, method='sokal', c=5.0, n_samples=None):
+    """Integrated autocorrelation time of a normalised ACF sampled every `dt`.
+
+    tau_int = dt (1/2 + sum_{k=1}^{M} C(k)); the statistical inefficiency is g = 2 tau_int / dt.
+    method  'sokal': smallest window M >= c tau_int(M), c = 5 (Madras & Sokal 1988; Sokal 1997);
+            'geyer': initial monotone sequence of the pair sums C(2k) + C(2k+1) (Geyer 1992);
+            'zero':  trapezoidal integral up to the first non-positive C (MONET <= 2.1).
+    With `n_samples` = N, the error is tau_int sqrt(2 (2M + 1) / N) (Madras & Sokal 1988; Wolff 2004).
+    """
+    acf = np.asarray(acf, dtype=float)
+    n = len(acf)
+    if method not in TAU_INT_METHODS:
+        raise ValueError(f'Unknown τ_int estimator {method!r}: use sokal, geyer or zero.')
+    if n < 2:
+        raise ValueError('The ACF needs at least two lags.')
+    if method == 'zero':
+        below = np.flatnonzero(acf <= 0)
+        converged = bool(len(below))
+        window = int(below[0]) if converged else n
+        tau = float(np.sum((acf[1:window] + acf[:window - 1]) / 2)) if window > 1 else math.nan
+    elif method == 'sokal':
+        running = 0.5 + np.cumsum(acf[1:])
+        hits = np.flatnonzero(np.arange(1, n) >= c * running)
+        converged = bool(len(hits))
+        window = int(hits[0]) + 1 if converged else n - 1
+        tau = float(running[window - 1])
+    else:
+        pairs = acf[:n - n % 2].reshape(-1, 2).sum(axis=1)
+        negative = np.flatnonzero(pairs <= 0)
+        converged = bool(len(negative))
+        stop = int(negative[0]) if converged else len(pairs)
+        tau = float(np.minimum.accumulate(pairs[:stop]).sum() - 0.5) if stop else math.nan
+        window = 2 * stop
+    error = tau * math.sqrt(2 * (2 * window + 1) / n_samples) if n_samples and math.isfinite(tau) else math.nan
+    tau_int = tau * dt
+    tau_int_error = error * dt
+    return {'tau_int': tau_int, 'tau_int_error': tau_int_error, 'window': window,
+            'converged': converged, 'method': method}
+
+
+def block_average(values, min_blocks=8):
+    """Blocking analysis of the mean of one series (Flyvbjerg & Petersen 1989).
+
+    Block sizes double from 1 while at least `min_blocks` blocks remain. For each size the standard
+    error of the mean is the scatter of the block means / sqrt(m), with error SEM / sqrt(2 (m - 1)).
+    The plateau is the first size whose SEM the next two sizes do not exceed by more than their own
+    error; None while the SEM keeps growing (run too short). g = N SEM^2 / sigma^2.
+    """
+    if min_blocks < 2:
+        raise ValueError('Blocking needs at least two blocks.')
+    x = np.asarray(values, dtype=float)
+    n = len(x)
+    sigma = float(x.std(ddof=1)) if n > 1 else 0.0
+    sizes, sems, errors = [], [], []
+    size = 1
+    while n // size >= min_blocks:
+        m = n // size
+        means = x[:m * size].reshape(m, size).mean(axis=1)
+        sem = float(means.std(ddof=1) / math.sqrt(m))
+        sizes.append(size)
+        sems.append(sem)
+        errors.append(sem / math.sqrt(2 * (m - 1)))
+        size *= 2
+    plateau = next((i for i in range(len(sizes) - 2)
+                    if sems[i + 1] <= sems[i] + errors[i + 1] and sems[i + 2] <= sems[i] + errors[i + 2]), None)
+    plateau_sem = sems[plateau] if plateau is not None else math.nan
+    g = n * plateau_sem ** 2 / sigma ** 2 if plateau is not None and sigma > 0 else math.nan
+    return {'sizes': sizes, 'sem': sems, 'sem_error': errors, 'plateau_index': plateau,
+            'plateau_sem': plateau_sem, 'g': g}
+
+
+def detect_equilibration(values, candidates=50, method='sokal'):
+    """Start of the production window by maximum effective sample size (Chodera 2016).
+
+    For trial origins t0 spread over the first half of the series, g(t0) = 2 tau_int of values[t0:]
+    (in samples, at least 1) and N_eff(t0) = (N - t0) / g(t0); the chosen t0 maximises N_eff.
+    """
+    x = np.asarray(values, dtype=float)
+    n = len(x)
+    if n < 16:
+        raise ValueError('Equilibration detection needs at least 16 frames.')
+    starts = np.unique(np.linspace(0, n // 2, candidates).astype(int))
+    g, n_eff = [], []
+    for t0 in starts:
+        segment = x[t0:]
+        acf = autocorrelation(segment, 'linear', len(segment) // 2)
+        tau = integrated_time(acf, 1.0, method)['tau_int']
+        g0 = max(1.0, 2 * tau) if math.isfinite(tau) else 1.0
+        g.append(g0)
+        n_eff.append((n - t0) / g0)
+    best = int(np.argmax(n_eff))
+    return {'starts': starts.tolist(), 'g': g, 'n_effective': n_eff, 't0': int(starts[best]),
+            'g_t0': g[best], 'n_effective_t0': n_eff[best]}
+
+
+def correlation_time(lags, acf, fit_until='zero', model='exp', tau_int_method='zero', n_samples=None):
     """Fit C(t) = exp(-t/tau) (as in the MONET reference workflow) and integrate C(t).
 
     fit_until: 'zero' (first zero crossing), 'efold' (first C < 1/e ... x3 of it), or 'all'.
     model: 'exp' or 'exp_offset', C(t) = (1 - c) exp(-t/tau) + c with an asymptotic plateau c.
+    tau_int_method / n_samples: estimator and sample count passed to integrated_time.
     Returns tau_fit, its standard error, tau_int, the plateau and the fitted window.
     """
     from scipy.optimize import curve_fit
@@ -250,7 +349,9 @@ def correlation_time(lags, acf, fit_until='zero', model='exp'):
         end = zero
     end = max(end, 3)
     t, c = lags[:end], acf[:end]
-    tau_int = float(np.sum((acf[:zero][1:] + acf[:zero][:-1]) / 2 * np.diff(lags[:zero]))) if zero > 1 else float('nan')
+    step = float(lags[1] - lags[0]) if len(lags) > 1 else 1.0
+    integral = integrated_time(acf, step, tau_int_method, n_samples=n_samples)
+    tau_int = integral['tau_int']
     guess = tau_int if math.isfinite(tau_int) and tau_int > 0 else max(t[-1], 1e-9) / 2
     plateau, plateau_error = 0.0, 0.0
     try:
@@ -266,9 +367,11 @@ def correlation_time(lags, acf, fit_until='zero', model='exp'):
         error = float(np.sqrt(covariance[0, 0])) if np.isfinite(covariance).all() else float('nan')
     except (RuntimeError, ValueError):
         tau, error, plateau, plateau_error = float('nan'), float('nan'), float('nan'), float('nan')
-    return {'tau_fit': float(tau), 'tau_fit_error': error, 'tau_int': tau_int, 'plateau': float(plateau),
-            'plateau_error': plateau_error, 'fit_model': model,
-            'fit_end': float(t[-1]), 'fit_points': int(end), 'decorrelated': bool(len(below))}
+    return {'tau_fit': tau, 'tau_fit_error': error, 'tau_int': tau_int,
+            'plateau': plateau, 'plateau_error': plateau_error, 'fit_model': model,
+            'fit_end': float(t[-1]), 'fit_points': int(end), 'decorrelated': bool(len(below)),
+            'tau_int_error': integral['tau_int_error'], 'tau_int_window': integral['window'],
+            'tau_int_method': tau_int_method, 'tau_int_converged': integral['converged']}
 
 
 def molecule_tree(symbols, positions, cell, pbc, mult=1.2):

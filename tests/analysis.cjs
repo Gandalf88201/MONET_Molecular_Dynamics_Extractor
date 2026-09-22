@@ -14,6 +14,19 @@ const bridge = command => {
   return JSON.parse(out.trim().split('\n').pop())
 }
 const near = (a, b, tol, label) => assert.ok(Math.abs(a - b) <= tol, `${label}: ${a} vs ${b} (tol ${tol})`)
+// Run Python against monet_analysis and parse its JSON (NaN becomes null).
+const py = code => JSON.parse(execFileSync(python, ['-c', `import json, math, sys
+import numpy as np
+sys.path.insert(0, sys.argv[1])
+import monet_analysis as ma
+def dump(obj):
+    print(json.dumps(obj, allow_nan=True).replace('NaN', 'null'))
+def ou(n, tau=40.0, sd=15.0, seed=3):
+    rng = np.random.default_rng(seed); x = np.zeros(n)
+    for i in range(1, n):
+        x[i] = x[i - 1] * math.exp(-1 / tau) + sd * math.sqrt(1 - math.exp(-2 / tau)) * rng.normal()
+    return x
+${code}`, root]).toString())
 
 // Synthetic trajectories generated with a fixed seed.
 execFileSync(python, ['-c', `
@@ -66,6 +79,13 @@ write('waters.xyz', ['O', 'H', 'H'] * 6, [np.concatenate([wat + o + 0.2 * f for 
 # The same torsion, randomly flipped by 180 deg in each frame (equivalent orientations of a symmetric group).
 flips = np.radians(theta + 180 * rng.integers(0, 2, len(theta)))
 write('torsion-flip.xyz', ['C', 'C', 'C', 'C'], [[[1, 0, 0], [0, 0, 0], [0, 0, 1.5], [np.cos(th), np.sin(th), 1.5]] for th in flips])
+# 7) Torsion relaxing from 150 deg to 90 deg (tau = 200 fs) with OU noise (tau = 40 fs), dt = 1 fs.
+rr = np.random.default_rng(11)
+noise = np.zeros(6000)
+for i in range(1, 6000):
+    noise[i] = noise[i - 1] * np.exp(-1 / 40) + 15 * np.sqrt(1 - np.exp(-2 / 40)) * rr.normal()
+relax = np.radians(90 + 60 * np.exp(-np.arange(6000) / 200) + noise)
+write('torsion-relax.xyz', ['C', 'C', 'C', 'C'], [[[1, 0, 0], [0, 0, 0], [0, 0, 1.5], [np.cos(th), np.sin(th), 1.5]] for th in relax])
 `, temp])
 
 // Kabsch: rigid motion has zero aligned RMSD but a large raw RMSD.
@@ -166,7 +186,7 @@ sys.path.insert(0, sys.argv[1])
 import monet_analysis
 t = np.arange(0, 300.0)
 acf = 0.7 * np.exp(-t / 20) + 0.3 + 0.002 * np.sin(t)
-print(json.dumps(monet_analysis.correlation_time(t, acf, 'all', 'exp_offset')))
+print(json.dumps(monet_analysis.correlation_time(t, acf, 'all', 'exp_offset'), allow_nan=True).replace('NaN', 'null'))
 `, root]).toString())
 near(plateauFit.tau_fit, 20, 0.2, 'offset tau'); near(plateauFit.plateau, 0.3, 0.005, 'plateau c'); assert.equal(plateauFit.fit_model, 'exp_offset'); checks++
 r = bridge({ action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, max_lag: 300, fit_model: 'exp_offset', fit_until: 'all' })
@@ -288,5 +308,74 @@ assert.ok(Math.max(...r.statistics.map(st => st.rmsf)) < 1e-6); checks++
 r = bridge({ action: 'fluctuations', filename: chain, quantity: 'atoms', indices: [0, 1, 2, 3], mic: true, align: false })
 assert.ok(r.statistics[3].rmsf > r.statistics[1].rmsf); assert.ok(r.statistics[3].rmsf < 2, 'unwrapped across the boundary'); checks++
 
+// τ_int of an exact exponential ACF (τ = 40 lags): Sokal window (c = 5), Geyer sequence, first zero.
+const tauInt = py(`
+exact = math.exp(-1 / 40) ** np.arange(2000)
+white = np.zeros(200); white[0] = 1
+out = {m: ma.integrated_time(exact, 1.0, m, n_samples=20000) for m in ma.TAU_INT_METHODS}
+out['half_dt'] = ma.integrated_time(exact, 0.5, 'sokal')
+out['white'] = {m: ma.integrated_time(white, 1.0, m) for m in ma.TAU_INT_METHODS}
+try:
+    ma.integrated_time(exact, 1.0, 'magic'); out['bad'] = False
+except ValueError:
+    out['bad'] = True
+t = np.arange(0, 400.0)
+out['ct'] = ma.correlation_time(t, np.exp(-t / 40), 'zero', 'exp', 'sokal', 20000)
+dump(out)
+`)
+near(tauInt.sokal.tau_int, 39.7292, 1e-3, 'Sokal τ_int'); assert.equal(tauInt.sokal.window, 199); assert.equal(tauInt.sokal.converged, true); checks++
+near(tauInt.sokal.tau_int_error, 39.7292 * Math.sqrt(2 * 399 / 20000), 1e-3, 'Madras–Sokal error of τ_int'); checks++
+near(tauInt.geyer.tau_int, 40.0021, 1e-3, 'Geyer τ_int'); near(tauInt.zero.tau_int, 40.0021, 1e-3, 'first-zero τ_int'); assert.equal(tauInt.zero.converged, false); checks++
+near(tauInt.half_dt.tau_int, 39.7292 / 2, 1e-3, 'τ_int scales with dt'); checks++
+near(tauInt.white.sokal.tau_int, 0.5, 1e-12, 'white Sokal'); near(tauInt.white.geyer.tau_int, 0.5, 1e-12, 'white Geyer'); assert.equal(tauInt.white.zero.tau_int, null); checks++
+assert.equal(tauInt.bad, true); checks++
+near(tauInt.ct.tau_fit, 40, 1e-6, 'fit unchanged'); near(tauInt.ct.tau_int, 39.7292, 1e-3, 'correlation_time uses the chosen estimator'); assert.equal(tauInt.ct.tau_int_method, 'sokal'); assert.equal(tauInt.ct.tau_int_window, 199); checks++
+// Regression test: correlation_time with non-positive ACF should return dict (not raise) and tau_int should be null in JSON.
+const negativeAcf = py(`
+lags = [0, 1, 2, 3]
+acf = [1.0, -0.2, -0.3, -0.1]
+result = ma.correlation_time(lags, acf)
+dump(result)
+`)
+assert.ok(typeof negativeAcf === 'object', 'correlation_time returns an object'); assert.equal(negativeAcf.tau_int, null, 'tau_int is null for non-positive ACF'); checks++
+
+// Blocking (Flyvbjerg–Petersen): OU with τ = 40 (g ≈ 80, SEM ≈ 15·√(80/20000) ≈ 0.94), white noise, a too-short run.
+const blocks = py(`
+dump({'ou': ma.block_average(ou(20000)), 'white': ma.block_average(np.random.default_rng(5).normal(size=20000)),
+      'short': ma.block_average(ou(300))})
+`)
+assert.deepEqual(blocks.ou.sizes.slice(0, 4), [1, 2, 4, 8]); assert.equal(blocks.ou.sizes.at(-1), 2048); checks++
+assert.equal(blocks.ou.sizes[blocks.ou.plateau_index], 256); near(blocks.ou.plateau_sem, 0.943, 0.1, 'blocking SEM'); near(blocks.ou.g, 80, 12, 'blocking g'); checks++
+assert.equal(blocks.white.plateau_index, 0); near(blocks.white.g, 1, 1e-9, 'white g'); checks++
+assert.equal(blocks.short.plateau_index, null); assert.equal(blocks.short.g, null); checks++
+
+// Equilibration (Chodera 2016): a 60° transient relaxing with τ = 200 is discarded; a stationary run keeps t₀ = 0.
+const equil = py(`
+t = np.arange(6000.0)
+dump({'relax': ma.detect_equilibration(60 * np.exp(-t / 200) + ou(6000, seed=11)),
+      'flat': ma.detect_equilibration(ou(6000, seed=12))})
+`)
+assert.ok(equil.relax.t0 >= 250 && equil.relax.t0 <= 1000, `t0 = ${equil.relax.t0}`); assert.ok(equil.relax.n_effective_t0 > equil.relax.n_effective[0]); checks++
+assert.equal(equil.flat.t0, 0); checks++
+assert.equal(equil.relax.starts[0], 0); assert.equal(equil.relax.starts.at(-1), 3000); assert.equal(equil.relax.g.length, equil.relax.starts.length); checks++
+
+// Bridge: default Sokal τ_int with error and window, blocking output, equilibration action, launcher whitelist.
+const ou1 = { action: 'acf', filename: path.join(temp, 'torsion-ou.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1, max_lag: 300 }
+r = bridge(ou1)
+assert.equal(r.tau_int_method, 'sokal'); near(r.tau_int, 40, 8, 'Sokal τ_int on OU'); assert.ok(r.tau_int_error > 2 && r.tau_int_error < 15, r.tau_int_error); assert.equal(r.tau_int_converged, true); checks++
+assert.ok(Number.isInteger(r.blocking.plateau_index), JSON.stringify(r.blocking)); near(r.blocking.g, 2 * r.tau_int, 0.35 * 2 * r.tau_int, 'blocking g vs 2 τ_int'); assert.equal(r.blocking.times[1], 2); checks++
+r = bridge({ ...ou1, tau_int_method: 'zero' })
+assert.equal(r.tau_int_method, 'zero'); assert.equal(r.tau_int_converged, true); checks++
+assert.equal(bridge({ ...ou1, tau_int_method: 'magic' }).ok, false); checks++
+const relax = { action: 'equilibration', filename: path.join(temp, 'torsion-relax.xyz'), quantity: 'dihedral', groups: [[0, 1, 2, 3]], dt: 1 }
+r = bridge(relax)
+assert.equal(r.ok, true, JSON.stringify(r).slice(0, 300)); assert.ok(r.t0 >= 250 && r.t0 <= 1000, r.t0); assert.equal(r.t0_frame, r.t0); near(r.t0_time, r.t0, 1e-9, 't0 in fs'); checks++
+assert.ok(r.n_effective_t0 > r.n_effective_full); assert.equal(r.times.length, r.n_effective.length); checks++
+r = bridge({ ...relax, frame_step: 2 })
+assert.equal(r.t0_frame, 2 * r.t0); near(r.t0_time, 2 * r.t0, 1e-9, 't0 with frame step'); checks++
+assert.equal(bridge({ ...relax, quantity: 'volume' }).ok, false); checks++
+const launcher = fs.readFileSync(path.join(root, 'start_monet.py'), 'utf8')
+assert.match(launcher, /'equilibration'/); assert.match(launcher, /'tau_int_method'/); checks++
+
 fs.rmSync(temp, { recursive: true, force: true })
-console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations).`)
+console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations, tau_int).`)

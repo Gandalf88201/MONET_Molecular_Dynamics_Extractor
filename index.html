@@ -21,6 +21,7 @@
       <span class="ase-dot" id="ase-dot"></span>
       <span id="ase-badge-text">ASE …</span>
     </div>
+    <button class="theme-toggle" id="history-toggle" type="button" aria-pressed="false" title="Analysis history and console (Ctrl+`)">History</button>
     <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">☀ Day</button>
     <div class="titlebar-author">Dr. T. Francese &nbsp;·&nbsp; Univ. of Chicago</div>
   </div>
@@ -1037,7 +1038,14 @@
             <option value="efold">3 × first 1/e crossing</option>
             <option value="all">whole lag range</option>
           </select>
+          <label class="field-label" for="acf-tauint">τ_int estimator</label>
+          <select class="field-input field-input-sm acf-select" id="acf-tauint">
+            <option value="sokal">Sokal window (M ≥ 5 τ_int)</option>
+            <option value="geyer">Geyer initial monotone sequence</option>
+            <option value="zero">integral to the first zero crossing (MONET ≤ 2.1)</option>
+          </select>
           <button class="btn btn-sm btn-accent" id="btn-run-acf">Compute ACF</button>
+          <button class="btn btn-sm" id="btn-run-equil" title="Chodera 2016: start of production where N_eff is largest">Detect equilibration</button>
         </div>
         <div class="info-box hidden" id="acf-error" role="alert"></div>
         <div class="info-box hidden" id="acf-subsample-result" aria-live="polite">
@@ -1047,6 +1055,7 @@
         <p class="panel-desc">Dihedrals are unwrapped across 0/360° (or 0/180° when folded) before the linear correlation; the circular mode uses z = e^{iθ} with its mean removed, so both decay to zero. The default lag range is half of the run: longer lags average over too few time origins. τ gives the decorrelation time: sampling configurations every ≥ τ yields statistically independent structures.</p>
         <div class="info-box acf-result hidden" id="acf-result">
           <div id="acf-tau-text"></div>
+          <p class="panel-desc" id="acf-length-text"></p>
           <div class="acf-plateau" id="acf-plateau" role="group" aria-labelledby="acf-plateau-title">
             <strong id="acf-plateau-title">Asymptotic plateau of the fit — please check and validate</strong>
             <p class="panel-desc" id="acf-plateau-text"></p>
@@ -1083,6 +1092,29 @@
         </div>
         <canvas class="chart-canvas" id="chart-acf"></canvas>
         <div class="chart-placeholder" id="chart-acf-ph">Autocorrelation function with exponential fit</div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-acfblock" disabled>Clear block analysis</button>
+          <button class="btn btn-sm" id="download-acfblock" disabled>Download block-averaging PNG</button>
+          <button class="btn btn-sm" id="csv-acfblock" disabled>Download block-averaging CSV</button>
+        </div>
+        <p class="panel-desc hidden" id="acfblock-text" aria-live="polite"></p>
+        <canvas class="chart-canvas" id="chart-acfblock"></canvas>
+        <div class="chart-placeholder" id="chart-acfblock-ph">Block averaging: standard error of the mean against block length (Flyvbjerg–Petersen)</div>
+        <div class="info-box hidden" id="equil-result" aria-live="polite">
+          <span id="equil-text"></span>
+          <button class="btn btn-sm btn-accent" id="equil-crop" disabled>✂ Use the production window from t₀</button>
+        </div>
+        <div class="ase-prog-row hidden" id="equil-prog-row">
+          <div class="progress-bar"><div class="progress-fill" id="equil-prog-fill"></div></div>
+          <span id="equil-prog-label">—</span>
+        </div>
+        <div class="ase-plot-actions">
+          <button class="btn btn-sm" id="clear-equil" disabled>Clear equilibration</button>
+          <button class="btn btn-sm" id="download-equil" disabled>Download equilibration PNG</button>
+          <button class="btn btn-sm" id="csv-equil" disabled>Download equilibration CSV</button>
+        </div>
+        <canvas class="chart-canvas" id="chart-equil"></canvas>
+        <div class="chart-placeholder" id="chart-equil-ph">Effective sample size N_eff against the start of production t₀ (Chodera 2016)</div>
       </div>
 
       <!-- MDAnalysis analyses -->
@@ -1243,6 +1275,50 @@
 </footer>
 
 <div id="viewer-context-menu" class="ase-context-menu viewer-context-menu hidden" role="menu"></div>
+
+<!-- ===== ANALYSIS HISTORY AND CONSOLE ===== -->
+<aside class="history-drawer hidden" id="history-drawer" aria-label="Analysis history and console">
+  <div class="history-head">
+    <button class="history-tab active" id="history-tab-console" data-htab="console" type="button">Console</button>
+    <button class="history-tab" id="history-tab-log" data-htab="log" type="button">History</button>
+    <button class="btn btn-sm" id="history-pause" type="button" aria-pressed="false">History: on</button>
+    <span class="history-badge hidden" id="history-save-badge">history not saved</span>
+    <span class="history-badge hidden" id="history-readonly">read-only</span>
+    <button class="history-close" id="history-close" type="button" title="Close">×</button>
+  </div>
+  <div class="history-pane active" id="history-pane-console">
+    <div class="console-lines" id="console-lines" role="log"></div>
+    <div class="console-output hidden" id="console-output"></div>
+    <div class="console-input-row">
+      <span class="console-prompt">›</span>
+      <input class="field-input console-input" id="console-input" spellcheck="false" autocomplete="off" placeholder='acf(quantity="dihedral", groups=[[1, 2, 3, 4]])   ·   help()' />
+    </div>
+  </div>
+  <div class="history-pane" id="history-pane-log">
+    <div class="history-filters" id="history-filters">
+      <label><input type="checkbox" data-filter="analysis" checked /> analyses</label>
+      <label><input type="checkbox" data-filter="derive" checked /> derived</label>
+      <label><input type="checkbox" data-filter="export" checked /> exports</label>
+      <label><input type="checkbox" data-filter="error" checked /> errors</label>
+      <label><input type="checkbox" data-filter="cleared" checked /> cleared</label>
+      <label><input type="checkbox" data-filter="other" checked /> inputs &amp; settings</label>
+    </div>
+    <ol class="history-list" id="history-list"></ol>
+    <div class="history-detail hidden" id="history-detail">
+      <pre id="history-detail-text"></pre>
+      <label class="field-label" for="history-note">Note</label>
+      <textarea class="field-input" id="history-note" rows="2"></textarea>
+      <label><input type="checkbox" id="history-final" /> ☆ final (use in the paper)</label>
+    </div>
+    <div class="history-actions">
+      <button class="btn btn-sm" id="history-save-session" type="button">Save session</button>
+      <button class="btn btn-sm" id="history-open-session" type="button">Open session</button>
+      <button class="btn btn-sm" id="history-export-methods" type="button">Export methods report</button>
+      <button class="btn btn-sm" id="history-export-replay" type="button">Export replay.py</button>
+      <label><input type="checkbox" id="history-final-only" /> final steps only</label>
+    </div>
+  </div>
+</aside>
 <script src="xyz.js"></script>
 <script src="viewer.js"></script>
 <script src="qm-inputs.js"></script>
@@ -1251,6 +1327,10 @@
   <script src="fit.js"></script>
   <script src="pbc.js"></script>
 <script src="plot.js"></script>
+<script src="provenance.js"></script>
+<script src="console.js"></script>
+<script src="report.js"></script>
+<script src="replaygen.js"></script>
 <script src="renderer.js"></script>
 </body>
 </html>

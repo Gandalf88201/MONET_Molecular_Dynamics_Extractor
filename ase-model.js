@@ -125,20 +125,38 @@
     return Array.from(re.subarray(0, n), v => v / size)
   }
 
-  // Integrated autocorrelation time (in samples) of the deviations, as in the Python ACF panel:
-  // trapezoidal integral of the normalised ACF up to its first non-positive value.
+  // Integrated autocorrelation time (in lags) of a normalised ACF with Sokal's self-consistent window:
+  // the smallest M with M >= c·τ(M), τ(M) = 1/2 + Σ_{k=1}^{M} C(k), c = 5 (Madras & Sokal 1988),
+  // the same estimator as monet_analysis.integrated_time(method='sokal').
+  function tauFromAcf (acf, c = 5) {
+    let running = 0.5
+    for (let m = 1; m < acf.length; m++) {
+      running += acf[m]
+      if (m >= c * running) return running
+    }
+    return acf.length > 1 ? running : NaN
+  }
+
+  // τ_int (in samples) of the deviations; lags up to half the series, as in the ACF panel.
   function integratedTime (deviations) {
     const n = deviations.length
     if (n < 4) return NaN
     const sums = autocorrelationSums(deviations)
     if (!(sums[0] > 0)) return NaN
     const acf = sums.map((v, m) => (v / (n - m)) / (sums[0] / n))
-    let zero = acf.findIndex(v => v <= 0)
-    if (zero < 0) zero = n
-    if (zero < 2) return NaN
-    let tau = 0
-    for (let m = 1; m < zero; m++) tau += (acf[m] + acf[m - 1]) / 2
-    return tau
+    return tauFromAcf(acf.slice(0, Math.floor(n / 2) + 1))
+  }
+
+  // Statistical inefficiency of configurations taken every `lagStride` lags: g = 1 + 2 Σ_{j≥1} C(j·s),
+  // summed while C > 0. g ≈ 1 means the sampled configurations are uncorrelated (workflow document §4.3).
+  function subsampleInefficiency (acf, lagStride) {
+    const s = Math.max(1, Math.round(lagStride))
+    let g = 1
+    for (let j = s; j < acf.length; j += s) {
+      if (!(acf[j] > 0)) break
+      g += 2 * acf[j]
+    }
+    return g
   }
 
   // Mean, standard deviation (spread) and standard error of the mean corrected for time correlation.
@@ -183,7 +201,7 @@
     return { centres: counts.map((_, i) => low + (i + 0.5) * width), density: counts.map(count => count / (data.length * width)), width }
   }
 
-  const api = { atomMap, groupsFromIds, selectedIndices, cellParameters, cellVectors, verifyAtoms, seriesLabel, seriesStats, histogram, ANGLE_PERIODS }
+  const api = { atomMap, groupsFromIds, selectedIndices, cellParameters, cellVectors, verifyAtoms, seriesLabel, seriesStats, histogram, ANGLE_PERIODS, tauFromAcf, subsampleInefficiency }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.MonetASEModel = api
 })(globalThis)

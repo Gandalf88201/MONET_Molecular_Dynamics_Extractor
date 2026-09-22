@@ -27,6 +27,67 @@ const state = {
 }
 
 // =============================================================================
+// ── Analysis history (provenance.js) ─────────────────────────────────────────
+// =============================================================================
+
+// Every step that changes a result is logged as text; view-only actions are not. Logging never breaks an analysis.
+const MONET_VERSION = document.querySelector('.titlebar-sub')?.textContent.match(/v\s*([\d.]+)/)?.[1] || null
+const monetHistory = {
+  env: { monet_version: MONET_VERSION },
+  session: MonetProvenance.create({ monet_version: MONET_VERSION }),
+  activeSource: null,       // source id of the trajectory the analyses run on
+  sourceByPath: new Map(),  // bridge file key → source id
+  stepByPath: new Map(),    // derived file key → id of the step that wrote it
+  stepByKind: {},           // chart kind → id of the step drawn there
+  rerunOf: null,            // { id, action } set by the console for its next run
+  consoleRerun: null,       // the history line copied into the console input
+  started: false,           // the last console run reached runAse
+  readOnly: false,          // an opened session whose trajectory is not attached yet
+  selected: null,           // step shown in the history detail
+  lastTime: null,           // JSON of the last logged time axis
+  saveTimer: null,
+  warned: false
+}
+const fileName = name => String(name || '').split(/[\\/]/).pop()
+
+// session defaults to the current one; a caller that captured a session earlier (e.g. before an
+// awaited ASE call) can pass it explicitly, so a session swap meanwhile logs onto the session the
+// step actually belongs to, never onto whatever session happens to be current when the call lands.
+function historyDo (fn, session = monetHistory.session) {
+  try { return fn(session) } catch (error) {
+    try { session.record({ kind: 'logging_error', error: String(error?.message || error) }) } catch {}
+    if (!monetHistory.warned) {
+      monetHistory.warned = true
+      try { setStatus('The analysis history could not log a step: ' + (error?.message || error)) } catch {}
+    }
+    return null
+  }
+}
+
+function historyRecord (fields) {
+  if (monetHistory.readOnly) return null
+  const id = historyDo(P => P.record({ source: monetHistory.activeSource, ...fields }))
+  onHistoryChange()
+  return id
+}
+
+function onHistoryChange () {
+  clearTimeout(monetHistory.saveTimer)
+  monetHistory.saveTimer = setTimeout(saveHistoryNow, 1000)
+  if (typeof renderHistory === 'function') { try { renderHistory() } catch (error) { console.warn('History view could not be updated:', error) } }
+}
+
+// Autosave in the launcher's session folder, keyed by the trajectory checksum.
+async function saveHistoryNow () {
+  clearTimeout(monetHistory.saveTimer)
+  if (!window.monet.hasAseServer || !window.monet.sessionSave || monetHistory.readOnly || !monetHistory.session.data.sources.length) return
+  let r
+  try { r = await window.monet.sessionSave(monetHistory.session.toJSON()) } catch (error) { r = { ok: false, error: error.message } }
+  const failed = !r?.ok && !/checksum is not known/.test(r?.error || '')
+  $('history-save-badge')?.classList.toggle('hidden', !failed)
+}
+
+// =============================================================================
 // ── DOM helpers ──────────────────────────────────────────────────────────────
 // =============================================================================
 
@@ -313,6 +374,7 @@ $('next-1').addEventListener('click', async () => {
     const info = await window.monet.analyzeFile(state.filePath)
     if (info.error) throw new Error(info.error)
     state.fileInfo = info
+    await historyLoad(info)
     $('stat-format').textContent = state.source.label ? `${state.source.label} → extXYZ` : info.format
     $('stat-configs').textContent = info.configCount.toLocaleString()
     $('stat-atoms').textContent = info.atomCount.toLocaleString()
@@ -347,8 +409,13 @@ async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
   state.filePath = path
   state.fileInfo = info
   state.derivedLabel = label
-  // One saved frame of the new file spans `strideFactor` frames of the original run.
-  const stride = Number(state.fullTrajectory.mdStride) || 1
+  await historyDerived(path, info, label)
+  // One saved frame of the new file spans `strideFactor` frames of the file that was active just
+  // before this call. md-stride always holds the value of the ACTIVE file, not the full trajectory's,
+  // so it must be the base here: deriving from an already-derived file (e.g. cropping the
+  // equilibration transient out of an uncorrelated trajectory) would otherwise drop the stride
+  // already applied by the earlier crop and desynchronise the time axis from the frames.
+  const stride = Number($('md-stride').value) || 1
   setTimeStride(stride * strideFactor)
   $('inp-freq').value = 1
   await showActiveTrajectory()
@@ -379,6 +446,7 @@ $('restore-full-trajectory').addEventListener('click', async () => {
   state.derivedLabel = null
   state.filePath = full.filePath
   state.fileInfo = full.fileInfo
+  monetHistory.activeSource = monetHistory.sourceByPath.get(full.filePath) ?? monetHistory.activeSource
   state.lastResult = full.lastResult
   setTimeStride(full.mdStride)
   $('inp-freq').value = full.frequency
@@ -643,6 +711,12 @@ async function runProcessing () {
   const sourceAtoms = MonetASEModel.atomMap(state.firstFrame, processedIds)
   $('cancel-processing').classList.remove('hidden')
   $('cancel-processing').disabled = !window.monet.cancel
+  const extractSession = monetHistory.session
+  const extractStep = monetHistory.readOnly ? null : historyDo(P => P.begin({
+    kind: 'extract', action: 'extract', source: monetHistory.sourceByPath.get(state.filePath) ?? monetHistory.activeSource,
+    params: { selected: processedIds, frequency: state.frequency, compute_average: Boolean(state.opts.computeAverage), ...(state.opts.qm ? { qm: state.opts.qm } : {}) },
+    atoms: processedIds
+  }))
   const result = await window.monet.processTrajectory({
     filePath:         state.filePath,
     outputDir:        state.outputDir,
@@ -657,6 +731,8 @@ async function runProcessing () {
   $('cancel-processing').classList.add('hidden')
 
   if (result.error) {
+    if (extractStep != null && extractSession === monetHistory.session) historyDo(P => P.fail(extractStep, result.error))
+    onHistoryChange()
     log('ERROR: ' + result.error, 'error')
     setStatus('Processing failed: ' + result.error)
     $('retry-processing').classList.remove('hidden')
@@ -674,6 +750,7 @@ async function runProcessing () {
   }
   result.sourceAtoms = sourceAtoms
   state.lastResult = result
+  if (extractStep != null) await historyExtracted(extractStep, extractSession, result, sourceAtoms)
   updateAnalysisSource()
   $('next-5').classList.remove('hidden')
 }
@@ -942,15 +1019,18 @@ $('cell-apply').addEventListener('click', () => {
     aseState.cellPbc = ['a', 'b', 'c'].map(axis => $(`cell-pbc-${axis}`).checked)
     invalidateCellAnalyses()
     setStatus('Crystal cell applied without changing Cartesian coordinates.')
+    historyRecord({ kind: 'cell', action: 'apply', params: { cell: aseState.cellParameters, pbc: aseState.cellPbc, mic: aseState.mic } })
   } catch (error) { $('cell-status').textContent = error.message; setStatus(error.message) }
 })
 $('cell-reset').addEventListener('click', () => {
   aseState.cellParameters = null
   invalidateCellAnalyses()
+  historyRecord({ kind: 'cell', action: 'reset', params: { mic: aseState.mic } })
 })
 $('ase-mic').addEventListener('change', () => {
   aseState.mic = $('ase-mic').checked
   invalidateCellAnalyses()
+  historyRecord({ kind: 'cell', action: 'mic', params: { mic: aseState.mic } })
 })
 function cellOptions () {
   return { ...(aseState.cellParameters ? { cell: aseState.cellParameters, pbc: aseState.cellPbc } : {}), mic: aseState.mic }
@@ -976,6 +1056,7 @@ $('cell-read').addEventListener('click', async () => {
     aseViewer.cell = info.cell
     aseViewerNeedsFit = true; resizeAseViewer()
     $('cell-status').textContent = `Using source cell (${info.cellpar.map(v => Number(v.toFixed(5))).join(', ')}); original vector orientation retained. Apply cell would replace it with the standard orientation.`
+    historyRecord({ kind: 'cell', action: 'source', params: { cellpar: info.cellpar, pbc: info.pbc } })
   } catch (error) { $('cell-status').textContent = error.message; setStatus(error.message) }
   finally { aseState.busy = false; updateAseControls() }
 })
@@ -993,6 +1074,7 @@ $('cell-load-file').addEventListener('click', async () => {
     info.cellpar.forEach((v, i) => { $(`cell-${cellFields[i]}`).value = Number(v.toFixed(6)) })
     updateCellPreset()
     const name = fp.split(/[\\/]/).pop()
+    historyRecord({ kind: 'cell', action: 'file', params: { name, cellpar: info.cellpar } })
     if (aseState.analysisAtoms.length) {
       aseState.cellParameters = MonetASEModel.cellParameters('triclinic', cellFields.map(field => $(`cell-${field}`).value))
       aseState.cellPbc = ['a', 'b', 'c'].map(axis => $(`cell-pbc-${axis}`).checked)
@@ -1379,6 +1461,8 @@ const charts = {
   msd: new MonetLineChart('chart-msd', 'chart-msd-ph'),
   vdos: new MonetLineChart('chart-vdos', 'chart-vdos-ph'),
   acf: new MonetLineChart('chart-acf', 'chart-acf-ph'),
+  acfblock: new MonetLineChart('chart-acfblock', 'chart-acfblock-ph'),
+  equil: new MonetLineChart('chart-equil', 'chart-equil-ph'),
   rmsddist: new MonetLineChart('chart-rmsddist', 'chart-rmsddist-ph'),
   bondsdist: new MonetLineChart('chart-bondsdist', 'chart-bondsdist-ph'),
   anglesdist: new MonetLineChart('chart-anglesdist', 'chart-anglesdist-ph'),
@@ -1391,7 +1475,7 @@ const charts = {
 }
 bindPlayerCharts()
 for (const [kind, chart] of Object.entries(charts)) if (chart.enableZoom && !kind.endsWith('dist')) chart.enableZoom()
-const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf', 'mda', 'structure', 'coordination', 'topology', 'fluct']
+const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf', 'equil', 'mda', 'structure', 'coordination', 'topology', 'fluct']
 const lastResults = {}
 
 // Wire up ASE progress listener (once)
@@ -1486,6 +1570,7 @@ function updateAseControls () {
   if (typeof player !== 'undefined') updatePlayerControls()
   $('ase-cancel').disabled = !aseState.busy || !window.monet.cancel
   $('ase-mic').disabled = aseState.busy
+  if ($('console-input')) $('console-input').disabled = aseState.busy || monetHistory.readOnly
 }
 
 async function checkAseStatus () {
@@ -1497,6 +1582,11 @@ async function checkAseStatus () {
   aseState.available = Boolean(r?.ok)
   aseState.version = r?.ase_version
   aseState.mdanalysis = r?.mdanalysis_version || null
+  monetHistory.env = {
+    monet_version: MONET_VERSION, python: r?.python_version ?? null, ase: r?.ase_version ?? null,
+    mdanalysis: r?.mdanalysis_version ?? null, numpy: r?.numpy_version ?? null, scipy: r?.scipy_version ?? null
+  }
+  historyDo(P => P.setEnvironment(monetHistory.env))
   $('mda-availability').textContent = aseState.mdanalysis
     ? `MDAnalysis ${aseState.mdanalysis} on the active trajectory, with the MONET atom IDs as MDAnalysis ids.`
     : 'MDAnalysis is not installed in the launcher Python (python -m pip install MDAnalysis); these analyses and XTC/TRR/DCD import are unavailable.'
@@ -1533,7 +1623,9 @@ function clearAnalysis (kind, report = true) {
   delete lastResults[kind]
   hideAseProgress(`${kind}-prog-row`)
   if ($(`${kind}-prog-label`)) $(`${kind}-prog-label`).textContent = '—'
-  if (kind === 'acf') $('acf-result').classList.add('hidden')
+  if (kind === 'acf') { $('acf-result').classList.add('hidden'); clearAnalysis('acfblock', false) }
+  if (kind === 'acfblock') $('acfblock-text').classList.add('hidden')
+  if (kind === 'equil') $('equil-result').classList.add('hidden')
   if (charts[`${kind}dist`]) clearAnalysis(`${kind}dist`, false)
   for (const id of { msd: ['msd-info'], vdos: ['vdos-info'], mda: ['mda-download', 'mda-activate'] }[kind] || []) $(id).classList.add('hidden')
   if (kind === 'mda') {
@@ -1558,29 +1650,188 @@ function clearAllAnalyses (report = true) {
 
 for (const [kind, chart] of Object.entries(charts)) {
   chart.onChange = updatePlotControls
-  $(`clear-${kind}`).addEventListener('click', () => clearAnalysis(kind))
+  $(`clear-${kind}`).addEventListener('click', () => { historyClear(kind); clearAnalysis(kind) })
   $(`download-${kind}`).addEventListener('click', async () => {
     try {
       await chart.downloadPNG(`MONET-${kind}.png`)
+      historyRecord({ kind: 'export', action: 'png', params: { chart: kind, file: `MONET-${kind}.png` } })
       setStatus('Plot PNG download started.')
     } catch (error) { setStatus(error.message) }
   })
   $(`csv-${kind}`).addEventListener('click', () => {
     try {
       chart.downloadCSV(`MONET-${kind}.csv`)
+      historyRecord({ kind: 'export', action: 'csv', params: { chart: kind, file: `MONET-${kind}.csv` } })
       setStatus('CSV download started.')
     } catch (error) { setStatus(error.message) }
   })
 }
-$('btn-clear-analyses').addEventListener('click', () => clearAllAnalyses())
+$('btn-clear-analyses').addEventListener('click', () => { for (const kind of Object.keys(charts)) historyClear(kind); clearAllAnalyses() })
 $('ase-cancel').addEventListener('click', async () => {
   $('ase-cancel').disabled = true
   setStatus('Cancelling the running calculation …')
   await window.monet.cancel?.('ase')
 })
 
+// Bridge actions logged by runAse: the console analyses, derived trajectories and format conversion.
+const LOGGED_ACTIONS = new Set([...MonetConsole.names(), 'subsample', 'mda_align', 'wrap', 'unwrap', 'convert'])
+const DERIVING_ACTIONS = new Set(['subsample', 'mda_align', 'wrap', 'unwrap'])
+
+function historyBegin (kind, command, mapping) {
+  monetHistory.started = true
+  if (monetHistory.readOnly || kind === 'fluctseries' || !LOGGED_ACTIONS.has(command.action)) return null
+  const rerun = monetHistory.rerunOf?.action === command.action ? monetHistory.rerunOf.id : null
+  monetHistory.rerunOf = null
+  const id = historyDo(P => {
+    const { name, args } = MonetConsole.toCall(command, mapping)
+    const params = Object.fromEntries(Object.entries(command).filter(([key, value]) => !['filename', 'output', 'input', 'file_id'].includes(key) && value !== undefined))
+    return P.begin({
+      kind: DERIVING_ACTIONS.has(command.action) ? 'derive' : command.action === 'convert' ? 'export' : 'analysis',
+      action: command.action, source: monetHistory.sourceByPath.get(command.filename) ?? monetHistory.activeSource,
+      call: MonetConsole.format(name, args), params, atoms: MonetConsole.atomIds(args), rerun_of: rerun
+    })
+  })
+  onHistoryChange()
+  return id
+}
+
+// Series keys of bonds/angles/dihedrals/ase_coordination results are file indices (e.g. "0-1"), not
+// atom labels. Relabel every '-'-separated integer part through the step's mapping (aseIndex →
+// monetId) before it is logged, so the history and methods report read MONET atom IDs. A key whose
+// parts are not all mapped integers (coordination's "C (mean of 2)", "C1", …) is left unchanged.
+function relabelSeriesKeys (series, mapping) {
+  if (!series || typeof series !== 'object' || !Array.isArray(mapping) || !mapping.length) return series
+  const byIndex = new Map(mapping.map(atom => [atom.aseIndex, atom.monetId]))
+  const out = {}
+  for (const [key, value] of Object.entries(series)) {
+    const parts = key.split('-')
+    const mapped = parts.map(part => (/^\d+$/.test(part) && byIndex.has(Number(part)) ? byIndex.get(Number(part)) : null))
+    out[mapped.every(id => id !== null) ? mapped.join('-') : key] = value
+  }
+  return out
+}
+
+// session is the one captured when the step began (see runAse): if it isn't the current one any
+// more -- Open session, a resume or a new load swapped it while this step was in flight -- do
+// nothing, rather than finishing or failing a step id that may not even mean the same thing in
+// whatever session is current now.
+function historyEnd (stepId, session, kind, command, result, mapping) {
+  if (stepId == null || session !== monetHistory.session) return
+  historyDo(P => {
+    if (!result?.ok) return P.fail(stepId, result?.message || result?.error || 'failed')
+    const outputs = []
+    if (result.filePath) {
+      monetHistory.stepByPath.set(result.filePath, stepId)
+      outputs.push({ file: fileName(result.output) || fileName(result.filePath), sha256: result.sha256 || null })
+    } else if (result.output) outputs.push({ file: fileName(result.output) })
+    const forSummary = result.series ? { ...result, series: relabelSeriesKeys(result.series, mapping) } : result
+    P.finish(stepId, forSummary, { outputs })
+    if (!DERIVING_ACTIONS.has(command.action)) monetHistory.stepByKind[kind] = stepId
+  }, session)
+  onHistoryChange()
+}
+
+// Only the user's clear marks a step cleared; analyses cleared by a new source or cell are just forgotten.
+function historyClear (kind) {
+  const id = monetHistory.stepByKind[kind]
+  if (id == null) return
+  delete monetHistory.stepByKind[kind]
+  historyDo(P => P.clear(id))
+  onHistoryChange()
+}
+
+function attachSource (id) {
+  monetHistory.activeSource = id
+  monetHistory.sourceByPath.set(state.filePath, id)
+}
+
+// A loaded trajectory starts a new history, unless it is the trajectory of the current one.
+async function historyLoad (info) {
+  let digest = null
+  try { digest = await window.monet.fileDigest?.(state.source.original) } catch {}
+  const name = fileName(state.source.original)
+  const first = monetHistory.session.data.sources[0]
+  const same = Boolean(digest?.sha256) && digest.sha256 === first?.sha256
+  if (monetHistory.readOnly) {
+    if (same) {
+      monetHistory.readOnly = false
+      attachSource(first.id)
+      historyDo(P => P.setEnvironment(monetHistory.env))
+      setStatus(`${name} matches the opened session: its history continues.`)
+      updateAseControls()
+      onHistoryChange()
+      return
+    }
+    if (!window.confirm(`${name} is a different file from the one in the opened session (the SHA-256 differs). Start a new history for it? Cancel keeps the opened history, read-only.`)) return
+    monetHistory.readOnly = false
+    updateAseControls()
+  } else if (same) {
+    attachSource(first.id)
+    return
+  }
+  await saveHistoryNow()
+  monetHistory.session = MonetProvenance.create(monetHistory.env)
+  monetHistory.stepByKind = {}
+  monetHistory.sourceByPath.clear()
+  monetHistory.stepByPath.clear()
+  monetHistory.lastTime = null
+  historyDo(P => {
+    const imported = state.filePath !== state.source.original
+    const id = P.addSource({
+      name, size: digest?.size ?? null, sha256: digest?.sha256 ?? null, format: state.source.label || info.format,
+      frames: info.configCount, atoms: info.atomCount,
+      import: imported ? {
+        format: state.source.format, cell_vectors: $('inp-cell-vectors').value,
+        reference: state.source.reference ? fileName(state.source.reference) : null, cell_file: state.source.cellFile ? fileName(state.source.cellFile) : null
+      } : null
+    })
+    attachSource(id)
+    P.record({ kind: 'load', source: id, params: { name, format: state.source.format } })
+  })
+  onHistoryChange()
+  if (typeof offerPreviousHistory === 'function') await offerPreviousHistory(digest)
+}
+
+async function historyDerived (path, info, label) {
+  if (monetHistory.readOnly) return
+  let digest = null
+  try { digest = await window.monet.fileDigest?.(path) } catch {}
+  historyDo(P => {
+    const stepId = monetHistory.stepByPath.get(path) ?? null
+    const parent = monetHistory.activeSource
+    const id = P.addSource({
+      name: fileName(path), size: digest?.size ?? null, sha256: digest?.sha256 ?? null, format: info.format,
+      frames: info.configCount, atoms: info.atomCount, label, parent: parent ? { source: parent, step: stepId } : null
+    })
+    if (stepId != null) P.addOutput(stepId, { source: id })
+    monetHistory.activeSource = id
+    monetHistory.sourceByPath.set(path, id)
+  })
+  onHistoryChange()
+}
+
+async function historyExtracted (stepId, session, result, sourceAtoms) {
+  const path = extractedTrajPath()
+  let digest = null
+  try { digest = await window.monet.fileDigest?.(path) } catch {}
+  if (session !== monetHistory.session) return
+  historyDo(P => {
+    P.finish(stepId, result)
+    const id = P.addSource({
+      name: fileName(path), size: digest?.size ?? null, sha256: digest?.sha256 ?? null, format: 'XYZ', frames: result.totalFrames ?? null,
+      atoms: sourceAtoms.length, atom_ids: sourceAtoms.map(atom => atom.index), label: 'extracted atoms',
+      parent: { source: P.step(stepId)?.source ?? monetHistory.activeSource, step: stepId }
+    })
+    P.addOutput(stepId, { source: id })
+    monetHistory.sourceByPath.set(path, id)
+    monetHistory.activeSource = id
+  }, session)
+  onHistoryChange()
+}
+
 async function runAse (kind, command) {
   if (aseState.busy) return { ok: false, error: 'Another ASE calculation is running.' }
+  if (monetHistory.readOnly) return { ok: false, error: 'Session open read-only: load its trajectory to continue, or load another file to start a new history.' }
   if (!aseState.available) return { ok: false, error: 'ASE is unavailable. Check the connection message above.' }
   const sourceRevision = aseState.sourceRevision
   const revision = analysisRevision[kind]
@@ -1596,6 +1847,8 @@ async function runAse (kind, command) {
     const scale = Number($('ase-bond-scale').value)
     if (scale >= 0.5 && scale <= 2) command.bond_scale = scale
   }
+  const stepId = historyBegin(kind, command, mapping)
+  const stepSession = monetHistory.session
   const rmsdNote = command.align ? ' Kabsch-aligned RMSD.' : ' Raw Cartesian RMSD.'
   const source = $('analysis-source').textContent + (options.cell ? ` Cell: ${options.cell.join(', ')}; PBC ${options.pbc.map(v => v ? 1 : 0).join('')}.` : ' Source cell.') + (['rmsd', 'rmsdmatrix'].includes(kind) ? rmsdNote + (command.unwrap ? ' Unwrapped.' : '') : ` MIC ${options.mic ? 'on' : 'off'}.`)
   aseState.busy = true
@@ -1607,21 +1860,25 @@ async function runAse (kind, command) {
   }
   relay({ message: 'Checking ASE atom mapping …', percent: 0 })
   const unsubscribe = window.monet.onAseProgress(relay)
+  let outcome = { ok: false, error: 'Analysis discarded because its source or result was cleared.' }
   try {
     if (kind !== 'conv') {
       const info = await window.monet.aseRun({ action: 'read_info', filename: command.filename, ...options })
-      if (!current()) return { ok: false, error: 'Analysis discarded because its source or result was cleared.' }
+      if (!current()) return outcome
       MonetASEModel.verifyAtoms(mapping, info)
       $('ase-atom-match').textContent = `Verified with ASE: ${mapping.length} matching atoms, elements and first-frame coordinates.`
     }
     const result = await window.monet.aseRun(command)
-    if (!current()) return { ok: false, error: 'Analysis discarded because its source or result was cleared.' }
+    if (!current()) return outcome
     if (charts[kind]) charts[kind].source = source
-    return { ...result, atomMapping: mapping, angleRange: command.angle_range, angleNormal: command.angle_normal }
+    outcome = { ...result, atomMapping: mapping, angleRange: command.angle_range, angleNormal: command.angle_normal }
+    return outcome
   } catch (error) {
     if (kind !== 'conv' && current()) $('ase-atom-match').textContent = 'ASE verification or calculation failed: ' + error.message
-    return { ok: false, error: error.message }
+    outcome = { ok: false, error: error.message }
+    return outcome
   } finally {
+    historyEnd(stepId, stepSession, kind, command, outcome, mapping)
     if (typeof unsubscribe === 'function') unsubscribe()
     hideAseProgress(`${kind}-prog-row`)
     aseState.busy = false
@@ -1997,6 +2254,18 @@ for (const kind of ['time-step', 'time-unit', 'time-stride']) {
   }
 }
 
+// The time axis is logged once a value is committed (change event), not on every keystroke.
+function recordTimeAxis () {
+  const axis = timeAxis()
+  if (!axis) return
+  const params = { timestep: Number($('md-timestep').value), unit: $('md-timestep-unit').value, steps_per_frame: axis.stride, dt: axis.dt }
+  const key = JSON.stringify(params)
+  if (key === monetHistory.lastTime) return
+  monetHistory.lastTime = key
+  historyRecord({ kind: 'time', params })
+}
+for (const input of $$('.time-step, .time-unit, .time-stride')) input.addEventListener('change', recordTimeAxis)
+
 function requireTime () {
   const axis = timeAxis()
   if (!axis) {
@@ -2153,6 +2422,7 @@ $('btn-run-vdos').addEventListener('click', async () => {
 // ── ASE: autocorrelation and decorrelation stride ────────────────────────────
 // =============================================================================
 
+const TAU_INT_LABELS = { sokal: 'Sokal window', geyer: 'Geyer sequence', zero: 'integral to first zero' }
 function acfTau () {
   const r = lastResults.acf
   const manual = Number($('acf-tau-manual').value)
@@ -2206,6 +2476,34 @@ function drawAcfChart () {
   }, { keepView })
 }
 
+// Block averaging (Flyvbjerg & Petersen 1989): the SEM grows with the block length and levels off once
+// blocks are longer than the correlation time; the plateau checks the ACF error bar independently.
+function drawAcfBlockChart () {
+  const r = lastResults.acf
+  const b = r?.blocking
+  if (!b?.sizes?.length) return clearAnalysis('acfblock', false)
+  const plateau = Number.isInteger(b.plateau_index) ? b.times[b.plateau_index] : null
+  const note = plateau === null
+    ? 'No plateau: the standard error still grows at the longest blocks, so the run is too short for a reliable error bar.'
+    // tau_int can be null (fit/window not available): guard the division so fmt shows '—' instead of 0.
+    : `Plateau from blocks of ${fmt(plateau, 4)} fs: SEM = ${fmt(b.plateau_sem, 3)} ${r.unit}, g = ${fmt(b.g, 3)} (ACF: g = ${fmt(Number.isFinite(r.tau_int) ? 2 * r.tau_int / r.dt : NaN, 3)}).`
+  charts.acfblock.setData({
+    title: 'Block averaging of the mean (Flyvbjerg–Petersen)', source: charts.acf.source,
+    xLabel: 'Block length (fs)', yLabel: `Standard error of the mean (${r.unit})`,
+    labels: b.times.map(t => String(Number(t.toPrecision(5)))),
+    datasets: [
+      { label: 'SEM of the block means', data: b.sem, colorIndex: 0 },
+      { label: 'SEM + error', data: b.sem.map((v, i) => v + b.sem_error[i]), dash: true, colorIndex: 1 },
+      { label: 'SEM − error', data: b.sem.map((v, i) => v - b.sem_error[i]), dash: true, colorIndex: 1 },
+      { label: `SEM from the ACF (N_eff = ${fmt(r.n_effective, 3)})`, data: b.times.map(() => r.statistics[0].sem), dash: true, colorIndex: 2 }
+    ],
+    markers: plateau === null ? [] : [{ value: plateau, label: `plateau ${fmt(b.plateau_sem, 3)} ${r.unit}` }],
+    notes: [note]
+  })
+  $('acfblock-text').textContent = note
+  $('acfblock-text').classList.remove('hidden')
+}
+
 function showAcfResult () {
   const r = lastResults.acf
   if (!r) return
@@ -2215,11 +2513,26 @@ function showAcfResult () {
   $('acf-tau-text').textContent = [
     `τ (fit ${model}, ${r.fit_points} points up to ${fmt(r.fit_end, 4)} fs) = ${fmt(r.tau_fit, 4)} ± ${fmt(r.tau_fit_error, 2)} fs${steps(r.tau_fit)}`,
     r.fit_model === 'exp_offset' ? `plateau c = ${fmt(r.plateau, 3)} ± ${fmt(r.plateau_error, 2)}` : null,
-    `τ (integral to first zero) = ${fmt(r.tau_int, 4)} fs${r.decorrelated ? '' : ' (ACF never crossed zero: extend the lag range or the run)'}`,
+    // Sokal/Geyer can return tau_int <= 0 for an anti-correlated series (e.g. a bond saved near half its
+    // vibrational period): printing it would show a negative time and a negative error, so say why instead.
+    Number.isFinite(r.tau_int) && r.tau_int <= 0
+      ? `τ_int (${TAU_INT_LABELS[r.tau_int_method] || 'integral'}): τ_int ≤ 0: no positive correlation resolved`
+      : `τ_int (${TAU_INT_LABELS[r.tau_int_method] || 'integral'}${Number.isFinite(r.tau_int_window) ? `, ${r.tau_int_window} lags` : ''}) = ${fmt(r.tau_int, 4)} ± ${fmt(r.tau_int_error, 2)} fs` +
+        (r.tau_int_converged === false ? ' (window not reached: extend the lag range or the run)' : ''),
     `Mean ${fmt(r.statistics[0].mean, 5)} ± ${fmt(r.statistics[0].sem, 2)} (std ${fmt(r.statistics[0].std, 4)}), N_eff ≈ ${fmt(r.n_effective, 3)} of ${r.n_frames} frames`
   ].filter(Boolean).join(' · ')
   const d = acfDecorrelation()
+  // Run length in units of τ: below ~20 τ neither τ nor the error bars are reliable (workflow document §4.2).
+  const runLength = r.n_frames * r.dt
+  const ratio = runLength / (d?.tau ?? r.tau_fit)
+  $('acf-length-text').textContent = Number.isFinite(ratio)
+    ? `Run length T = ${fmt(runLength, 3)} fs = ${fmt(ratio, 3)} τ.` + (ratio < 20
+      ? ' ⚠ fewer than 20 τ: τ and the error bars are unreliable; extend the run or add replicas.'
+      : ratio < 50 ? ' Fewer than 50 τ: treat τ and the stride as approximate.' : '')
+    : ''
   if (d && !acfPlateauEdited) $('acf-plateau-time').value = Number(d.fitted.toPrecision(5))
+  // g of configurations taken every `stride` saved frames (the ACF lags are frame_step saved frames apart).
+  const gSub = d?.stride ? MonetASEModel.subsampleInefficiency(r.acf, d.stride / (r.frame_step || 1)) : NaN
   if (!d) {
     $('acf-plateau-text').textContent = 'No correlation time is available: the fit failed and the ACF never crossed zero. Enter τ by hand.'
     $('acf-stride-text').textContent = ''
@@ -2234,6 +2547,7 @@ function showAcfResult () {
           'Check it against the curve, then accept it or type another t*.'
     $('acf-stride-text').textContent = d.stride
       ? `→ t* = ${fmt(d.time, 5)} fs rounded up to a whole number of frames: one configuration every ${d.stride} saved frames (${fmt(d.stride * d.axis.stride, 6)} MD steps, effective spacing ${fmt(d.stride * d.axis.dt, 5)} fs): ${d.kept} uncorrelated configurations out of ${d.frames}`
+        + ` · residual correlation of the sampled configurations g ≈ ${fmt(gSub, 3)}, N_eff ≈ ${fmt(d.kept / gSub, 3)}`
       : 'Set the MD time step to convert t* into saved frames.'
     // τ close to the saving interval: the ACF is sampled by only a few points per decay time.
     const coarse = d.axis && d.tau < 5 * d.axis.dt
@@ -2247,6 +2561,7 @@ function showAcfResult () {
   $('acf-accept').disabled = !ready || !aseState.available || aseState.busy || (d && d.kept < 2)
   $('acf-result').classList.remove('hidden')
   drawAcfChart()
+  drawAcfBlockChart()
 }
 $('acf-tau-manual').addEventListener('input', () => { acfPlateauEdited = false; showAcfResult() })
 $('acf-plateau-eps').addEventListener('change', () => { acfPlateauEdited = false; showAcfResult() })
@@ -2310,28 +2625,34 @@ $('acf-quantity').addEventListener('change', () => {
   $('acf-groups').placeholder = { dihedral: '1 2 3 4', angle: '2 1 3', bond: '1 2', rmsd: '1 2 3 …' }[$('acf-quantity').value]
   $('acf-mode').value = 'linear'
   clearAnalysis('acf', false)
+  clearAnalysis('equil', false)
   if ($('ase-selection-target').value === 'acf') updateSelectionTarget()
 })
+
+// The autocorrelation command built from the panel (also used by equilibration detection).
+function acfCommand () {
+  const quantity = $('acf-quantity').value
+  const axis = requireTime()
+  const groups = quantity === 'rmsd'
+    ? [MonetASEModel.selectedIndices($('acf-groups').value, aseState.analysisAtoms) || aseState.analysisAtoms.map(atom => atom.aseIndex)]
+    : MonetASEModel.groupsFromIds($('acf-groups').value, ACF_WIDTH[quantity], aseState.analysisAtoms)
+  const maxLag = $('acf-maxlag').value.trim()
+  return {
+    action: 'acf', filename: extractedTrajPath(), quantity, groups, dt: axis.dt, frame_step: Number($('acf-step').value),
+    mode: $('acf-mode').value, fit_until: $('acf-fit').value, fit_model: $('acf-fit-model').value, tau_int_method: $('acf-tauint').value,
+    ...(quantity === 'dihedral' ? { angle_range: $('acf-range').value } : {}),
+    ...(maxLag ? { max_lag: Number(maxLag) } : {})
+  }
+}
 
 $('btn-run-acf').addEventListener('click', async () => {
   const filename = extractedTrajPath()
   acfError('')
   if (!filename) return acfError('Load a trajectory first.')
-  const quantity = $('acf-quantity').value
-  let groups, axis
-  try {
-    axis = requireTime()
-    groups = quantity === 'rmsd'
-      ? [MonetASEModel.selectedIndices($('acf-groups').value, aseState.analysisAtoms) || aseState.analysisAtoms.map(atom => atom.aseIndex)]
-      : MonetASEModel.groupsFromIds($('acf-groups').value, ACF_WIDTH[quantity], aseState.analysisAtoms)
-  } catch (error) { return acfError(error.message) }
-  const maxLag = $('acf-maxlag').value.trim()
-  const r = await runAse('acf', {
-    action: 'acf', filename, quantity, groups, dt: axis.dt, frame_step: Number($('acf-step').value),
-    mode: $('acf-mode').value, fit_until: $('acf-fit').value, fit_model: $('acf-fit-model').value,
-    ...(quantity === 'dihedral' ? { angle_range: $('acf-range').value } : {}),
-    ...(maxLag ? { max_lag: Number(maxLag) } : {})
-  })
+  let command
+  try { command = acfCommand() } catch (error) { return acfError(error.message) }
+  const { quantity, groups } = command
+  const r = await runAse('acf', command)
   if (!r.ok) return acfError(r.message || r.error)
   lastResults.acf = r
   r.distLabel = quantity === 'rmsd' ? 'RMSD' : groups.map(group => MonetASEModel.seriesLabel(group.join('-'), r.atomMapping)).join(' | ')
@@ -2344,6 +2665,51 @@ $('btn-run-acf').addEventListener('click', async () => {
   const d = acfDecorrelation()
   setStatus(`Autocorrelation computed: τ = ${fmt(r.tau_fit, 4)} fs${d ? `, plateau at t* = ${fmt(d.time, 4)} fs — please validate it below the plot` : ''}.`)
   $('acf-plateau').scrollIntoView?.({ block: 'nearest' })
+})
+
+// Equilibration (Chodera 2016): production starts at the t₀ that maximises N_eff = (N − t₀)/g(t₀).
+function showEquilibration () {
+  const r = lastResults.equil
+  if (!r) return
+  $('equil-text').textContent = r.t0 === 0
+    ? `No transient found: N_eff is largest with the whole run (N_eff ≈ ${fmt(r.n_effective_t0, 4)} of ${r.n_frames} analysed frames). Keep the full trajectory.`
+    : `Production starts at t₀ = ${fmt(r.t0_time, 5)} fs (saved frame ${r.t0_frame}): discarding the transient raises N_eff from ${fmt(r.n_effective_full, 4)} to ${fmt(r.n_effective_t0, 4)} (g = ${fmt(r.g_t0, 4)} analysed frames).`
+  $('equil-crop').disabled = r.t0 === 0 || !aseState.available
+  $('equil-result').classList.remove('hidden')
+  charts.equil.setData({
+    title: 'Equilibration: effective sample size against the start of production (Chodera 2016)', source: charts.acf.source,
+    xLabel: 'Start of production t₀ (fs)', yLabel: 'N_eff = (N − t₀) / g(t₀)',
+    labels: r.times.map(t => String(Number(t.toPrecision(6)))),
+    datasets: [{ label: 'N_eff(t₀)', data: r.n_effective, colorIndex: 0 }],
+    markers: [{ value: r.t0_time, label: `t₀ = ${fmt(r.t0_time, 4)} fs` }]
+  })
+}
+
+$('btn-run-equil').addEventListener('click', async () => {
+  acfError('')
+  if (!extractedTrajPath()) return acfError('Load a trajectory first.')
+  let command
+  try { command = acfCommand() } catch (error) { return acfError(error.message) }
+  const r = await runAse('equil', { ...command, action: 'equilibration' })
+  if (!r.ok) return acfError(r.message || r.error)
+  lastResults.equil = r
+  showEquilibration()
+  setStatus(r.t0 === 0 ? 'Equilibration: no transient found.' : `Equilibration: production starts at t₀ = ${fmt(r.t0_time, 4)} fs.`)
+})
+
+$('equil-crop').addEventListener('click', async () => {
+  const r = lastResults.equil
+  const filename = extractedTrajPath()
+  if (!r || !filename || r.t0_frame < 1) return
+  const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+  const output = await window.monet.aseSelectOutput(`${stem}-production.extxyz`)
+  if (!output) return
+  const s = await runAse('subsample', { action: 'subsample', filename, stride: 1, start: r.t0_frame, output })
+  if (!s.ok) return acfError(s.message || s.error)
+  try {
+    await activateTrajectory(s.filePath || output, { label: `production · from frame ${r.t0_frame} (t₀ = ${fmt(r.t0_time, 4)} fs)` })
+    setStatus(`Production window active: ${s.n_frames} frames from saved frame ${r.t0_frame}. Compute the ACF again on it (↩ Full trajectory to go back).`)
+  } catch (error) { acfError('The production window was written but could not be loaded: ' + error.message) }
 })
 
 // =============================================================================
@@ -2742,6 +3108,8 @@ function renderTable (container, table, { title, mapping, mismatch } = {}) {
 }
 
 let mdaAlignedPath = null
+// The aligned file keeps only every frame_step-th frame: one of its frames spans that many of the active file.
+let mdaAlignedStep = 1
 $('btn-run-mda').addEventListener('click', async () => {
   const filename = extractedTrajPath()
   if (!filename) return setStatus('Load an XYZ file and click Next first.')
@@ -2771,6 +3139,7 @@ $('btn-run-mda').addEventListener('click', async () => {
   }
   if (analysis === 'align') {
     mdaAlignedPath = r.filePath || command.output
+    mdaAlignedStep = command.frame_step
     $('mda-activate').classList.remove('hidden')
     renderTable($('mda-table'), { columns: ['Aligned trajectory', 'Value'], rows: [['Frames', r.n_frames], ['Fit selection', r.selection], ['File', link.download || command.output]] })
     return setStatus(`Aligned ${r.n_frames} frames on "${r.selection}".`)
@@ -2811,7 +3180,7 @@ $('btn-run-mda').addEventListener('click', async () => {
 $('mda-activate').addEventListener('click', async () => {
   if (!mdaAlignedPath) return
   try {
-    await activateTrajectory(mdaAlignedPath, { label: 'aligned (MDAnalysis AlignTraj)' })
+    await activateTrajectory(mdaAlignedPath, { label: 'aligned (MDAnalysis AlignTraj)', strideFactor: mdaAlignedStep })
     setStatus('MONET now analyses and extracts the aligned trajectory (↩ Full trajectory to go back).')
   } catch (error) { setStatus('The aligned trajectory could not be loaded: ' + error.message) }
 })
@@ -3335,3 +3704,347 @@ window.addEventListener('load', () => {
   }
   checkAseStatus().catch(error => setStatus('ASE check failed: ' + error.message))
 })
+
+// =============================================================================
+// ── Analysis history drawer and console ──────────────────────────────────────
+// =============================================================================
+
+function stepHeadline (step) {
+  if (step.kind === 'pause') return `── history paused ${step.time.slice(11, 19)} ──`
+  if (step.kind === 'resume') return `── history resumed ${step.time.slice(11, 19)} ──`
+  const result = MonetReport.resultText(step.result)
+  const tail = step.status === 'error' ? ` ✗ ${step.error}` : step.status === 'running' ? ' …' : result ? ` → ${result}` : ''
+  return `#${step.id} ${MonetReport.stepText(step)}${tail}`
+}
+const historyFilter = step => step.status === 'error' ? 'error' : step.status === 'cleared' ? 'cleared' : ['analysis', 'derive', 'export'].includes(step.kind) ? step.kind : 'other'
+
+function renderHistory () {
+  if (!$('history-drawer')) return
+  const steps = monetHistory.session.data.steps
+  const lines = $('console-lines')
+  lines.replaceChildren(...steps.filter(step => step.kind !== 'clear').map(step => {
+    const row = document.createElement('div')
+    row.className = `console-line status-${step.status} kind-${step.kind}`
+    row.dataset.step = step.id
+    row.textContent = stepHeadline(step)
+    if (step.call && MonetConsole.names().includes(step.action)) {
+      row.classList.add('console-rerunnable')
+      row.title = 'Click to copy this call into the input line, edit it and press Enter'
+      row.addEventListener('click', () => {
+        $('console-input').value = step.call
+        monetHistory.consoleRerun = { id: step.id, action: step.action }
+        $('console-input').focus()
+      })
+    }
+    return row
+  }))
+  lines.scrollTop = lines.scrollHeight
+  const shown = new Set([...$$('#history-filters input:checked')].map(input => input.dataset.filter))
+  $('history-list').replaceChildren(...steps.filter(step => shown.has(historyFilter(step))).map(step => {
+    const item = document.createElement('li')
+    item.className = `history-item status-${step.status}${step.id === monetHistory.selected ? ' selected' : ''}`
+    item.dataset.step = step.id
+    item.textContent = `${step.final ? '☆ ' : ''}${stepHeadline(step)}`
+    item.addEventListener('click', () => { monetHistory.selected = step.id; renderHistory() })
+    return item
+  }))
+  renderHistoryDetail()
+  const paused = monetHistory.session.data.paused
+  $('history-pause').textContent = paused ? 'History: paused' : 'History: on'
+  $('history-pause').setAttribute('aria-pressed', String(paused))
+  $('history-readonly').classList.toggle('hidden', !monetHistory.readOnly)
+}
+
+function renderHistoryDetail () {
+  const session = monetHistory.session
+  const step = session.step(monetHistory.selected)
+  $('history-detail').classList.toggle('hidden', !step)
+  if (!step) return
+  const lines = [`#${step.id} ${step.kind}${step.action ? ' ' + step.action : ''} · ${step.source || 'no source'} · ${step.time}`, `status: ${step.status}${step.error ? ` (${step.error})` : ''}`, `call: ${MonetReport.stepText(step)}`]
+  const result = MonetReport.resultText(step.result)
+  if (result) lines.push(`results: ${result}`)
+  if (step.source) lines.push(`source: ${session.lineage(step.source)}`)
+  for (const output of step.outputs) lines.push(`output: ${output.source ? session.lineage(output.source) : output.file}${output.sha256 ? ` (SHA-256 ${output.sha256.slice(0, 12)}…)` : ''}`)
+  if (step.rerun_of) lines.push(`re-run of #${step.rerun_of}`)
+  $('history-detail-text').textContent = lines.join('\n')
+  if (document.activeElement !== $('history-note')) $('history-note').value = step.note
+  $('history-final').checked = step.final
+}
+
+function toggleHistoryDrawer (open = $('history-drawer').classList.contains('hidden')) {
+  $('history-drawer').classList.toggle('hidden', !open)
+  $('history-toggle').setAttribute('aria-pressed', String(open))
+  if (open) { renderHistory(); $('console-input').focus() }
+}
+$('history-toggle').addEventListener('click', () => toggleHistoryDrawer())
+$('history-close').addEventListener('click', () => toggleHistoryDrawer(false))
+document.addEventListener('keydown', event => {
+  if (event.ctrlKey && event.key === '`') { event.preventDefault(); toggleHistoryDrawer() }
+})
+for (const tab of $$('.history-tab')) {
+  tab.addEventListener('click', () => {
+    for (const other of $$('.history-tab')) other.classList.toggle('active', other === tab)
+    for (const pane of $$('.history-pane')) pane.classList.toggle('active', pane.id === `history-pane-${tab.dataset.htab}`)
+    renderHistory()
+  })
+}
+$('history-pause').addEventListener('click', () => {
+  historyDo(P => (P.data.paused ? P.resume() : P.pause()))
+  onHistoryChange()
+})
+$('history-filters').addEventListener('change', renderHistory)
+$('history-note').addEventListener('input', () => {
+  historyDo(P => P.annotate(monetHistory.selected, { note: $('history-note').value }))
+  onHistoryChange()
+})
+$('history-final').addEventListener('change', () => {
+  historyDo(P => P.annotate(monetHistory.selected, { final: $('history-final').checked }))
+  onHistoryChange()
+})
+
+// ── console: a call fills the panel's controls and clicks its Run button ──
+function setField (id, value, optional = false) {
+  const field = $(id)
+  if (!field) throw new Error(`Missing field ${id}.`)
+  if (value === undefined && !optional) return
+  if (field.type === 'checkbox') field.checked = Boolean(value)
+  else field.value = value == null ? '' : Array.isArray(value) ? value.flat(Infinity).join(' ') : String(value)
+  field.dispatchEvent(new Event('input'))
+  field.dispatchEvent(new Event('change'))
+}
+const OPTIONAL = true
+function fillAcf (a) {
+  setField('acf-quantity', a.quantity)
+  setField('acf-groups', a.groups)
+  setField('acf-step', a.frame_step)
+  setField('acf-mode', a.mode)
+  setField('acf-fit', a.fit_until)
+  setField('acf-fit-model', a.fit_model)
+  setField('acf-tauint', a.tau_int_method)
+  setField('acf-range', a.angle_range)
+  setField('acf-maxlag', a.max_lag, OPTIONAL)
+}
+function fillMda (a) {
+  if (a.analysis !== undefined) { $('mda-analysis').value = a.analysis; $('mda-analysis').dispatchEvent(new Event('change')) }
+  setField('mda-step', a.frame_step)
+  for (const [key, value] of Object.entries(a.params || {})) {
+    if (!$(`mda-p-${key}`)) throw new Error(`mda_run(analysis="${a.analysis}") has no parameter "${key}".`)
+    setField(`mda-p-${key}`, key === 'quads' ? value : Array.isArray(value) ? value.join('\n') : value)
+  }
+}
+// Console analysis → panel sub-tab, Run button and the controls its parameters go to.
+const CONSOLE_FORMS = {
+  rmsd: { tab: 'rmsd', button: 'btn-run-rmsd', fill: a => { setField('rmsd-atoms', a.indices, OPTIONAL); setField('rmsd-step', a.frame_step); setField('rmsd-align', a.align); setField('rmsd-unwrap', a.unwrap); setField('rmsd-reference', a.reference_index, OPTIONAL) } },
+  rmsd_matrix: { tab: 'rmsdmatrix', button: 'btn-run-rmsdmatrix', fill: a => { setField('rmsdmatrix-atoms', a.indices, OPTIONAL); setField('rmsdmatrix-step', a.frame_step); setField('rmsdmatrix-max', a.max_frames); setField('rmsdmatrix-align', a.align); setField('rmsdmatrix-unwrap', a.unwrap) } },
+  pdd: { tab: 'pdd', button: 'btn-run-pdd', fill: a => { setField('pdd-atoms', a.indices, OPTIONAL); setField('pdd-elements', a.elements, OPTIONAL); setField('pdd-rmax', a.rmax); setField('pdd-bins', a.nbins); setField('pdd-step', a.frame_step) } },
+  rdf: { tab: 'rdf', button: 'btn-run-rdf', fill: a => { setField('rdf-atoms', a.indices, OPTIONAL); setField('rdf-elements', a.elements, OPTIONAL); setField('rdf-rmax', a.rmax, OPTIONAL); setField('rdf-bins', a.nbins); setField('rdf-step', a.frame_step) } },
+  bonds: { tab: 'bonds', button: 'btn-run-bonds', fill: a => { setField('bonds-pairs', a.pairs); setField('bonds-step', a.frame_step) } },
+  angles: { tab: 'angles', button: 'btn-run-angles', fill: a => { setField('angles-triplets', a.triplets); setField('angles-step', a.frame_step); setField('angles-range', a.angle_range); setField('angles-normal', a.angle_normal) } },
+  dihedrals: { tab: 'dihedrals', button: 'btn-run-dihedrals', fill: a => { setField('dihedrals-quads', a.quads); setField('dihedrals-step', a.frame_step); setField('dihedrals-range', a.angle_range) } },
+  msd: { tab: 'msd', button: 'btn-run-msd', fill: a => { setField('msd-atoms', a.indices, OPTIONAL); setField('msd-step', a.frame_step); setField('msd-drift', a.remove_drift); setField('msd-fit-start', a.fit_start, OPTIONAL); setField('msd-fit-end', a.fit_end, OPTIONAL) } },
+  vdos: { tab: 'vdos', button: 'btn-run-vdos', fill: a => { setField('vdos-atoms', a.indices, OPTIONAL); setField('vdos-step', a.frame_step); setField('vdos-mass', a.mass_weighted); setField('vdos-smooth', a.smooth_cm); setField('vdos-max', a.max_cm) } },
+  acf: { tab: 'acf', button: 'btn-run-acf', fill: fillAcf },
+  equilibration: { tab: 'acf', button: 'btn-run-equil', fill: fillAcf },
+  fluctuations: {
+    tab: 'fluct', button: 'btn-run-fluct',
+    fill: a => {
+      setField('fluct-quantity', a.quantity)
+      setField('fluct-step', a.frame_step)
+      if (a.groups) { setField('fluct-scope', 'groups'); setField('fluct-groups', a.groups) } else { setField('fluct-scope', 'auto'); setField('fluct-atoms', a.indices, OPTIONAL) }
+      setField('fluct-align', a.align)
+    }
+  },
+  mda_run: { tab: 'mda', button: 'btn-run-mda', fill: fillMda },
+  ase_structure: { tab: 'structure', button: 'btn-run-structure', fill: a => { setField('structure-frame', a.frame); setField('structure-symprec', a.symprec) } },
+  ase_coordination: { tab: 'coordination', button: 'btn-run-coordination', fill: a => { setField('coordination-atoms', a.indices, OPTIONAL); setField('coordination-step', a.frame_step) } }
+}
+
+function revealPanel (tab) {
+  const button = document.querySelector(`.ase-stab[data-stab="${tab}"]`)
+  if (!button) return
+  showViewerTab(button.dataset.group)
+  showGroup(button.dataset.group, tab)
+}
+
+function consoleMessage (text, error = false) {
+  $('console-output').textContent = text
+  $('console-output').classList.toggle('console-error', error)
+  $('console-output').classList.toggle('hidden', !text)
+}
+
+async function runConsoleLine (text) {
+  consoleMessage('')
+  historyDo(P => P.addInput(text))
+  let call
+  try { call = MonetConsole.parse(text) } catch (error) { return consoleMessage(error.message, true) }
+  if (call.name === 'help') {
+    try { return consoleMessage(MonetConsole.help(call.args.topic)) } catch (error) { return consoleMessage(error.message, true) }
+  }
+  try { MonetConsole.validate(call.name, call.args) } catch (error) { return consoleMessage(error.message, true) }
+  if (monetHistory.readOnly) return consoleMessage('This session is open read-only: load its trajectory to run analyses.', true)
+  if (!extractedTrajPath()) return consoleMessage('Load a trajectory first.', true)
+  if (aseState.busy) return consoleMessage('Another calculation is running.', true)
+  const axis = timeAxis()
+  if (call.args.dt !== undefined && !(axis && Math.abs(call.args.dt - axis.dt) <= 1e-9 * Math.max(1, axis.dt))) {
+    return consoleMessage(`dt comes from the time axis (now ${axis ? fmt(axis.dt, 6) + ' fs' : 'not set'}): change the MD time step or the MD steps per saved frame in the panel.`, true)
+  }
+  const form = CONSOLE_FORMS[call.name]
+  try { form.fill(call.args) } catch (error) { return consoleMessage(error.message, true) }
+  revealPanel(form.tab)
+  const rerun = monetHistory.consoleRerun
+  monetHistory.consoleRerun = null
+  monetHistory.rerunOf = rerun?.action === call.name ? rerun : null
+  monetHistory.started = false
+  setStatus('')
+  $(form.button).click()
+  // The panel's handler reaches runAse synchronously (or after an immediate await); if it did
+  // not, it refused the input and said why in the status bar.
+  await new Promise(resolve => setTimeout(resolve, 0))
+  if (!monetHistory.started) {
+    monetHistory.rerunOf = null
+    consoleMessage($('status-msg').textContent || 'The panel did not accept these parameters.', true)
+  }
+}
+
+let consoleCursor = null
+$('console-input').addEventListener('keydown', event => {
+  const inputs = monetHistory.session.data.inputs
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    const text = $('console-input').value.trim()
+    if (!text) return
+    $('console-input').value = ''
+    consoleCursor = null
+    runConsoleLine(text)
+  } else if (event.key === 'ArrowUp' && inputs.length) {
+    event.preventDefault()
+    consoleCursor = consoleCursor === null ? inputs.length - 1 : Math.max(0, consoleCursor - 1)
+    $('console-input').value = inputs[consoleCursor]
+  } else if (event.key === 'ArrowDown' && consoleCursor !== null) {
+    event.preventDefault()
+    consoleCursor++
+    if (consoleCursor >= inputs.length) { consoleCursor = null; $('console-input').value = '' } else $('console-input').value = inputs[consoleCursor]
+  } else if (event.key === 'Escape') {
+    $('console-input').value = ''
+    consoleCursor = null
+    monetHistory.consoleRerun = null
+  }
+})
+
+function downloadText (text, name, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 10000)
+}
+
+// ── sessions: save, export, open (read-only until its trajectory is loaded), resume ──
+const sessionStem = () => fileName(monetHistory.session.data.sources[0]?.name || 'session').replace(/\.[^.]*$/, '') || 'session'
+
+function downloadLink (url, name) {
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+}
+
+$('history-save-session').addEventListener('click', async () => {
+  const data = monetHistory.session.toJSON()
+  const name = `MONET-session-${sessionStem()}.zip`
+  if (window.monet.hasAseServer && window.monet.sessionExport) {
+    let r
+    try {
+      r = await window.monet.sessionExport({ session: data, methods: MonetReport.methodsReport(data), replay: MonetReplay.replayScript(data), name })
+    } catch (error) { r = { ok: false, error: error.message } }
+    if (!r?.ok) return setStatus('Could not save the session: ' + (r?.error || r?.message || 'unknown error'))
+    downloadLink(r.downloadURL, name)
+    return setStatus('Session ZIP download started: session.json, methods report and replay.py.')
+  }
+  downloadText(JSON.stringify(data, null, 1), `MONET-session-${sessionStem()}.json`, 'application/json')
+  setStatus('Session file download started (the ZIP with the report and replay.py needs the launcher).')
+})
+
+$('history-export-methods').addEventListener('click', () => {
+  const text = MonetReport.methodsReport(monetHistory.session.toJSON(), { finalOnly: $('history-final-only').checked })
+  downloadText(text, `MONET-methods-${sessionStem()}.md`, 'text/markdown')
+  setStatus('Methods report download started.')
+})
+
+$('history-export-replay').addEventListener('click', () => {
+  downloadText(MonetReplay.replayScript(monetHistory.session.toJSON()), 'replay.py', 'text/x-python')
+  setStatus('replay.py download started: run it with python replay.py --monet /path/to/MONET next to the trajectory.')
+})
+
+// The last logged time axis and applied cell are put back in the panel; nothing is re-run.
+function restoreSettings (data) {
+  const last = test => [...data.steps].reverse().find(step => step.status === 'ok' && test(step))
+  const time = last(step => step.kind === 'time')
+  if (time) {
+    $('md-timestep').value = time.params.timestep
+    $('md-timestep-unit').value = time.params.unit
+    $('md-stride').value = time.params.steps_per_frame
+    for (const id of ['md-timestep', 'md-timestep-unit', 'md-stride']) $(id).dispatchEvent(new Event('input'))
+    monetHistory.lastTime = JSON.stringify(time.params)
+  }
+  const cell = last(step => step.kind === 'cell' && step.action === 'apply')
+  if (cell?.params.cell) {
+    $('cell-system').value = 'triclinic'
+    cell.params.cell.forEach((value, i) => { $(`cell-${cellFields[i]}`).value = value })
+    ;['a', 'b', 'c'].forEach((axis, i) => { $(`cell-pbc-${axis}`).checked = Boolean(cell.params.pbc?.[i]) })
+    updateCellPreset()
+  }
+}
+
+$('history-open-session').addEventListener('click', async () => {
+  if (aseState.busy) return setStatus('Another calculation is running: finish or cancel it before opening a session.')
+  const r = await window.monet.sessionOpen?.()
+  if (!r) return
+  if (!r.ok) return setStatus('Could not open the session: ' + (r.error || r.message))
+  let restored
+  try { restored = MonetProvenance.fromJSON(r.session) } catch (error) { return setStatus('Could not open the session: ' + error.message) }
+  // Fork: an opened session keeps its own autosave file, and the trajectory-matching load below
+  // resumes writing to this in-memory copy, not to the file it was opened from. Without this, once
+  // the trajectory is attached and autosave picks back up, it would overwrite the original file
+  // with whatever the newer, possibly-diverged in-page history has become.
+  const openedCreated = restored.data.created
+  restored.data.created = new Date().toISOString()
+  restored.data.forked_from = openedCreated
+  await saveHistoryNow()
+  monetHistory.session = restored
+  monetHistory.readOnly = true
+  monetHistory.stepByKind = {}
+  monetHistory.sourceByPath.clear()
+  monetHistory.stepByPath.clear()
+  monetHistory.activeSource = null
+  monetHistory.selected = null
+  restoreSettings(restored.data)
+  updateAseControls()
+  onHistoryChange()
+  const source = restored.data.sources[0]
+  setStatus(`Session opened read-only: ${restored.data.steps.length} steps. Load ${source?.name || 'its trajectory'}${source?.sha256 ? ` (SHA-256 ${source.sha256.slice(0, 12)}…)` : ''} to continue it; nothing is re-run automatically.`)
+})
+
+// After loading a trajectory: offer the newest autosaved history of the same file.
+async function offerPreviousHistory (digest) {
+  if (!digest?.sha256 || !window.monet.sessionFind) return
+  let found
+  try { found = await window.monet.sessionFind(digest.sha256) } catch { return }
+  const previous = found?.ok ? found.session : null
+  if (!previous || !Array.isArray(previous.steps) || previous.steps.length < 2) return
+  const name = fileName(state.source.original)
+  if (!window.confirm(`Previous history found for ${name} (${previous.steps.length} steps, last change ${String(previous.updated).slice(0, 10)}). Continue it? Cancel starts a new history.`)) return
+  let restored
+  try { restored = MonetProvenance.fromJSON(previous) } catch (error) { return setStatus('The previous history could not be read: ' + error.message) }
+  monetHistory.session = restored
+  attachSource(restored.data.sources[0].id)
+  historyDo(P => P.setEnvironment(monetHistory.env))
+  onHistoryChange()
+}
+
+renderHistory()

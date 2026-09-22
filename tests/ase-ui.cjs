@@ -94,7 +94,8 @@ w.monet = {
     if (command.action === 'molecule') return { ok: true, indices: [command.seed, ...activeAtoms.map((_,i) => i).filter(i => i !== command.seed)] }
     if (defer) return new Promise(resolve => { pendingResolve = resolve })
     if (command.action === 'dihedrals') return { ok: true, frame_indices: [0, 1], series: { [command.quads[0].join('-')]: [270, 90] } }
-    if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3] }
+    if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, tau_int_error: 5, tau_int_window: 3, tau_int_converged: true, tau_int_method: command.tau_int_method, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), frame_step: command.frame_step || 1, n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3], blocking: { sizes: [1, 2], times: [command.dt, 2 * command.dt], sem: [0.5, 0.7], sem_error: [0.01, 0.05], plateau_index: null, plateau_sem: null, g: null } }
+    if (command.action === 'equilibration') { latestCommand = command; return { ok: true, starts: [0, 1, 2], times: [0, command.dt, 2 * command.dt], g: [4, 2, 2], n_effective: [1, 1.5, 0.5], t0: 1, t0_time: command.dt, t0_frame: 1, group: 0, per_group_t0: [1], n_frames: 4, frame_step: 1, dt: command.dt, g_t0: 2, n_effective_t0: 1.5, n_effective_full: 1 } }
     if (command.action === 'rmsd_matrix') return { ok: true, matrix: [[0, 1], [1, 0]], frame_indices: [0, 10], aligned: true, truncated: false }
     if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
     if (command.action === 'vdos') return { ok: true, wavenumber: [0, 500, 1000], intensity: [0, .002, 0], nyquist_cm: 33356, resolution_cm: 8.3, n_frames: 100, dt: command.dt }
@@ -116,7 +117,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'qm-inputs.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player };' : ''))
+for (const file of ['theme.js', 'qm-inputs.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -187,6 +188,17 @@ async function mdaChecks () {
   await click('btn-run-mda')
   assert.equal(latestCommand.action, 'mda_align'); assert.equal(latestCommand.params.selection, 'all'); checks++
   assert.equal(el('mda-activate').classList.contains('hidden'), false); checks++
+  // The aligned file keeps every frame_step-th frame: activating it multiplies the MD steps per saved frame.
+  { const fullPath = w.testMonet.state.filePath, step = el('mda-step').value
+    el('mda-step').value = '2'
+    el('md-stride').value = '3'; el('md-stride').dispatchEvent(new w.Event('input'))
+    await click('btn-run-mda')
+    assert.equal(latestCommand.action, 'mda_align'); assert.equal(latestCommand.frame_step, 2); checks++
+    await click('mda-activate'); await tick()
+    assert.equal(w.testMonet.state.filePath, 'derived/torsion-aligned.extxyz'); assert.equal(el('md-stride').value, '6'); checks++
+    await click('restore-full-trajectory'); await tick()
+    assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(el('md-stride').value, '3'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
+    el('mda-step').value = step }
   // Switching the module keeps the other module's sub-tab.
   await click('vtab-ase')
   assert.ok(el('vtab-ase').classList.contains('active')); assert.equal(el('ase-sub-mda').classList.contains('active'), false); checks++
@@ -534,6 +546,13 @@ async function run () {
   el('acf-range').value = 'fold180'; await click('btn-run-acf')
   assert.equal(latestCommand.angle_range, 'fold180'); checks++
   el('acf-range').value = '360'
+  // Labels formatted with thousands separators ("1,500") still map to numbers for zoom, cursor and markers.
+  { const chart = w.testMonet.charts.acf
+    chart.setData({ title: 't', labels: ['0', '500', '1,000', '1,500', '2,000'], datasets: [{ label: 'a', data: [1, .8, .5, .3, .1] }], markers: [{ value: 1200, label: 'm' }] })
+    assert.deepEqual([...chart.axisValues()], [0, 500, 1000, 1500, 2000]); checks++
+    assert.equal(chart.zoomToValues(0, 1000), true); assert.deepEqual([...chart.viewRange()], [0, 2]); checks++
+    assert.equal(chart.labelIndex(1200), 2); checks++
+    chart.setView(null) }
   el('acf-quantity').value = 'bond'; el('acf-quantity').dispatchEvent(new w.Event('change'))
   assert.equal(el('acf-range').disabled, true)
   el('acf-quantity').value = 'dihedral'; el('acf-quantity').dispatchEvent(new w.Event('change'))
@@ -586,10 +605,58 @@ async function run () {
   assert.equal(el('restore-full-trajectory').classList.contains('hidden'), false); assert.match(el('analysis-source').textContent, /uncorrelated · every 13 frames/); checks++
   await click('restore-full-trajectory'); await tick()
   assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(el('md-stride').value, '5'); assert.equal(el('inp-freq').value, '13'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
+  // Cropping an already-derived trajectory (equilibration crop of the uncorrelated trajectory) must keep the
+  // derived md-stride, not fall back to the full trajectory's (renderer.js activateTrajectory regression).
+  el('acf-plateau-eps').dispatchEvent(new w.Event('change'))
+  assert.equal(el('acf-accept').disabled, false); checks++
+  await click('acf-accept'); await tick(); await tick()
+  assert.equal(el('md-stride').value, '65'); checks++
+  el('acf-groups').value = '1 2 3 4' // activating a trajectory clears the ACF inputs, as elsewhere in this flow
+  await click('btn-run-equil')
+  assert.equal(el('equil-crop').disabled, false); checks++
+  await click('equil-crop'); await tick(); await tick()
+  assert.equal(el('md-stride').value, '65', 'cropping the uncorrelated trajectory must not reset md-stride to the full-trajectory value'); checks++
+  await click('restore-full-trajectory'); await tick()
+  assert.equal(el('md-stride').value, '5'); checks++
   el('acf-groups').value = '1 2 3 4'; el('acf-fit-model').value = 'exp_offset'; await click('btn-run-acf')
   assert.equal(latestCommand.fit_model, 'exp_offset'); checks++
   await click('csv-acf')
   assert.equal(downloadName, 'MONET-acf.csv'); assert.match(await pngBlob.text(), /^# Autocorrelation of the dihedral/); checks++
+  // τ_int estimator and error, run length in units of τ, residual correlation g of the sampled configurations.
+  el('acf-tau-manual').value = ''; el('acf-tau-manual').dispatchEvent(new w.Event('input'))
+  assert.equal(latestCommand.tau_int_method, 'sokal'); assert.match(el('acf-tau-text').textContent, /τ_int \(Sokal window, 3 lags\) = 40 ± 5 fs/); checks++
+  assert.match(el('acf-length-text').textContent, /T = 9\.68 fs = 0\.222 τ/); assert.match(el('acf-length-text').textContent, /fewer than 20 τ/); checks++
+  el('md-stride').value = '1'; el('md-stride').dispatchEvent(new w.Event('input'))
+  el('acf-plateau-time').value = '0.5'; el('acf-plateau-time').dispatchEvent(new w.Event('input'))
+  assert.match(el('acf-stride-text').textContent, /every 2 saved frames/); assert.match(el('acf-stride-text').textContent, /g ≈ 1\.6, N_eff ≈ 62\.5/); checks++
+  // g of the sampled configurations must divide the stride (in saved frames) by frame_step, since the ACF
+  // lags are frame_step saved frames apart: frame_step = 2 with stride = 4 lands on the same lag index (2,
+  // acf = 0.3) as stride = 2 with frame_step = 1 above, so g is unchanged but N_eff halves with fewer kept frames.
+  el('acf-step').value = '2'; await click('btn-run-acf')
+  assert.equal(latestCommand.frame_step, 2); checks++
+  el('acf-plateau-time').value = '1.9'; el('acf-plateau-time').dispatchEvent(new w.Event('input'))
+  assert.match(el('acf-stride-text').textContent, /every 4 saved frames/); assert.match(el('acf-stride-text').textContent, /g ≈ 1\.6, N_eff ≈ 31\.3/); checks++
+  el('acf-step').value = '1'
+  el('acf-tauint').value = 'geyer'; await click('btn-run-acf')
+  assert.equal(latestCommand.tau_int_method, 'geyer'); assert.match(el('acf-tau-text').textContent, /Geyer sequence/); checks++
+  el('acf-tauint').value = 'sokal'
+  // Block averaging (Flyvbjerg–Petersen) under the ACF; cleared with it.
+  assert.deepEqual([...w.testMonet.charts.acfblock.data.datasets[0].data], [0.5, 0.7]); assert.match(el('acfblock-text').textContent, /No plateau/); checks++
+  await click('csv-acfblock')
+  assert.equal(downloadName, 'MONET-acfblock.csv'); checks++
+  await click('clear-acf')
+  assert.equal(w.testMonet.charts.acfblock.data, null); assert.equal(el('acfblock-text').classList.contains('hidden'), true); checks++
+  // Equilibration: t₀ by maximum N_eff, then crop to the production window (a new active trajectory).
+  await click('btn-run-equil')
+  assert.equal(latestCommand.action, 'equilibration'); assert.equal(latestCommand.tau_int_method, 'sokal'); checks++
+  assert.match(el('equil-text').textContent, /Production starts at t₀ = .* \(saved frame 1\)/); assert.equal(el('equil-crop').disabled, false); checks++
+  assert.equal(w.testMonet.charts.equil.data.markers.length, 1); checks++
+  const beforeCrop = w.testMonet.state.filePath
+  await click('equil-crop'); await tick(); await tick()
+  assert.equal(latestCommand.action, 'subsample'); assert.equal(latestCommand.stride, 1); assert.equal(latestCommand.start, 1); checks++
+  assert.match(el('analysis-source').textContent, /production · from frame 1/); checks++
+  await click('restore-full-trajectory'); await tick()
+  assert.equal(w.testMonet.state.filePath, beforeCrop); checks++
   el('acf-quantity').value = 'bond'; el('acf-quantity').dispatchEvent(new w.Event('change'))
   assert.equal(w.testMonet.charts.acf.data, null); assert.equal(el('acf-result').classList.contains('hidden'), true); checks++
   el('acf-groups').value = '1 2 3'; await click('btn-run-acf')

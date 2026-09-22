@@ -8,6 +8,7 @@
 
   const files = new Map()   // name -> File/Blob kept in this page
   const remote = new Map()  // name -> Promise<server file_id>
+  const digests = new Map() // name -> { sha256, size } of files the launcher holds (for the analysis history)
   const progress = new Set()
   const aseProgress = new Set()
   const running = { extraction: new Set(), ase: new Set() }
@@ -170,6 +171,7 @@
     }).then(async response => {
       const result = await response.json().catch(() => ({}))
       if (!response.ok || !result.ok) throw new Error(result.error || `Upload failed (${response.status}).`)
+      digests.set(name, { sha256: result.sha256 || null, size: result.size ?? file.size })
       return result.file_id
     }, () => { throw new Error('Cannot reach the local ASE server. Keep the launcher terminal open.') })
     remote.set(name, pending)
@@ -208,11 +210,11 @@
 
   // ── public API (same shape as the Electron preload) ───────────────────────
 
-  function selectFile () {
+  function selectFile (accept) {
     return new Promise((resolve, reject) => {
       const input = document.createElement('input')
       input.type = 'file'
-      input.accept = server ? '' : '.xyz,.XYZ,.extxyz,.EXTXYZ'
+      input.accept = accept ?? (server ? '' : '.xyz,.XYZ,.extxyz,.EXTXYZ')
       input.hidden = true
       document.body.appendChild(input)
       const finish = value => { input.remove(); resolve(value) }
@@ -254,6 +256,7 @@
       let key = `imported/${(files.get(name)?.name || name).replace(/\.[^./]*$/, '')}.extxyz`
       for (let copy = 2; remote.has(key); copy++) key = `imported-${copy}/${key.split('/').pop()}`
       remote.set(key, Promise.resolve(result.file_id))
+      digests.set(key, { sha256: result.sha256 || null, size: null })
       return { filePath: key, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label, warning: result.warning }
     }),
     releaseFile: async name => {
@@ -301,6 +304,7 @@
           let key = `derived/${result.output || command.action + '.extxyz'}`
           for (let copy = 2; remote.has(key); copy++) key = `derived-${copy}/${key.split('/').pop()}`
           remote.set(key, Promise.resolve(result.file_id))
+          digests.set(key, { sha256: result.sha256 || null, size: null })
           result.filePath = key
         }
         if (result.ok && result.download_id) {
@@ -316,6 +320,33 @@
       if (scope === 'extraction') localCancel = true
       await Promise.all([...(running[scope] || [])].map(id => request(`/api/jobs/${id}/cancel`, {})))
     },
+    fileDigest: async name => {
+      const pending = remote.get(name)
+      if (pending) await pending.catch(() => null)
+      return digests.get(name) || null
+    },
+    sessionSave: session => request('/api/session/save', { session }),
+    sessionFind: sha256 => request('/api/session/find', { sha256 }),
+    sessionExport: async body => {
+      const result = await request('/api/session/export', body)
+      if (result.ok) result.downloadURL = downloadURL(result.download_id)
+      return result
+    },
+    sessionOpen: safe(async () => {
+      const name = await selectFile('.json,.zip,application/json,application/zip')
+      if (!name) return null
+      if (!server) {
+        const file = files.get(name)
+        files.delete(name)
+        if (/\.zip$/i.test(file.name || name)) throw new Error('Opening a session ZIP needs the launcher; open its session.json instead.')
+        return { ok: true, session: JSON.parse(await file.text()) }
+      }
+      try {
+        return await request('/api/session/read', { file_id: await upload(name) })
+      } finally {
+        window.monet.releaseFile(name)
+      }
+    }),
     processTrajectory: safe(async options => {
       const { filePath, frequency, selectedAtoms } = options
       if (!Number.isInteger(frequency) || frequency < 1) throw new Error('Sampling frequency must be a positive integer.')
@@ -336,6 +367,7 @@
       const previous = remote.get(fullName)
       files.delete(fullName)
       remote.set(fullName, Promise.resolve(result.extracted_id))
+      digests.set(fullName, { sha256: result.extracted_sha256 || null, size: null })
       if (previous) previous.then(id => request('/api/release', { file_id: id }), () => {})
       return { success: true, totalFrames: result.totalFrames, sampledFrames: result.sampledFrames, outputDir: 'MONET-results', downloadURL: downloadURL(result.download_id) }
     })

@@ -35,6 +35,12 @@ jobs:
           node tests/mdanalysis.cjs
           node tests/ase-integration.cjs
           node tests/ase-ui.cjs
+          node tests/provenance.cjs
+          node tests/console.cjs
+          node tests/report.cjs
+          node tests/session.cjs
+          node tests/replay.cjs
+          node tests/history-ui.cjs
 
   launchers:
     # The double-click launchers create the environment on every platform.

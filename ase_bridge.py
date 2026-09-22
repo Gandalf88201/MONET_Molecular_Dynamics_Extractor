@@ -11,7 +11,7 @@ Protocol
            followed by exactly one {"type":"result",...}
            or           {"type":"error","message":"..."}
 """
-import sys, os, json, traceback, math
+import sys, os, json, traceback, math, platform
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import monet_io
@@ -129,7 +129,13 @@ def _load_images(filename, frame_step=1, max_frames=None, cmd=None, label='Frame
 def action_check(_):
     if not _ASE_OK:
         return err(f"ASE not found. pip install ase  ({_ASE_ERR})")
-    ok(ase_version=_ASE_VERSION, numpy_version=np.__version__, mdanalysis_version=monet_mda.version())
+    try:
+        import scipy
+        scipy_version = scipy.__version__
+    except ImportError:
+        scipy_version = None
+    ok(ase_version=_ASE_VERSION, numpy_version=np.__version__, mdanalysis_version=monet_mda.version(),
+       python_version=platform.python_version(), scipy_version=scipy_version)
 
 
 def action_cell_file(cmd):
@@ -696,31 +702,35 @@ def _series_for(cmd, quantity, groups):
     return frames, np.array(values)
 
 
-def action_acf(cmd):
-    """Autocorrelation of a selected quantity, exponential fit, correlation times and distribution."""
-    if not _require_ase(): return
+def _acf_series(cmd):
+    """Analysed frames, per-group series and period of the autocorrelation quantity."""
     quantity = cmd['quantity']
-    groups = cmd['groups']
-    step = cmd.get('frame_step', 1)
-    dt = cmd['dt'] * step
-    prog("Computing the quantity …", 0)
-    frames, series = _series_for(cmd, quantity, groups)
-    angular = quantity in ('angle', 'dihedral')
-    mode = cmd.get('mode', 'linear')
-    if mode == 'circular' and not angular:
+    frames, series = _series_for(cmd, quantity, cmd['groups'])
+    if cmd.get('mode', 'linear') == 'circular' and quantity not in ('angle', 'dihedral'):
         raise ValueError('Circular autocorrelation applies to angles and dihedrals only.')
     # Folded dihedrals (0-180, period 180) treat opposite orientations as the same torsion.
     folded = quantity == 'dihedral' and cmd.get('angle_range') == 'fold180'
     period = 180.0 if folded else 360.0
-    if folded:
-        series = series % 180.0
+    return frames, (series % 180.0 if folded else series), period
+
+
+def action_acf(cmd):
+    """Autocorrelation of a selected quantity, exponential fit, correlation times and distribution."""
+    if not _require_ase(): return
+    quantity = cmd['quantity']
+    step = cmd.get('frame_step', 1)
+    dt = cmd['dt'] * step
+    prog("Computing the quantity …", 0)
+    frames, series, period = _acf_series(cmd)
+    mode = cmd.get('mode', 'linear')
     signal = monet_analysis.unwrap_angles(series, period) if quantity == 'dihedral' and mode == 'linear' else series
     max_lag = cmd.get('max_lag')
     # Default: half of the run; longer lags average over too few time origins to be meaningful.
     lags_steps = series.shape[1] // 2 if max_lag is None else int(round(max_lag / dt))
     acf = monet_analysis.autocorrelation(signal, mode, lags_steps, period)
     lags = np.arange(len(acf)) * dt
-    fit = monet_analysis.correlation_time(lags, acf, cmd.get('fit_until', 'zero'), cmd.get('fit_model', 'exp'))
+    fit = monet_analysis.correlation_time(lags, acf, cmd.get('fit_until', 'zero'), cmd.get('fit_model', 'exp'),
+                                          cmd.get('tau_int_method', 'sokal'), series.shape[1])
     tau = fit['tau_fit']
     plateau = fit['plateau'] if math.isfinite(fit['plateau']) else 0.0
     curve = ((1 - plateau) * np.exp(-lags / tau) + plateau).tolist() if math.isfinite(tau) and tau > 0 else None
@@ -742,11 +752,43 @@ def action_acf(cmd):
         else:
             mean, std = float(row.mean()), float(row.std(ddof=1)) if n > 1 else 0.0
         per_group.append({'mean': mean, 'std': std, 'sem': std / math.sqrt(max(min(n_eff, n), 1))})
+    # Blocking of the first group, on deviations from its (circular) mean so torsions crossing 0/360 stay continuous.
+    first = shown[0] - per_group[0]['mean']
+    if quantity == 'dihedral':
+        first = (first + period / 2) % period - period / 2
+    blocking = monet_analysis.block_average(first)
+    blocking['times'] = [size * dt for size in blocking['sizes']]
     prog("Done", 100)
     ok(lags=lags.tolist(), acf=acf.tolist(), fit_curve=curve, frame_indices=frames, dt=dt, frame_step=step,
        series=np.round(shown, 6).tolist(), distribution={'x': centres.tolist(), 'density': density.tolist()},
        statistics=per_group, n_frames=n, n_effective=float(min(n_eff, n)), mode=mode, quantity=quantity,
-       period=period if quantity == 'dihedral' else None, **fit)
+       period=period if quantity == 'dihedral' else None, blocking=_finite(blocking), **_finite(fit))
+
+
+def action_equilibration(cmd):
+    """Start of the production window of the selected quantity by maximum N_eff (Chodera 2016)."""
+    if not _require_ase(): return
+    step = cmd.get('frame_step', 1)
+    dt = cmd['dt'] * step
+    prog('Computing the quantity …', 0)
+    frames, series, period = _acf_series(cmd)
+    if cmd['quantity'] == 'dihedral':
+        series = monet_analysis.unwrap_angles(series, period)
+    method = cmd.get('tau_int_method', 'sokal')
+    results = []
+    for k, row in enumerate(series):
+        prog(f'Scanning production origins of group {k + 1}/{len(series)} …', 10 + 80 * k / len(series))
+        results.append(monet_analysis.detect_equilibration(row, method=method))
+    # The latest origin over all groups: every group is equilibrated from there on.
+    group = max(range(len(results)), key=lambda k: results[k]['t0'])
+    chosen = results[group]
+    t0 = chosen['t0']
+    prog('Done', 100)
+    ok(**_finite({'starts': chosen['starts'], 'times': [s * dt for s in chosen['starts']], 'g': chosen['g'],
+                  'n_effective': chosen['n_effective'], 't0': t0, 't0_time': t0 * dt, 't0_frame': int(frames[t0]),
+                  'group': group, 'per_group_t0': [r['t0'] for r in results], 'n_frames': len(frames),
+                  'frame_step': step, 'dt': dt, 'g_t0': chosen['g_t0'], 'n_effective_t0': chosen['n_effective_t0'],
+                  'n_effective_full': chosen['n_effective'][0]}))
 
 
 def action_pdd(cmd):
@@ -1236,7 +1278,7 @@ def validate_command(cmd):
         for name, low, high in (('d_a_cutoff', 1.0, 6.0), ('angle', 90.0, 180.0)):
             if name in cmd and (type(cmd[name]) not in (int, float) or not low <= cmd[name] <= high):
                 raise ValueError(f'{name} must be between {low} and {high}.')
-    if action in ('msd', 'vdos', 'acf'):
+    if action in ('msd', 'vdos', 'acf', 'equilibration'):
         positive('dt', required=True)
     if action == 'fluctuations':
         if cmd.get('quantity') not in FLUCTUATION_WIDTH:
@@ -1268,7 +1310,7 @@ def validate_command(cmd):
         center = cmd.get('center')
         if center is not None and (not isinstance(center, list) or any(type(i) is not int or i < 0 for i in center)):
             raise ValueError('Centre atoms must be valid indices.')
-    if action == 'acf':
+    if action in ('acf', 'equilibration'):
         quantity = cmd.get('quantity')
         widths = {'bond': 2, 'angle': 3, 'dihedral': 4, 'rmsd': None}
         if quantity not in widths:
@@ -1294,6 +1336,8 @@ def validate_command(cmd):
         bins = cmd.get('nbins', 60)
         if type(bins) is not int or not 2 <= bins <= 2000:
             raise ValueError('Distribution bins must be an integer between 2 and 2000.')
+        if cmd.get('tau_int_method', 'sokal') not in monet_analysis.TAU_INT_METHODS:
+            raise ValueError('Unknown τ_int estimator: use sokal, geyer or zero.')
     if cmd.get('action') == 'import':
         import monet_formats
         if not monet_formats.valid_format(cmd.get('format', 'auto')):
@@ -1356,6 +1400,7 @@ ACTIONS = {
     "fluctuations": action_fluctuations,
     "subsample": action_subsample,
     "acf":       action_acf,
+    "equilibration": action_equilibration,
     "formats":   action_formats,
     "mda_select": action_mda_select,
     "mda_rmsf":  action_mda_rmsf,

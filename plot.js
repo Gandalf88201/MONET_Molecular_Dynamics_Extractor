@@ -355,17 +355,23 @@
   class LineChart extends Chart {
     static wrap90 (value) { return wrap90(value) }
 
+    // Numeric value of every x label; "1,234.5" (en-US grouping from the renderer's fmt) is 1234.5.
+    axisValues () {
+      return (this.data?.labels || []).map(label => Number(String(label).replace(/,/g, '')))
+    }
+
     // Index of the label equal to `label`, or of the closest numeric label not after it.
     labelIndex (label) {
       const labels = this.data?.labels
       if (!labels?.length) return -1
       const exact = labels.indexOf(String(label))
       if (exact >= 0) return exact
-      const target = Number(label)
+      const target = Number(String(label).replace(/,/g, ''))
       if (!Number.isFinite(target)) return -1
+      const values = this.axisValues()
       let best = -1
-      for (let i = 0; i < labels.length; i++) {
-        const value = Number(labels[i])
+      for (let i = 0; i < values.length; i++) {
+        const value = values[i]
         if (!Number.isFinite(value)) return -1
         if (value <= target) best = i
         else break
@@ -390,7 +396,7 @@
 
     // Zoom to x labels between two numeric values (e.g. lags up to 500 fs).
     zoomToValues (low, high) {
-      const values = (this.data?.labels || []).map(Number)
+      const values = this.axisValues()
       const from = values.findIndex(v => v >= low)
       let to = -1
       values.forEach((v, i) => { if (v <= high) to = i })
@@ -611,7 +617,7 @@
       })
       // Vertical markers at x values (e.g. the decorrelation time t* on an ACF), exported too.
       for (const marker of this.data.markers || []) {
-        const values = labels.map(Number)
+        const values = this.axisValues()
         if (!values.length || !values.every(Number.isFinite)) break
         if (marker.value < values[0] || marker.value > values[values.length - 1]) continue
         let k = 0

@@ -1,0 +1,23 @@
+digraph G {
+  graph [rankdir=TB, nodesep=0.35, ranksep=0.28, dpi=200, fontname="Helvetica"];
+  node [shape=box, style="rounded,filled", fillcolor="#EEF3FA", color="#2F5597", fontname="Helvetica", fontsize=11, width=4.6, margin="0.15,0.06"];
+  edge [color="#2F5597", arrowsize=0.7, fontname="Helvetica", fontsize=9];
+  A [label=<<b>0. Provenance and sanity checks</b><br/><font point-size="9">energy conservation, T, units, PBC, atom identity</font>>];
+  B [label=<<b>1. Equilibration</b><br/><font point-size="9">discard the transient, fix the production window</font>>];
+  C [label=<<b>2. Choose observables</b><br/><font point-size="9">slow, physically relevant coordinates</font>>];
+  D [label=<<b>3. Autocorrelation</b><br/><font point-size="9">τ_exp, τ_int, statistical inefficiency g, N_eff</font>>];
+  E [label=<<b>4. Decide the stride</b>>, shape=diamond, width=2.6, fillcolor="#FFF4DC", color="#B7791F"];
+  F [label=<<b>9. Dynamics</b><br/><font point-size="9">MSD, D, VDOS, lifetimes</font>>, width=2.6];
+  Gn [label=<<b>5. Structural stability</b><br/><font point-size="9">RMSD, RMSF, Rg</font>>, width=3.2];
+  H [label=<<b>6. Conformational landscape</b><br/><font point-size="9">pairwise RMSD, clustering, PCA</font>>, width=3.2];
+  I [label=<<b>7. Distributions</b><br/><font point-size="9">bonds, angles, dihedrals, circular statistics</font>>, width=3.2];
+  J [label=<<b>8. Condensed-phase structure</b><br/><font point-size="9">RDF, coordination, H-bonds</font>>, width=3.2];
+  K [label=<<b>10. Convergence</b><br/><font point-size="9">halves, blocks, replicas, cosine content</font>>];
+  L [label=<<b>11. Configurations for QM post-processing</b><br/><font point-size="9">and convergence of QM averages</font>>];
+  M [label=<<b>12. Uncertainty and reporting</b>>];
+  A->B->C->D->E;
+  E->F [label=" full resolution"];
+  E->Gn [label=" decorrelated subset"];
+  Gn->H->I->J;
+  F->K; J->K; K->L->M;
+}
