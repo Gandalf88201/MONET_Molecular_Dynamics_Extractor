@@ -90,7 +90,7 @@
 [[control_extra]]/
 &SYSTEM
   ibrav = 0
-  nat = {nat}
+{qe_celldm}  nat = {nat}
   ntyp = {ntyp}
   ecutwfc = [[ecutwfc]]
   ecutrho = [[ecutrho]]
@@ -102,10 +102,8 @@
 /
 [[ions_cell]]ATOMIC_SPECIES
 {qe_species}
-CELL_PARAMETERS angstrom
-{cell_ang}
-ATOMIC_POSITIONS angstrom
-{coords}[[kpoints]]`,
+{qe_cell_block}
+{qe_positions_block}[[kpoints]]`,
     ph:
 `MONET configuration {index} (frame {frame}), {state}: Gamma-point phonons after pw.x (apply the acoustic sum rule with dynmat.x)
 &INPUTPH
@@ -122,7 +120,7 @@ ATOMIC_POSITIONS angstrom
 {cell_ang}
 {vasp_species}
 {vasp_counts}
-Cartesian
+{vasp_coord_mode}
 {vasp_coords}
 `,
     vasp_incar:
@@ -165,7 +163,7 @@ EDIFF = 1E-6
       PERIODIC [[periodic]]
     &END CELL
     &COORD
-{coords}    &END COORD
+{cp2k_coords}    &END COORD
 {cp2k_kinds}
   &END SUBSYS
 &END FORCE_EVAL

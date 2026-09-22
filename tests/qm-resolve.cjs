@@ -28,7 +28,7 @@ assert.throws(() => R.resolve('gaussian', R.settingsFor('gaussian', { calc: 'vcr
 
 // Quantum ESPRESSO
 assert.deepEqual(one('qe', {}).map(f => f.name), ['{tag}.inp']); checks++
-assert.equal(text('qe', {}), "! MONET configuration {index} (frame {frame}), {state}. {cell_note}\n&CONTROL\n  calculation = 'scf'\n  prefix = '{tag}_conf{index}'\n  pseudo_dir = './pseudo'\n  outdir = './tmp'\n/\n&SYSTEM\n  ibrav = 0\n  nat = {nat}\n  ntyp = {ntyp}\n  ecutwfc = 50\n  ecutrho = 200\n  tot_charge = {charge}\n  nspin = {nspin}\n{qe_magnetization}/\n&ELECTRONS\n  conv_thr = 1.0d-8\n/\nATOMIC_SPECIES\n{qe_species}\nCELL_PARAMETERS angstrom\n{cell_ang}\nATOMIC_POSITIONS angstrom\n{coords}K_POINTS gamma\n"); checks++
+assert.equal(text('qe', {}), "! MONET configuration {index} (frame {frame}), {state}. {cell_note}\n&CONTROL\n  calculation = 'scf'\n  prefix = '{tag}_conf{index}'\n  pseudo_dir = './pseudo'\n  outdir = './tmp'\n/\n&SYSTEM\n  ibrav = 0\n{qe_celldm}  nat = {nat}\n  ntyp = {ntyp}\n  ecutwfc = 50\n  ecutrho = 200\n  tot_charge = {charge}\n  nspin = {nspin}\n{qe_magnetization}/\n&ELECTRONS\n  conv_thr = 1.0d-8\n/\nATOMIC_SPECIES\n{qe_species}\n{qe_cell_block}\n{qe_positions_block}K_POINTS gamma\n"); checks++
 assert.deepEqual(one('qe', { calc: 'optfreq', phx: true }).map(f => f.name), ['{tag}.inp', 'ph_{tag}.inp']); checks++
 assert.match(text('qe', { calc: 'optfreq', phx: true }), /calculation = 'relax'[\s\S]*\/\n&IONS\n\/\nATOMIC_SPECIES/); checks++
 assert.equal(text('qe', { calc: 'freq', phx: true }, 1), "MONET configuration {index} (frame {frame}), {state}: Gamma-point phonons after pw.x (apply the acoustic sum rule with dynmat.x)\n&INPUTPH\n  prefix = '{tag}_conf{index}'\n  outdir = './tmp'\n  fildyn = '{tag}_conf{index}.dyn'\n  tr2_ph = 1.0d-14\n/\n0.0 0.0 0.0\n"); checks++
@@ -39,18 +39,18 @@ assert.match(text('qe', { calc: 'md' }), /calculation = 'md'\n  prefix = '\{tag\
 assert.match(text('qe', { calc: 'md' }), /&IONS\n  ion_temperature = 'svr'\n  tempw = 300\n  nraise = 200\n\/\n/); checks++
 assert.match(text('qe', { calc: 'md', md: { ensemble: 'nve' } }), /&IONS\n  ion_temperature = 'not_controlled'\n\/\n/); checks++
 assert.match(text('qe', { functional: 'pbe0', dispersion: 'd3bj', isolated: true, extra: 'nbnd = 40; occupations = "fixed"', ecutwfc: 60, ecutrhoFactor: 8, pseudoDir: '/pp' }), /pseudo_dir = '\/pp'[\s\S]*ecutwfc = 60\n  ecutrho = 480\n[\s\S]*\{qe_magnetization\}  input_dft = 'pbe0'\n  vdw_corr = 'dft-d3'\n  dftd3_version = 4\n  assume_isolated = 'mt'\n  nbnd = 40\n  occupations = "fixed"\n\/\n/); checks++
-assert.match(text('qe', { kpoints: 'grid', grid: [4, 4, 2] }), /\{coords\}K_POINTS automatic\n4 4 2 0 0 0\n$/); checks++
+assert.match(text('qe', { kpoints: 'grid', grid: [4, 4, 2] }), /\{qe_positions_block\}K_POINTS automatic\n4 4 2 0 0 0\n$/); checks++
 
 // ph.x refuses K_POINTS gamma: Γ + ph.x on a Freq/Opt+Freq calculation becomes a 1x1x1 automatic mesh.
-assert.match(text('qe', { calc: 'freq', phx: true }), /\{coords\}K_POINTS automatic\n1 1 1 0 0 0\n$/); checks++
-assert.match(text('qe', { calc: 'optfreq', phx: true }), /\{coords\}K_POINTS automatic\n1 1 1 0 0 0\n$/); checks++
-assert.match(text('qe', { calc: 'freq', phx: false }), /\{coords\}K_POINTS gamma\n$/); checks++
-assert.match(text('qe', { calc: 'sp', phx: true }), /\{coords\}K_POINTS gamma\n$/); checks++ // phx only forces the mesh for Freq/Opt+Freq
-assert.match(text('qe', { calc: 'freq', phx: true, kpoints: 'grid', grid: [2, 2, 2] }), /\{coords\}K_POINTS automatic\n2 2 2 0 0 0\n$/); checks++ // an explicit grid wins
+assert.match(text('qe', { calc: 'freq', phx: true }), /\{qe_positions_block\}K_POINTS automatic\n1 1 1 0 0 0\n$/); checks++
+assert.match(text('qe', { calc: 'optfreq', phx: true }), /\{qe_positions_block\}K_POINTS automatic\n1 1 1 0 0 0\n$/); checks++
+assert.match(text('qe', { calc: 'freq', phx: false }), /\{qe_positions_block\}K_POINTS gamma\n$/); checks++
+assert.match(text('qe', { calc: 'sp', phx: true }), /\{qe_positions_block\}K_POINTS gamma\n$/); checks++ // phx only forces the mesh for Freq/Opt+Freq
+assert.match(text('qe', { calc: 'freq', phx: true, kpoints: 'grid', grid: [2, 2, 2] }), /\{qe_positions_block\}K_POINTS automatic\n2 2 2 0 0 0\n$/); checks++ // an explicit grid wins
 
 // VASP
 assert.deepEqual(one('vasp', {}).map(f => f.name), ['POSCAR', 'INCAR_{tag}', 'KPOINTS', 'POTCAR.spec']); checks++
-assert.equal(text('vasp', {}, 0), 'MONET configuration {index} (frame {frame}); atoms grouped by element\n1.0\n{cell_ang}\n{vasp_species}\n{vasp_counts}\nCartesian\n{vasp_coords}\n'); checks++
+assert.equal(text('vasp', {}, 0), 'MONET configuration {index} (frame {frame}); atoms grouped by element\n1.0\n{cell_ang}\n{vasp_species}\n{vasp_counts}\n{vasp_coord_mode}\n{vasp_coords}\n'); checks++
 assert.equal(text('vasp', {}, 1), 'SYSTEM = MONET configuration {index} {state}\n# {cell_note}\n{vasp_nelect}\nENCUT = 500\nISPIN = {nspin}\nNUPDOWN = {unpaired}\nISMEAR = 0\nSIGMA = 0.01\nEDIFF = 1E-6\nNSW = 0\n'); checks++
 assert.equal(text('vasp', {}, 2), 'MONET k-points\n0\nGamma\n1 1 1\n0 0 0\n'); checks++
 assert.equal(text('vasp', { kpoints: 'grid', grid: [3, 3, 1] }, 2), 'MONET k-points\n0\nGamma\n3 3 1\n0 0 0\n'); checks++
@@ -71,7 +71,7 @@ assert.match(text('qe', { ecutwfc: 33.3, ecutrhoFactor: 6 }), /  ecutrho = 199.8
 
 // CP2K
 assert.deepEqual(one('cp2k', {}).map(f => f.name), ['{tag}.inp']); checks++
-assert.equal(text('cp2k', {}), '! MONET configuration {index} (frame {frame}), {state}. {cell_note}\n&GLOBAL\n  PROJECT {tag}_conf{index}\n  RUN_TYPE ENERGY\n&END GLOBAL\n&FORCE_EVAL\n  METHOD Quickstep\n  &DFT\n    BASIS_SET_FILE_NAME BASIS_MOLOPT\n    POTENTIAL_FILE_NAME GTH_POTENTIALS\n    CHARGE {charge}\n    MULTIPLICITY {mult}\n    UKS {uks}\n    &MGRID\n      CUTOFF 400\n      REL_CUTOFF 60\n    &END MGRID\n    &XC\n      &XC_FUNCTIONAL PBE\n      &END XC_FUNCTIONAL\n    &END XC\n  &END DFT\n  &SUBSYS\n    &CELL\n{cp2k_cell}\n      PERIODIC XYZ\n    &END CELL\n    &COORD\n{coords}    &END COORD\n{cp2k_kinds}\n  &END SUBSYS\n&END FORCE_EVAL\n'); checks++
+assert.equal(text('cp2k', {}), '! MONET configuration {index} (frame {frame}), {state}. {cell_note}\n&GLOBAL\n  PROJECT {tag}_conf{index}\n  RUN_TYPE ENERGY\n&END GLOBAL\n&FORCE_EVAL\n  METHOD Quickstep\n  &DFT\n    BASIS_SET_FILE_NAME BASIS_MOLOPT\n    POTENTIAL_FILE_NAME GTH_POTENTIALS\n    CHARGE {charge}\n    MULTIPLICITY {mult}\n    UKS {uks}\n    &MGRID\n      CUTOFF 400\n      REL_CUTOFF 60\n    &END MGRID\n    &XC\n      &XC_FUNCTIONAL PBE\n      &END XC_FUNCTIONAL\n    &END XC\n  &END DFT\n  &SUBSYS\n    &CELL\n{cp2k_cell}\n      PERIODIC XYZ\n    &END CELL\n    &COORD\n{cp2k_coords}    &END COORD\n{cp2k_kinds}\n  &END SUBSYS\n&END FORCE_EVAL\n'); checks++
 assert.deepEqual(one('cp2k', { calc: 'optfreq' }).map(f => f.name), ['{tag}_opt.inp', '{tag}_freq.inp']); checks++
 assert.match(text('cp2k', { calc: 'optfreq' }, 1), /RUN_TYPE VIBRATIONAL_ANALYSIS\n/); checks++
 assert.match(text('cp2k', { calc: 'vcrelax', pressure: 1 }), /RUN_TYPE CELL_OPT\n&END GLOBAL\n&MOTION\n  &CELL_OPT\n    EXTERNAL_PRESSURE 10000\n    TYPE DIRECT_CELL_OPT\n  &END CELL_OPT\n&END MOTION\n&FORCE_EVAL\n  METHOD Quickstep\n  STRESS_TENSOR ANALYTICAL\n  &DFT\n/); checks++

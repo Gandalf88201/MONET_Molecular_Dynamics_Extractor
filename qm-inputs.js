@@ -33,6 +33,10 @@
   const SAFE = /^[A-Za-z0-9_.+()-]+$/
   const isObject = value => typeof value === 'object' && value !== null && !Array.isArray(value)
   const resolver = () => (node ? require('./qm-resolve.js') : root.MonetQMResolve)
+  // How each code writes the cell and positions: cellUnits (QE), cellStyle (CP2K), positions (all plane-wave codes).
+  const FORMAT = { cellUnits: 'angstrom', cellStyle: 'abc', positions: 'cartesian' }
+  const FORMAT_VALUES = { cellUnits: ['angstrom', 'bohr', 'alat'], cellStyle: ['abc', 'vectors'], positions: ['cartesian', 'fractional'] }
+  const isMatrix = m => Array.isArray(m) && m.length === 3 && m.every(row => Array.isArray(row) && row.length === 3 && row.every(v => typeof v === 'number' && Number.isFinite(v)))
 
   // Default spec: default cards, plane-wave codes isolated so they always render.
   function defaultSpec (codes = ['gaussian']) {
@@ -62,8 +66,11 @@
     }
     for (const entry of Object.values((spec && typeof spec.codes === 'object' && spec.codes) || {})) {
       if (!entry || typeof entry !== 'object') continue
-      for (const [key, value] of [['override', null], ['isolated', null], ['species', {}], ['reference', 'u'], ['brokenSymmetry', false], ['potcar', null]]) {
+      for (const [key, value] of [['override', null], ['isolated', null], ['species', {}], ['reference', 'u'], ['brokenSymmetry', false], ['potcar', null], ['cell', null], ['format', {}]]) {
         if (!Object.prototype.hasOwnProperty.call(entry, key)) entry[key] = value
+      }
+      if (isObject(entry.format)) {
+        for (const [key, value] of Object.entries(FORMAT)) if (!Object.prototype.hasOwnProperty.call(entry.format, key)) entry.format[key] = value
       }
     }
     return spec
@@ -98,13 +105,21 @@
         const parts = code === 'cp2k' ? (isObject(value) ? [value.basis, value.potential, ...(value.aux ? [value.aux] : [])] : [null]) : [value]
         if (!/^[A-Z][a-z]?$/.test(el) || parts.some(part => typeof part !== 'string' || !SAFE.test(part))) throw new Error(`${label}Invalid pseudopotential entry for ${el}.`)
       }
+      if (!isObject(entry.format)) throw new Error(`${label}Invalid cell and position format.`)
+      if (!FORMAT_VALUES.cellUnits.includes(entry.format.cellUnits)) throw new Error(`${label}Unknown cell units ${entry.format.cellUnits}.`)
+      if (!FORMAT_VALUES.cellStyle.includes(entry.format.cellStyle)) throw new Error(`${label}Unknown cell style ${entry.format.cellStyle}.`)
+      if (!FORMAT_VALUES.positions.includes(entry.format.positions)) throw new Error(`${label}Unknown position mode ${entry.format.positions}.`)
+      if (entry.cell != null) {
+        if (!isObject(entry.cell) || !isMatrix(entry.cell.rows)) throw new Error(`${label}Custom cell must be a 3x3 matrix.`)
+        try { U.cellParameters(entry.cell.rows) } catch (error) { throw new Error(`${label}${error.message}`) }
+      }
       if (entry.potcar && !(isObject(entry.potcar) && typeof entry.potcar.library === 'string' && entry.potcar.library)) throw new Error(`${label}Choose the POTCAR library folder.`)
       for (const file of entry.files) {
         if (!isObject(file) || typeof file.name !== 'string' || !/^[A-Za-z0-9_.{}-]+$/.test(file.name) || typeof file.template !== 'string') throw new Error(`Invalid file name pattern ${file && file.name}.`)
       }
     }
     const cell = spec.cell
-    if (cell != null && !(Array.isArray(cell) && cell.length === 3 && cell.every(row => Array.isArray(row) && row.length === 3 && row.every(v => typeof v === 'number' && Number.isFinite(v))))) throw new Error('Cell must be a 3x3 matrix.')
+    if (cell != null && !isMatrix(cell)) throw new Error('Cell must be a 3x3 matrix.')
     if (spec.summary != null && !(isObject(spec.summary) && Object.values(spec.summary).every(text => typeof text === 'string'))) throw new Error('Invalid quantum-chemistry input summary.')
     return spec
   }
@@ -135,6 +150,7 @@
       return { rows, positions: conf.positions.map(p => p.map((v, k) => v + shift[k])), note: `Cell: vacuum box = extent + ${num(padding)} A, configuration centred (isolated system).` }
     }
     if (entry.isolated) return box(Number(entry.isolated.padding))
+    if (entry.cell) return { rows: entry.cell.rows, positions: conf.positions, note: 'Cell: custom cell for this code.' }
     if (spec.cell) return { rows: spec.cell, positions: conf.positions, note: 'Cell: applied manual cell.' }
     if (conf.lattice) return { rows: conf.lattice, positions: conf.positions, note: 'Cell: from the trajectory.' }
     if (spec.legacy && PLANE_WAVE.includes(code)) return legacyBox(Number(spec.legacy.padding))
@@ -168,6 +184,40 @@
     const counts = species.map(s => symbols.filter(x => x === s).length)
     const order = species.flatMap(s => symbols.map((x, i) => x === s ? i : -1).filter(i => i >= 0))
     const seen = {}
+    // Native cell blocks. Values that need the cell parameters or fractional positions are computed only when a
+    // template uses them (a degenerate cell raises the units-module error then, not for every code).
+    const format = isObject(entry.format) ? { ...FORMAT, ...entry.format } : FORMAT
+    const line = (s, v, digits) => `${s}  ${fixed(v[0], digits)}  ${fixed(v[1], digits)}  ${fixed(v[2], digits)}\n`
+    const matrix = (m, sep) => m.map(row => row.map(v => fixed(v, 10)).join(sep)).join('\n')
+    const coords = symbols.map((s, i) => line(s, positions[i], 7)).join('')
+    const frac = Boolean(rows) && format.positions === 'fractional'
+    const fractional = () => U.fractional(rows, positions)
+    const fracLines = () => { const f = fractional(); return symbols.map((s, i) => line(s, f[i], 10)).join('') }
+    const params = () => U.cellParameters(rows)
+    const units = rows ? format.cellUnits : 'angstrom'
+    const standard = Boolean(rows) && U.isStandardOrientation(rows)
+    const vectorsNote = code === 'cp2k' && rows && !spec.legacy && format.cellStyle === 'abc' && !standard
+    const qeCell = () => {
+      if (!rows) return ''
+      if (units === 'bohr') return `CELL_PARAMETERS bohr\n${matrix(rows.map(row => row.map(U.angstromToBohr)), '  ')}`
+      if (units === 'alat') { const a = params()[0]; return `CELL_PARAMETERS alat\n${matrix(rows.map(row => row.map(v => v / a)), '  ')}` }
+      return `CELL_PARAMETERS angstrom\n${matrix(rows, '  ')}`
+    }
+    const qePositions = () => {
+      if (frac) return `ATOMIC_POSITIONS crystal\n${fracLines()}`
+      if (units === 'bohr') return `ATOMIC_POSITIONS bohr\n${symbols.map((s, i) => line(s, positions[i].map(U.angstromToBohr), 8)).join('')}`
+      return `ATOMIC_POSITIONS angstrom\n${coords}`
+    }
+    const cp2kCell = () => {
+      if (!rows) return ''
+      // Legacy specs ({ params }) keep the old text: vectors without units.
+      if (spec.legacy) return ['A', 'B', 'C'].map((axis, k) => `      ${axis} ${rows[k].map(v => fixed(v, 10)).join(' ')}`).join('\n')
+      if (format.cellStyle === 'abc' && standard) {
+        const p = params()
+        return `      ABC [angstrom] ${p.slice(0, 3).map(v => fixed(v, 10)).join(' ')}\n      ALPHA_BETA_GAMMA ${p.slice(3).map(v => fixed(v, 6)).join(' ')}`
+      }
+      return ['A', 'B', 'C'].map((axis, k) => `      ${axis} [angstrom] ${rows[k].map(v => fixed(v, 10)).join(' ')}`).join('\n')
+    }
     // u: unrestricted always; auto: restricted singlet, unrestricted otherwise; r: restricted / restricted open-shell.
     // Broken-symmetry singlet needs an unrestricted reference (guess=mix on a restricted singlet is meaningless).
     const ref = entry.brokenSymmetry && mult === 1 ? 'u' : entry.reference === 'u' ? 'u' : mult === 1 ? 'r' : entry.reference === 'auto' ? 'u' : 'ro'
@@ -183,27 +233,34 @@
     const values = {
       ...stateOf(mult),
       index: num(conf.index), frame: num(conf.frame), charge: num(charge), mult: num(mult),
-      coords: symbols.map((s, i) => `${s}  ${fixed(positions[i][0], 7)}  ${fixed(positions[i][1], 7)}  ${fixed(positions[i][2], 7)}\n`).join(''),
+      coords,
       nat: num(symbols.length), ntyp: num(species.length),
       nspin: unpaired ? '2' : '1', unpaired: num(unpaired), delta_spin: num(unpaired / 2),
       uks: unpaired ? '.TRUE.' : '.FALSE.',
       ref, ks, guess: entry.brokenSymmetry && mult === 1 ? ' guess=mix' : '',
-      cell_note: cell.note,
-      cell_ang: rows ? rows.map(row => row.map(v => fixed(v, 10)).join('  ')).join('\n') : '',
-      qbox_cell: rows ? rows.flat().map(v => fixed(v / BOHR, 8)).join(' ') : '',
+      cell_note: vectorsNote ? `${cell.note} Cell written as vectors (not in the standard orientation).` : cell.note,
+      cell_ang: rows ? matrix(rows, '  ') : '',
+      cell_bohr: rows ? matrix(rows.map(row => row.map(U.angstromToBohr)), '  ') : '',
+      cell_abc: rows ? () => { const p = params(); return [...p.slice(0, 3).map(v => fixed(v, 10)), ...p.slice(3).map(v => fixed(v, 6))].join(' ') } : '',
+      qe_cell_block: qeCell,
+      qe_celldm: rows && units === 'alat' ? () => `  celldm(1) = ${fixed(U.angstromToBohr(params()[0]), 10)}\n` : '',
+      qe_positions_block: qePositions,
+      qbox_cell: rows ? rows.flat().map(v => fixed(U.angstromToBohr(v), 8)).join(' ') : '',
       qbox_species: species.map(s => `species ${s.toLowerCase()} ${name(s, `${s}_ONCV_PBE-1.0.xml`)}`).join('\n'),
       qbox_atoms: symbols.map((s, i) => {
         seen[s] = (seen[s] || 0) + 1
-        return `atom ${s}${seen[s]} ${s.toLowerCase()} ${positions[i].map(v => fixed(v / BOHR, 8)).join(' ')}`
+        return `atom ${s}${seen[s]} ${s.toLowerCase()} ${positions[i].map(v => fixed(U.angstromToBohr(v), 8)).join(' ')}`
       }).join('\n'),
       qe_species: species.map(s => `  ${s} ${String(masses[s] || '1.0')} ${name(s, `${s}.UPF`)}`).join('\n'),
       qe_magnetization: unpaired ? `  tot_magnetization = ${unpaired}\n` : '',
       vasp_species: species.join(' '),
       vasp_counts: counts.join(' '),
-      vasp_coords: order.map(i => positions[i].map(v => fixed(v, 10)).join('  ')).join('\n'),
+      vasp_coord_mode: frac ? 'Direct' : 'Cartesian',
+      vasp_coords: frac ? () => { const f = fractional(); return order.map(i => f[i].map(v => fixed(v, 10)).join('  ')).join('\n') } : order.map(i => positions[i].map(v => fixed(v, 10)).join('  ')).join('\n'),
       vasp_potcar_spec: species.map(s => name(s, s)).join('\n'),
       vasp_nelect: nelect,
-      cp2k_cell: rows ? ['A', 'B', 'C'].map((axis, k) => `      ${axis} ${rows[k].map(v => fixed(v, 10)).join(' ')}`).join('\n') : '',
+      cp2k_cell: cp2kCell,
+      cp2k_coords: frac ? () => `      SCALED .TRUE.\n${fracLines()}` : coords,
       cp2k_kinds: species.map(s => {
         const kind = isObject(table[s]) ? table[s] : {}
         return `    &KIND ${s}\n      BASIS_SET ${kind.basis || 'DZVP-MOLOPT-SR-GTH'}\n${kind.aux ? `      BASIS_SET AUX_FIT ${kind.aux}\n` : ''}      POTENTIAL ${kind.potential || 'GTH-PBE'}\n    &END KIND`
@@ -217,7 +274,11 @@
     return values
   }
 
-  const fill = (text, values) => text.replace(/\{(\w+)\}/g, (match, key) => Object.prototype.hasOwnProperty.call(values, key) ? values[key] : match)
+  // Values may be functions (computed on first use in a template).
+  const fill = (text, values) => text.replace(/\{(\w+)\}/g, (match, key) => {
+    if (!Object.prototype.hasOwnProperty.call(values, key)) return match
+    return typeof values[key] === 'function' ? values[key]() : values[key]
+  })
 
   // POTCAR text and valences for the given variants, read from a local library (<library>/<variant>/POTCAR).
   function loadPotcar (library, variants, io) {

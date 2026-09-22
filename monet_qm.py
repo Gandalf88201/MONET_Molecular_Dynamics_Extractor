@@ -12,7 +12,7 @@ import math
 import os
 import re
 
-from monet_units import BOHR_ANGSTROM as BOHR
+import monet_units as units
 STATES = {1: ('sing', 's0', 'singlet'), 2: ('doub', 'd0', 'doublet'), 3: ('trip', 't0', 'triplet'),
           4: ('quar', 'q0', 'quartet'), 5: ('quin', 'p0', 'quintet')}
 _PLACEHOLDER = re.compile(r'\{(\w+)\}')
@@ -23,7 +23,11 @@ LABELS = {'gaussian': 'Gaussian', 'orca': 'ORCA', 'qbox': 'Qbox', 'qe': 'Quantum
 PLANE_WAVE = ('qe', 'vasp', 'cp2k', 'qbox')
 _SAFE = re.compile(r'^[A-Za-z0-9_.+()-]+$')
 _ELEMENT = re.compile(r'^[A-Z][a-z]?$')
-_DEFAULTS = (('override', None), ('isolated', None), ('species', {}), ('reference', 'u'), ('brokenSymmetry', False), ('potcar', None))
+_DEFAULTS = (('override', None), ('isolated', None), ('species', {}), ('reference', 'u'), ('brokenSymmetry', False), ('potcar', None),
+             ('cell', None), ('format', {}))
+# How each code writes the cell and positions: cellUnits (QE), cellStyle (CP2K), positions (all plane-wave codes).
+FORMAT = {'cellUnits': 'angstrom', 'cellStyle': 'abc', 'positions': 'cartesian'}
+FORMAT_VALUES = {'cellUnits': ('angstrom', 'bohr', 'alat'), 'cellStyle': ('abc', 'vectors'), 'positions': ('cartesian', 'fractional')}
 _VARIANT = re.compile(r'^[A-Za-z0-9_.-]+$')
 _ZVAL = re.compile(r'ZVAL\s*=\s*([-+0-9.Ee]+)')
 
@@ -89,6 +93,9 @@ def normalize(spec):
             continue
         for key, value in _DEFAULTS:
             entry.setdefault(key, {} if isinstance(value, dict) else value)
+        if isinstance(entry['format'], dict):
+            for key, value in FORMAT.items():
+                entry['format'].setdefault(key, value)
     return spec
 
 
@@ -125,6 +132,14 @@ def _mass_ok(value):
     if not (isinstance(value, str) or _finite(value)):
         return False
     return re.match(r'^[0-9.]+$', _js_string(value)) is not None
+
+
+def _is_matrix(m):
+    return isinstance(m, list) and len(m) == 3 and all(isinstance(row, list) and len(row) == 3 and all(_finite(v) for v in row) for row in m)
+
+
+def _one_of(value, allowed):
+    return isinstance(value, str) and value in allowed
 
 
 def _finite_non_negative(value):
@@ -171,6 +186,23 @@ def validate(spec):
                 parts = [value]
             if not _ELEMENT.match(str(el)) or any(not isinstance(part, str) or not _SAFE.match(part) for part in parts):
                 raise ValueError(f'{label}Invalid pseudopotential entry for {el}.')
+        fmt = entry.get('format')
+        if not isinstance(fmt, dict):
+            raise ValueError(f'{label}Invalid cell and position format.')
+        if not _one_of(fmt.get('cellUnits'), FORMAT_VALUES['cellUnits']):
+            raise ValueError(f"{label}Unknown cell units {_js_string(fmt.get('cellUnits'))}.")
+        if not _one_of(fmt.get('cellStyle'), FORMAT_VALUES['cellStyle']):
+            raise ValueError(f"{label}Unknown cell style {_js_string(fmt.get('cellStyle'))}.")
+        if not _one_of(fmt.get('positions'), FORMAT_VALUES['positions']):
+            raise ValueError(f"{label}Unknown position mode {_js_string(fmt.get('positions'))}.")
+        custom = entry.get('cell')
+        if custom is not None:
+            if not isinstance(custom, dict) or not _is_matrix(custom.get('rows')):
+                raise ValueError(f'{label}Custom cell must be a 3x3 matrix.')
+            try:
+                units.cell_parameters(custom['rows'])
+            except ValueError as error:
+                raise ValueError(f'{label}{error}') from None
         potcar = entry.get('potcar')
         if _truthy(potcar) and not (isinstance(potcar, dict) and isinstance(potcar.get('library'), str) and potcar['library']):
             raise ValueError(f'{label}Choose the POTCAR library folder.')
@@ -179,7 +211,7 @@ def validate(spec):
                     or not isinstance(item.get('template'), str)):
                 raise ValueError(f"Invalid file name pattern {item.get('name') if isinstance(item, dict) else None}.")
     cell = spec.get('cell')
-    if cell is not None and (not isinstance(cell, list) or len(cell) != 3 or any(not isinstance(row, list) or len(row) != 3 or not all(_finite(v) for v in row) for row in cell)):
+    if cell is not None and not _is_matrix(cell):
         raise ValueError('Cell must be a 3x3 matrix.')
     summary = spec.get('summary')
     if summary is not None and not (isinstance(summary, dict) and all(isinstance(text, str) for text in summary.values())):
@@ -205,6 +237,8 @@ def _cell(code, entry, conf, spec):
         return rows, moved, f'Cell: vacuum box = extent + {_num(padding)} A, configuration centred (isolated system).'
     if _truthy(entry.get('isolated')):
         return box(float(entry['isolated']['padding']))
+    if _truthy(entry.get('cell')):
+        return [[float(v) for v in r] for r in entry['cell']['rows']], positions, 'Cell: custom cell for this code.'
     if _truthy(spec.get('cell')):
         return [[float(v) for v in r] for r in spec['cell']], positions, 'Cell: applied manual cell.'
     if conf.get('lattice') is not None:
@@ -262,7 +296,69 @@ def _context(code, entry, conf, spec, states, mult, runtime):
     qbox_atoms = []
     for s, pos in zip(symbols, positions):
         seen[s] = seen.get(s, 0) + 1
-        qbox_atoms.append(f'atom {s}{seen[s]} {s.lower()} ' + ' '.join(_fixed(v / BOHR, 8) for v in pos))
+        qbox_atoms.append(f'atom {s}{seen[s]} {s.lower()} ' + ' '.join(_fixed(units.angstrom_to_bohr(v), 8) for v in pos))
+    # Native cell blocks. Values that need the cell parameters or fractional positions are computed only when a
+    # template uses them (a degenerate cell raises the units-module error then, not for every code).
+    fmt = dict(FORMAT, **entry['format']) if isinstance(entry.get('format'), dict) else FORMAT
+    legacy = spec.get('legacy')
+
+    def line(s, v, digits):
+        return f'{s}  {_fixed(v[0], digits)}  {_fixed(v[1], digits)}  {_fixed(v[2], digits)}\n'
+
+    def matrix(m, sep):
+        return '\n'.join(sep.join(_fixed(v, 10) for v in row) for row in m)
+    coords = ''.join(line(s, p, 7) for s, p in zip(symbols, positions))
+    frac = bool(rows) and fmt['positions'] == 'fractional'
+
+    def fractional():
+        return units.fractional(rows, positions)
+
+    def frac_lines():
+        f = fractional()
+        return ''.join(line(s, f[i], 10) for i, s in enumerate(symbols))
+
+    def params():
+        return units.cell_parameters(rows)
+    cell_units = fmt['cellUnits'] if rows else 'angstrom'
+    standard = bool(rows) and units.is_standard_orientation(rows)
+    vectors_note = code == 'cp2k' and bool(rows) and not _truthy(legacy) and fmt['cellStyle'] == 'abc' and not standard
+
+    def qe_cell():
+        if not rows:
+            return ''
+        if cell_units == 'bohr':
+            return 'CELL_PARAMETERS bohr\n' + matrix([[units.angstrom_to_bohr(v) for v in row] for row in rows], '  ')
+        if cell_units == 'alat':
+            a = params()[0]
+            return 'CELL_PARAMETERS alat\n' + matrix([[v / a for v in row] for row in rows], '  ')
+        return 'CELL_PARAMETERS angstrom\n' + matrix(rows, '  ')
+
+    def qe_positions():
+        if frac:
+            return 'ATOMIC_POSITIONS crystal\n' + frac_lines()
+        if cell_units == 'bohr':
+            return 'ATOMIC_POSITIONS bohr\n' + ''.join(line(s, [units.angstrom_to_bohr(v) for v in p], 8) for s, p in zip(symbols, positions))
+        return 'ATOMIC_POSITIONS angstrom\n' + coords
+
+    def cp2k_cell():
+        if not rows:
+            return ''
+        if _truthy(legacy):
+            # Legacy specs ({params}) keep the old text: vectors without units.
+            return '\n'.join(f"      {axis} {' '.join(_fixed(v, 10) for v in rows[k])}" for k, axis in enumerate('ABC'))
+        if fmt['cellStyle'] == 'abc' and standard:
+            p = params()
+            return (f"      ABC [angstrom] {' '.join(_fixed(v, 10) for v in p[:3])}\n"
+                    f"      ALPHA_BETA_GAMMA {' '.join(_fixed(v, 6) for v in p[3:])}")
+        return '\n'.join(f"      {axis} [angstrom] {' '.join(_fixed(v, 10) for v in rows[k])}" for k, axis in enumerate('ABC'))
+
+    def cell_abc():
+        p = params()
+        return ' '.join([_fixed(v, 10) for v in p[:3]] + [_fixed(v, 6) for v in p[3:]])
+
+    def vasp_direct():
+        f = fractional()
+        return '\n'.join('  '.join(_fixed(v, 10) for v in f[i]) for i in order)
     # u: unrestricted always; auto: restricted singlet, unrestricted otherwise; r: restricted / restricted open-shell.
     # Broken-symmetry singlet needs an unrestricted reference (guess=mix on a restricted singlet is meaningless).
     reference = entry.get('reference')
@@ -291,28 +387,34 @@ def _context(code, entry, conf, spec, states, mult, runtime):
     values = dict(state_of(mult))
     values.update({
         'index': _num(conf['index']), 'frame': _num(conf['frame']), 'charge': _num(charge), 'mult': _num(mult),
-        'coords': ''.join(f'{s}  {_fixed(x, 7)}  {_fixed(y, 7)}  {_fixed(z, 7)}\n' for s, (x, y, z) in zip(symbols, positions)),
+        'coords': coords,
         'nat': _num(len(symbols)), 'ntyp': _num(len(species)),
         'nspin': '2' if unpaired else '1', 'unpaired': _num(unpaired), 'delta_spin': _num(unpaired / 2),
         'uks': '.TRUE.' if unpaired else '.FALSE.',
         'ref': ref, 'ks': ks, 'guess': ' guess=mix' if _truthy(entry.get('brokenSymmetry')) and mult == 1 else '',
-        'cell_note': note,
-        'cell_ang': '\n'.join('  '.join(_fixed(v, 10) for v in row) for row in rows) if rows else '',
-        'qbox_cell': ' '.join(_fixed(v / BOHR, 8) for row in rows for v in row) if rows else '',
+        'cell_note': f'{note} Cell written as vectors (not in the standard orientation).' if vectors_note else note,
+        'cell_ang': matrix(rows, '  ') if rows else '',
+        'cell_bohr': matrix([[units.angstrom_to_bohr(v) for v in row] for row in rows], '  ') if rows else '',
+        'cell_abc': cell_abc if rows else '',
+        'qe_cell_block': qe_cell,
+        'qe_celldm': (lambda: f'  celldm(1) = {_fixed(units.angstrom_to_bohr(params()[0]), 10)}\n') if rows and cell_units == 'alat' else '',
+        'qe_positions_block': qe_positions,
+        'qbox_cell': ' '.join(_fixed(units.angstrom_to_bohr(v), 8) for row in rows for v in row) if rows else '',
         'qbox_species': '\n'.join(f"species {s.lower()} {name(s, f'{s}_ONCV_PBE-1.0.xml')}" for s in species),
         'qbox_atoms': '\n'.join(qbox_atoms),
         'qe_species': '\n'.join(f"  {s} {_js_string(masses[s]) if _truthy(masses.get(s)) else '1.0'} {name(s, f'{s}.UPF')}" for s in species),
         'qe_magnetization': f'  tot_magnetization = {unpaired}\n' if unpaired else '',
         'vasp_species': ' '.join(species),
         'vasp_counts': ' '.join(str(n) for n in counts),
-        'vasp_coords': '\n'.join('  '.join(_fixed(v, 10) for v in positions[i]) for i in order),
+        'vasp_coord_mode': 'Direct' if frac else 'Cartesian',
+        'vasp_coords': vasp_direct if frac else '\n'.join('  '.join(_fixed(v, 10) for v in positions[i]) for i in order),
         'vasp_potcar_spec': '\n'.join(name(s, s) for s in species),
         'vasp_nelect': nelect,
-        'cp2k_cell': '\n'.join(f"      {axis} {' '.join(_fixed(v, 10) for v in rows[k])}" for k, axis in enumerate('ABC')) if rows else '',
+        'cp2k_cell': cp2k_cell,
+        'cp2k_coords': (lambda: '      SCALED .TRUE.\n' + frac_lines()) if frac else coords,
         'cp2k_kinds': '\n'.join(kinds),
         'cp2k_hf_cutoff': _hf_cutoff(rows) if rows else '',
     })
-    legacy = spec.get('legacy')
     if _truthy(legacy):
         values.update({
             'nproc': _num(legacy['nproc']), 'mem': str(legacy['mem']), 'method': str(legacy['method']), 'basis': str(legacy['basis']),
@@ -322,7 +424,11 @@ def _context(code, entry, conf, spec, states, mult, runtime):
 
 
 def _fill(text, values):
-    return _PLACEHOLDER.sub(lambda m: values.get(m.group(1), m.group(0)), text)
+    """Values may be functions (computed on first use in a template)."""
+    def value(m):
+        v = values.get(m.group(1), m.group(0))
+        return v() if callable(v) else v
+    return _PLACEHOLDER.sub(value, text)
 
 
 def render(spec, conf, runtime=None):
