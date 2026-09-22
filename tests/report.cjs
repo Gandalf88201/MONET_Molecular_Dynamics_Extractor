@@ -26,6 +26,8 @@ const msd = s.begin({ kind: 'analysis', action: 'msd', source: S1, call: 'msd(dt
 s.fail(msd, 'Set the time axis first.')
 const msdOk = s.begin({ kind: 'analysis', action: 'msd', source: S1, call: 'msd(dt=1)' })
 s.finish(msdOk, { fits: { selection: { D_cm2_s: 1.5e-5 } }, fit_start: 10, fit_end: 50 })
+const extract = s.begin({ kind: 'extract', action: 'extract', source: S1, params: { selected: [1, 2, 3], frequency: 10, qm: { summary: { gaussian: 'Gaussian: b3lyp/6-31+g(d,p) (unrestricted), single point, singlet and triplet', qe: 'QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, single point, isolated (MT, vacuum 10 Å), singlet and triplet' } } } })
+s.finish(extract, { totalFrames: 200, sampledFrames: 20 })
 s.pause(); s.resume()
 const data = s.toJSON()
 const text = R.methodsReport(data)
@@ -49,6 +51,7 @@ assert.match(acfLine, /Sokal self-consistent window \(c = 5\)/); assert.match(ac
 assert.match(text, new RegExp(`^- \\[x\\] MSD fitting window.*: fit 10–50 fs, D = 0\\.000015 cm²/s, unwrapped with minimum-image steps \\(MONET's MSD always unwraps\\), no finite-size correction \\(#${msdOk}\\)$`, 'm')); checks++
 assert.match(text, new RegExp(`^- \\[x\\] Stride and the resulting number of configurations; g of the subsample: stride 90 from frame 0 → 2 configurations \\(#${sub}\\)$`, 'm')); checks++
 assert.match(text, /^- \[x\] How every error bar was computed; replicas, if any: block averaging \(Flyvbjerg–Petersen\), SEM = 0\.8/m); checks++
+assert.match(text, /Quantum-chemistry inputs for 20 configurations:\n- Gaussian: b3lyp\/6-31\+g\(d,p\) \(unrestricted\), single point, singlet and triplet\n- QE pw\.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, single point, isolated \(MT, vacuum 10 Å\), singlet and triplet\n/); checks++
 const gaps = text.split('## Gaps')[1]
 assert.match(gaps, new RegExp(`^- #${rdf} rdf was cleared\\.$`, 'm')); assert.match(gaps, new RegExp(`^- #${msd} msd failed: Set the time axis first\\.$`, 'm')); assert.match(gaps, /^- History paused .* → resumed .*\.$/m); checks++
 // Same session, same text; final-only keeps the marked steps.

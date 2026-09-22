@@ -117,6 +117,11 @@
       const text = resultText(s.result)
       if (text) out.push(`   Results: ${text}.`)
       if (s.note) out.push(`   Note: ${s.note}`)
+      const summary = s.params && s.params.qm && s.params.qm.summary
+      if (s.kind === 'extract' && summary && typeof summary === 'object') {
+        const entries = Object.values(summary).filter(v => typeof v === 'string')
+        if (entries.length) out.push(`\nQuantum-chemistry inputs for ${number(s.result && s.result.sampledFrames)} configurations:\n${entries.map(v => `- ${v}`).join('\n')}\n`)
+      }
     })
     out.push('', '## Reporting checklist', '', 'Items MONET did not record are left for you to fill in.', '')
     for (const [item, fill] of CHECKLIST) {

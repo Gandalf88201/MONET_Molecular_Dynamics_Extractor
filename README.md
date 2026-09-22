@@ -427,12 +427,13 @@ Each selected file (trajectory, reference, cell file) has a **×** button to rem
 
 ## Quantum-chemistry inputs
 
-Step 04 writes inputs for every sampled configuration for **Gaussian** (the default text is identical to MONET 1: `sing.dat`/`trip.dat`, `%chk=s0.chk`), **ORCA**, **Qbox**, **Quantum ESPRESSO pw.x**, **VASP** (POSCAR, atoms grouped by element, plus `INCAR_<state>`) and **CP2K**.
+Step 04 writes inputs for every sampled configuration for **Gaussian** (the default text is identical to MONET 1: `sing.dat`/`trip.dat`, `%chk=s0.chk`), **ORCA**, **Quantum ESPRESSO pw.x**, **VASP** (POSCAR, atoms grouped by element, plus `INCAR_<state>`), **CP2K** and **Qbox**.
 
-- Common settings: charge, spin multiplicities (one file per multiplicity: 1 → `sing`, 2 → `doub`, 3 → `trip`, 4 → `quar`, 5 → `quin`), processors, memory, method, basis set and vacuum padding.
-- Gaussian files stay in `confN/`; other codes use `confN/orca/`, `confN/qbox/`, `confN/qe/`, `confN/vasp/`, `confN/cp2k/`.
-- Periodic codes use, in order: the crystal cell applied in the ASE panel, the trajectory lattice, or an orthorhombic box of molecular extent + vacuum.
-- **Edit templates** exposes every file as plain text with placeholders such as `{charge}`, `{mult}`, `{coords}`, `{cell_ang}`, `{qbox_atoms}`, `{qe_species}`, `{cp2k_kinds}` (full list in the panel). Pseudopotential and basis names in the Qbox, QE and CP2K templates are placeholders to adapt to your setup; check the `net_charge`/`delta_spin` conventions of your Qbox version.
+A shared **Electronic states** row sets charge and spin multiplicities (one file per multiplicity: 1 → `sing`, 2 → `doub`, 3 → `trip`, 4 → `quar`, 5 → `quin`) for every checked code. Each code then gets its own collapsible card with the settings it actually needs — calculation type (SP, Opt, Opt+Freq, Freq, TD-DFT for Gaussian/ORCA, MD for all six, variable-cell relaxation for the four plane-wave codes), functional/method, basis set or cutoff, dispersion, implicit solvent, k-points, pseudopotentials and a free *extra keywords* line — plus an optional override of charge/multiplicities, a **Preview** of configuration 1, and **Edit templates** to override that code's files with custom text (the card then shows *custom template*). QE also offers an optional ph.x input for Γ-point phonons, and CP2K reaches PBE0/B3LYP/HSE06 through ADMM.
+
+Gaussian and ORCA need no cell. The plane-wave codes (QE, VASP, CP2K, Qbox) need one: in order, the crystal cell applied in the ASE panel, the trajectory lattice (per frame, so NPT trajectories work), or the card's own **Isolated system: vacuum box** flag (vacuum padding, configuration centred; QE `assume_isolated='mt'`, CP2K Poisson MT, VASP dipole correction). Without a cell and with the flag off, Run stays disabled and the status line's **Define cell…** button opens Structure analysis › Cell.
+
+Gaussian files stay in `confN/`; other codes use `confN/orca/`, `confN/qbox/`, `confN/qe/`, `confN/vasp/`, `confN/cp2k/`. VASP's **Build POTCAR** checkbox reads a local POTCAR library folder to assemble `POTCAR` and the exact `NELECT`; it is available with the launcher or the desktop app only (the browser cannot read local folders), and the POTCAR files never leave your machine — MONET does not ship them.
 
 ## Electron desktop
 
