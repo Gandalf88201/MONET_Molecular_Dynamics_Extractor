@@ -61,7 +61,6 @@ assert.match(text('vasp', { functional: 'pbesol', dispersion: 'd3' }, 1), /NSW =
 // Test ecutrho rounding with floating-point multiplication
 assert.match(text('qe', { ecutwfc: 33.3, ecutrhoFactor: 6 }), /  ecutrho = 199.8\n/); checks++
 
-console.log(`PASS: ${checks} QM resolve checks (keywords per code, defaults).`)
 
 // CP2K
 assert.deepEqual(one('cp2k', {}).map(f => f.name), ['{tag}.inp']); checks++
