@@ -127,6 +127,7 @@ function goTo (step) {
   $('rail-step').textContent = `${String(position + 1).padStart(2, '0')} · ${STEP_NAMES[step]}`
   $('rail-continue').classList.toggle('hidden', step !== 'analysis')
   if (step === 3) $('use-ase-selection').disabled = !aseState.pickedIds.length
+  if (String(step) === '4') updateQmUI()
 }
 
 // ── Collapsible workflow panel ──
@@ -596,76 +597,137 @@ $('next-3').addEventListener('click', () => goTo(4))
 
 $('opt-average').addEventListener('change',  e => { state.opts.computeAverage   = e.target.checked })
 
-// Quantum-chemistry inputs: per-code cards (qm-panel.js) → per-code spec (qm-resolve.js); template edits kept per session.
-// Minimal wiring; readiness, cell status and previews are connected in the next step.
-const qmCustom = {} // code → { file index → edited template }
-let qmFiles = {} // code → resolved files (with edits) of the last spec built
+// Quantum-chemistry inputs: shared electronic states + one card per code (qm-panel.js) → per-code spec (qm-resolve.js).
+// Template edits are kept per session; previews render configuration 1 of the current selection.
 const qmCodes = () => [...$$('[data-qm-code]')].filter(input => input.checked).map(input => input.dataset.qmCode)
-const qmPanel = MonetQMPanel.mount($('qm-cards'), { onChange: updateQmUI })
+const qmCustom = {} // code → { file index → edited template }
+const qmPanel = MonetQMPanel.mount($('qm-cards'), { onChange: () => updateQmUI() })
+let qmSymbolsKey = null // species tables are rebuilt only when the selected elements change
 
-function rawQmSpec () {
+function qmAtoms () { return state.firstFrame ? MonetASEModel.atomMap(state.firstFrame, [...state.selectedAtoms]) : [] }
+function qmSymbols () { return qmAtoms().map(atom => atom.element) }
+function qmExtent () {
+  const atoms = qmAtoms()
+  if (!atoms.length) return null
+  return ['x', 'y', 'z'].map(k => Math.max(...atoms.map(a => a[k])) - Math.min(...atoms.map(a => a[k])))
+}
+function qmCellInfo () {
+  if (aseState.cellParameters) return { source: 'applied', rows: MonetASEModel.cellVectors(aseState.cellParameters) }
+  const lattice = player.cells && player.cells.get(0)
+  return lattice ? { source: 'trajectory', rows: lattice } : null
+}
+function qmPotcarAvailable () { return Boolean(aseState.available || window.monet.desktop) }
+function qmCommon () {
+  return { charge: Number($('qm-charge').value), multiplicities: $('qm-mults').value.trim().split(/[\s,]+/).filter(Boolean).map(Number) }
+}
+function buildQmSpec () {
   const codes = qmCodes()
   if (!codes.length) return null
-  const mults = $('qm-mults').value.trim().split(/[\s,]+/).filter(Boolean).map(Number)
-  qmPanel.show(codes)
-  const cards = qmPanel.read()
-  return { ...MonetQMResolve.buildSpec({ codes, common: { charge: Number($('qm-charge').value), multiplicities: mults }, cards, symbols: [], cell: aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, custom: qmCustom }), masses: MonetQM.MASSES }
+  const spec = { ...MonetQMResolve.buildSpec({ codes, common: qmCommon(), cards: qmPanel.read(), symbols: qmSymbols(), cell: aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, custom: qmCustom }), masses: MonetQM.MASSES }
+  return MonetQM.validate(spec)
 }
-
-function buildQmSpec () {
-  const spec = rawQmSpec()
-  return spec && MonetQM.validate(spec)
+function qmReadiness () {
+  return MonetQMResolve.readiness(qmCodes(), qmPanel.read(), { cell: qmCellInfo(), extent: qmExtent(), symbols: qmSymbols(), potcarAvailable: qmPotcarAvailable() })
 }
 
 function updateQmUI () {
   const codes = qmCodes()
-  qmPanel.show(codes)
   state.opts.generateGaussian = codes.includes('gaussian')
   $('gaussian-details').classList.toggle('disabled', !codes.length)
+  qmPanel.show(codes)
+  const symbols = qmSymbols()
+  const symbolsKey = [...new Set(symbols)].join(' ')
+  if (symbolsKey !== qmSymbolsKey) { qmSymbolsKey = symbolsKey; qmPanel.setSymbols(symbols) }
+  qmPanel.setPotcarAvailable(qmPotcarAvailable())
+  const cards = qmPanel.read()
+  const cell = qmCellInfo()
+  for (const code of codes.filter(c => MonetQMResolve.PLANE_WAVE.includes(c))) {
+    const s = cards[code]
+    const text = s.isolated ? `Vacuum box (isolated), ${s.padding} Å` : !cell ? '✖ No cell'
+      : cell.source === 'applied' ? `Crystal cell applied (${aseState.cellParameters.join(', ')})` : 'Lattice from the trajectory'
+    qmPanel.setCellStatus(code, text, !s.isolated && !cell)
+  }
+  let spec = null
+  const messages = []
+  const ready = qmReadiness()
+  try { spec = buildQmSpec() } catch (error) { messages.push(error.message) }
+  messages.push(...ready.blocked, ...ready.warnings.map(w => `⚠ ${w}`))
+  const blocked = Boolean(codes.length) && (ready.blocked.length > 0 || !spec)
+  $('qm-status').textContent = messages.length ? messages.join(' ') : codes.length ? `Inputs for: ${codes.map(code => MonetQMResolve.LABELS[code]).join(', ')}.` : 'No quantum-chemistry inputs will be written.'
+  $('qm-define-cell').classList.toggle('hidden', !ready.blocked.some(m => / no cell\./.test(m)))
+  $('next-4').disabled = !state.outputDir || blocked
+  // Card titles mark custom templates; previews render configuration 1.
+  const atoms = qmAtoms()
+  for (const code of codes) {
+    const summary = $(`qm-card-${code}`).querySelector('summary')
+    summary.textContent = MonetQMResolve.LABELS[code] + (qmCustom[code] && Object.keys(qmCustom[code]).length ? ' · custom template' : '')
+    let preview = ''
+    if (spec && atoms.length) {
+      try {
+        const conf = { index: 1, frame: 0, symbols: atoms.map(a => a.element), positions: atoms.map(a => [a.x, a.y, a.z]), lattice: cell && cell.source === 'trajectory' ? cell.rows : undefined }
+        const files = MonetQM.render({ ...spec, codes: { [code]: spec.codes[code] } }, conf)
+        preview = files.map(file => `── ${file.path}\n${file.text}`).join('\n')
+      } catch (error) { preview = error.message }
+    } else if (!atoms.length) preview = 'Select atoms to preview configuration 1.'
+    qmPanel.setPreview(code, preview)
+  }
+  // Template selector lists the resolved files of every selected code.
   const select = $('qm-template-file'), previous = select.value
   select.replaceChildren()
-  try {
-    const spec = rawQmSpec()
-    qmFiles = spec ? Object.fromEntries(Object.entries(spec.codes).map(([code, entry]) => [code, entry.files])) : {}
-  } catch { qmFiles = {} }
-  for (const code of codes) {
-    (qmFiles[code] || []).forEach((file, i) => {
-      const option = document.createElement('option')
-      option.value = `${code}:${i}`
-      option.textContent = `${MonetQMResolve.LABELS[code]} — ${file.name}`
-      select.appendChild(option)
-    })
+  if (spec) {
+    for (const code of codes) {
+      spec.codes[code].files.forEach((file, i) => {
+        const option = document.createElement('option')
+        option.value = `${code}:${i}`
+        option.textContent = `${MonetQMResolve.LABELS[code]} — ${file.name}`
+        select.appendChild(option)
+      })
+    }
   }
   if ([...select.options].some(option => option.value === previous)) select.value = previous
-  showTemplate()
-  try {
-    buildQmSpec()
-    $('qm-status').textContent = codes.length ? `Inputs for: ${codes.map(code => MonetQMResolve.LABELS[code]).join(', ')}.` : 'No quantum-chemistry inputs will be written.'
-  } catch (error) { $('qm-status').textContent = error.message }
+  showTemplate(spec)
 }
 
 function selectedTemplate () {
   const [code, index] = ($('qm-template-file').value || '').split(':')
   return code ? { code, index: Number(index) } : null
 }
-function showTemplate () {
+function showTemplate (spec = null) {
   const target = selectedTemplate()
-  const file = target && (qmFiles[target.code] || [])[target.index]
-  $('qm-template-text').value = target ? (qmCustom[target.code]?.[target.index] ?? (file ? file.template : '')) : ''
+  let text = ''
+  if (target) {
+    const custom = qmCustom[target.code] && qmCustom[target.code][target.index]
+    if (custom !== undefined) text = custom
+    else {
+      try { text = (spec || buildQmSpec()).codes[target.code].files[target.index].template } catch { text = '' }
+    }
+  }
+  $('qm-template-text').value = text
   $('qm-template-text').disabled = !target
 }
 $$('[data-qm-code]').forEach(input => input.addEventListener('change', updateQmUI))
 for (const id of ['qm-charge', 'qm-mults']) $(id).addEventListener('input', updateQmUI)
-$('qm-template-file').addEventListener('change', showTemplate)
+$('qm-template-file').addEventListener('change', () => showTemplate())
 $('qm-template-text').addEventListener('input', () => {
   const target = selectedTemplate()
-  if (target) (qmCustom[target.code] ||= {})[target.index] = $('qm-template-text').value
+  if (!target) return
+  ;(qmCustom[target.code] ||= {})[target.index] = $('qm-template-text').value
+  updateQmUI()
 })
 $('qm-template-reset').addEventListener('click', () => {
   const target = selectedTemplate()
-  if (!target) return
-  if (qmCustom[target.code]) delete qmCustom[target.code][target.index]
+  if (!target || !qmCustom[target.code]) return
+  delete qmCustom[target.code][target.index]
   updateQmUI()
+})
+$('qm-define-cell').addEventListener('click', () => {
+  // Structure analysis › Cell lives in the ASE workspace (the panel holding #cell-apply). The workflow stays on
+  // Options: the workspace folds the workflow panel away and ⇥ brings it back with the cards updated.
+  showViewerTab('ase')
+  const panel = $('cell-apply').closest('details')
+  if (panel) panel.open = true
+  if ($('cell-apply').scrollIntoView) $('cell-apply').scrollIntoView({ block: 'center' })
+  setStatus('Apply a crystal cell, then reopen the workflow panel (⇥) to return to Options.')
 })
 
 $('btn-output-dir').addEventListener('click', async () => {
@@ -673,12 +735,17 @@ $('btn-output-dir').addEventListener('click', async () => {
   if (!dir) return
   state.outputDir = dir
   $('output-dir-text').textContent = dir
-  $('next-4').disabled = false
+  updateQmUI()
 })
 
 $('back-4').addEventListener('click', () => goTo(3))
 
 $('next-4').addEventListener('click', () => {
+  const ready = qmReadiness()
+  if (ready.blocked.length) {
+    $('qm-status').textContent = ready.blocked.join(' ')
+    return setStatus(ready.blocked[0])
+  }
   try { state.opts.qm = buildQmSpec() } catch (error) {
     $('qm-status').textContent = error.message
     return setStatus(error.message)
@@ -808,6 +875,7 @@ function qmSummary () {
     const folder = MonetQM.CODES[code].folder
     const names = spec.codes[code].files.map(file => /\{(tag|mult|state|chk)\}/.test(file.name)
       ? (spec.codes[code].override || spec.common).multiplicities.map(m => file.name.replace('{tag}', MonetQM.stateOf(m).tag)).join(', ') : file.name)
+    if (code === 'vasp' && spec.codes.vasp.potcar) names.push('POTCAR')
     return folder ? `${folder}/ (${names.join(', ')})` : names.join(', ')
   }).join('; ')
 }
@@ -853,7 +921,7 @@ $('back-6').addEventListener('click', () => {
   state.source.original = null
   state.source.label = null
   clearTrajectory()
-  $('next-4').disabled = !window.monet.isBrowser
+  updateQmUI()
   $('output-dir-text').textContent = window.monet.isBrowser ? 'Download results as a ZIP file' : 'Not selected'
 
   $('file-display').classList.add('hidden')
@@ -1041,6 +1109,7 @@ function invalidateCellAnalyses () {
   applyDisplay()
   updateLive()
   if (aseState.cellParameters) $('cell-status').textContent += describeCellFit()
+  updateQmUI()
 }
 $('cell-apply').addEventListener('click', () => {
   try {
@@ -3735,7 +3804,7 @@ window.addEventListener('load', () => {
     state.outputDir = 'MONET-results'
     $('output-dir-text').textContent = 'Download results as a ZIP file'
     $('btn-output-dir').classList.add('hidden')
-    $('next-4').disabled = false
+    updateQmUI()
     setStatus('Browser mode · Select an XYZ file to begin')
     $('btn-conv-output').textContent = 'Set download name'
     $('conv-format').value = 'extxyz'

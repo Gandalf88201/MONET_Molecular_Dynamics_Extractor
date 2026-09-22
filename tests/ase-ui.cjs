@@ -117,7 +117,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player };' : ''))
+for (const file of ['theme.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -517,10 +517,11 @@ async function run () {
   assert.deepEqual(Object.keys(lastProcessOptions.qm.codes), ['gaussian', 'orca']); checks++
   assert.equal(lastProcessOptions.qm.common.charge, -1); assert.deepEqual([...lastProcessOptions.qm.common.multiplicities], [2]); checks++
   assert.equal(lastProcessOptions.qm.codes.orca.files[0].template, '! custom {mult}\n{coords}'); assert.equal(lastProcessOptions.generateGaussian, false); checks++
+  assert.match(lastProcessOptions.qm.summary.orca, /^ORCA: b3lyp\/6-31\+g\(d,p\)/); checks++
   el('qm-mults').value = '1 1'; el('qm-mults').dispatchEvent(new w.Event('input'))
   assert.match(el('qm-status').textContent, /distinct/); checks++
-  await click('retry-processing'); await click('next-4')
-  assert.match(el('status-msg').textContent, /distinct/); checks++
+  await click('retry-processing')
+  assert.equal(el('next-4').disabled, true); checks++ // an invalid spec disables Run
   // Per-code cards: one card per ticked code; old shared fields are gone.
   assert.equal(el('qm-nproc'), null); assert.equal(el('qm-method'), null); assert.equal(el('qm-padding'), null); checks++
   w.document.querySelector('[data-qm-code="qe"]').click()
@@ -531,6 +532,39 @@ async function run () {
   el('qm-qe-isolated').click(); assert.equal(el('qm-qe-padding').closest('.field-label').hidden, false); checks++
   w.document.querySelector('[data-qm-code="qbox"]').click()
   assert.deepEqual([...el('qm-qbox-calc').options].map(o => o.value), ['sp', 'opt', 'vcrelax', 'md']); checks++
+  // Cell check: a plane-wave code without a cell blocks Run; the isolated flag or an applied cell releases it.
+  w.document.querySelector('[data-qm-code="qbox"]').click() // only QE among the plane-wave codes
+  el('qm-charge').value = '0'; el('qm-charge').dispatchEvent(new w.Event('input'))
+  el('qm-mults').value = '1'; el('qm-mults').dispatchEvent(new w.Event('input'))
+  el('qm-qe-calc').value = 'sp'; el('qm-qe-calc').dispatchEvent(new w.Event('change'))
+  w.testMonet.state.outputDir = 'out'
+  el('qm-qe-isolated').click() // back to not isolated
+  assert.match(el('qm-status').textContent, /Quantum ESPRESSO \(pw\.x\): no cell/); assert.equal(el('next-4').disabled, true); checks++
+  assert.equal(el('qm-define-cell').classList.contains('hidden'), false); assert.match(el('qm-qe-cell').textContent, /✖ No cell/); checks++
+  assert.ok(w.testMonet.qmReadiness().blocked.some(m => /no cell/.test(m))); checks++
+  el('qm-qe-isolated').click()
+  assert.doesNotMatch(el('qm-status').textContent, /no cell/); assert.equal(el('next-4').disabled, false); assert.match(el('qm-qe-cell').textContent, /Vacuum box \(isolated\)/); checks++
+  el('qm-qe-isolated').click()
+  w.testMonet.aseState.cellParameters = [10, 10, 10, 90, 90, 90]; el('qm-charge').dispatchEvent(new w.Event('input'))
+  assert.match(el('qm-qe-cell').textContent, /Crystal cell applied \(10, 10, 10, 90, 90, 90\)/); assert.equal(el('next-4').disabled, false); checks++
+  assert.match(el('qm-status').textContent, /Gaussian: the configuration is written as an isolated cluster/); checks++
+  w.testMonet.aseState.cellParameters = null
+  // Override, preview, custom template marker (the ORCA edit made above is reset first).
+  el('qm-template-file').value = 'orca:0'; el('qm-template-file').dispatchEvent(new w.Event('change')); el('qm-template-reset').click()
+  assert.doesNotMatch(el('qm-card-orca').querySelector('summary').textContent, /custom template/); checks++
+  el('qm-orca-override').click(); el('qm-orca-override-mults').value = '2'; el('qm-orca-override-mults').dispatchEvent(new w.Event('input'))
+  assert.match(el('qm-orca-preview').textContent, /\* xyz 0 2\n/); checks++
+  el('qm-template-file').value = 'orca:0'; el('qm-template-file').dispatchEvent(new w.Event('change'))
+  el('qm-template-text').value = '! custom {mult}\n{coords}'; el('qm-template-text').dispatchEvent(new w.Event('input'))
+  assert.match(el('qm-card-orca').querySelector('summary').textContent, /custom template/); checks++
+  assert.match(el('qm-orca-preview').textContent, /! custom 2\n/); checks++
+  // Define cell… opens Structure analysis › Cell (ASE workspace, cell panel unfolded); the workflow stays on Options.
+  el('qm-qe-isolated').click(); el('qm-qe-isolated').click() // ensure blocked state
+  assert.equal(el('qm-define-cell').classList.contains('hidden'), false)
+  w.testMonet.state.step = 4; el('qm-define-cell').click()
+  assert.equal(el('vtab-content-ase').classList.contains('active'), true); assert.equal(el('cell-apply').closest('details').open, true); checks++
+  assert.equal(w.testMonet.state.step, 4); checks++
+  w.document.querySelector('[data-qm-code="qe"]').click(); w.document.querySelector('[data-qm-code="orca"]').click()
   // New analyses: the MD time step must be set by the user; nothing is assumed.
   activeAtoms = atoms; nextFile = 'torsion.xyz'
   el('inp-format').value = 'auto'; el('inp-format').dispatchEvent(new w.Event('change'))
