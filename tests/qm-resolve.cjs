@@ -77,7 +77,10 @@ assert.match(text('cp2k', { calc: 'optfreq' }, 1), /RUN_TYPE VIBRATIONAL_ANALYSI
 assert.match(text('cp2k', { calc: 'vcrelax', pressure: 1 }), /RUN_TYPE CELL_OPT\n&END GLOBAL\n&MOTION\n  &CELL_OPT\n    EXTERNAL_PRESSURE 10000\n    TYPE DIRECT_CELL_OPT\n  &END CELL_OPT\n&END MOTION\n&FORCE_EVAL\n  METHOD Quickstep\n  STRESS_TENSOR ANALYTICAL\n  &DFT\n/); checks++
 assert.match(text('cp2k', { calc: 'md' }), /RUN_TYPE MD\n&END GLOBAL\n&MOTION\n  &MD\n    ENSEMBLE NVT\n    STEPS 1000\n    TIMESTEP 0.5\n    TEMPERATURE 300\n    &THERMOSTAT\n      TYPE CSVR\n      &CSVR\n        TIMECON 100\n      &END CSVR\n    &END THERMOSTAT\n  &END MD\n&END MOTION\n/); checks++
 assert.doesNotMatch(text('cp2k', { calc: 'md', md: { ensemble: 'nve' } }), /THERMOSTAT/); assert.match(text('cp2k', { calc: 'md', md: { ensemble: 'nve' } }), /ENSEMBLE NVE\n/); checks++
-assert.match(text('cp2k', { isolated: true, kpoints: 'grid', grid: [2, 2, 2], dispersion: 'd3bj', functional: 'blyp', extra: 'SURFACE_DIPOLE_CORRECTION F' }), /    &END MGRID\n    &POISSON\n      PERIODIC NONE\n      PSOLVER MT\n    &END POISSON\n    &KPOINTS\n      SCHEME MONKHORST-PACK 2 2 2\n    &END KPOINTS\n    &XC\n      &XC_FUNCTIONAL BLYP\n      &END XC_FUNCTIONAL\n      &VDW_POTENTIAL\n        POTENTIAL_TYPE PAIR_POTENTIAL\n        &PAIR_POTENTIAL\n          TYPE DFTD3\(BJ\)\n          PARAMETER_FILE_NAME dftd3.dat\n          REFERENCE_FUNCTIONAL BLYP\n        &END PAIR_POTENTIAL\n      &END VDW_POTENTIAL\n    &END XC\n    SURFACE_DIPOLE_CORRECTION F\n  &END DFT\n[\s\S]*PERIODIC NONE\n    &END CELL/); checks++
+// Isolated + k-point grid: PERIODIC NONE means no &KPOINTS block is written (k-points are meaningless for an isolated system).
+{ const t = text('cp2k', { isolated: true, kpoints: 'grid', grid: [2, 2, 2], dispersion: 'd3bj', functional: 'blyp', extra: 'SURFACE_DIPOLE_CORRECTION F' })
+  assert.doesNotMatch(t, /&KPOINTS/); checks++
+  assert.match(t, /    &END MGRID\n    &POISSON\n      PERIODIC NONE\n      PSOLVER MT\n    &END POISSON\n    &XC\n      &XC_FUNCTIONAL BLYP\n      &END XC_FUNCTIONAL\n      &VDW_POTENTIAL\n        POTENTIAL_TYPE PAIR_POTENTIAL\n        &PAIR_POTENTIAL\n          TYPE DFTD3\(BJ\)\n          PARAMETER_FILE_NAME dftd3.dat\n          REFERENCE_FUNCTIONAL BLYP\n        &END PAIR_POTENTIAL\n      &END VDW_POTENTIAL\n    &END XC\n    SURFACE_DIPOLE_CORRECTION F\n  &END DFT\n[\s\S]*PERIODIC NONE\n    &END CELL/); checks++ }
 assert.match(text('cp2k', { functional: 'revpbe' }), /      &XC_FUNCTIONAL\n        &PBE\n          PARAMETRIZATION REVPBE\n        &END PBE\n      &END XC_FUNCTIONAL\n/); checks++
 { const pbe0 = text('cp2k', { functional: 'pbe0', hfMemory: 3000 })
   assert.match(pbe0, /    BASIS_SET_FILE_NAME BASIS_MOLOPT\n    BASIS_SET_FILE_NAME BASIS_ADMM\n    POTENTIAL_FILE_NAME GTH_POTENTIALS\n/); checks++
@@ -121,6 +124,8 @@ assert.equal(+R.hfCutoff([[10, 0, 0], [2, 10, 0], [0, 0, 8]]).toFixed(6), 3.9); 
   assert.equal(spec.summary.vasp, 'VASP: PBE, ENCUT 500 eV, Γ point, single point, isolated (dipole correction, vacuum 12 Å), singlet and triplet'); checks++ }
 assert.equal(R.describe('qe', R.settingsFor('qe', { calc: 'md', override: { charge: -1, multiplicities: [2] } }), { charge: 0, multiplicities: [1] }), "QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, molecular dynamics (NVT, 300 K, 0.5 fs × 1000 steps), charge -1, doublet"); checks++
 assert.equal(R.describe('cp2k', R.settingsFor('cp2k', { functional: 'pbe0', kpoints: 'grid', grid: [2, 2, 2], calc: 'vcrelax', pressure: 1 }), { charge: 0, multiplicities: [1] }), 'CP2K: PBE0 (ADMM), CUTOFF 400 Ry, 2×2×2 k-points, variable-cell relaxation (1 GPa), singlet'); checks++
+// Isolated CP2K: a k-point grid is never used for PERIODIC NONE, so describe() reports Γ point rather than the grid.
+assert.equal(R.describe('cp2k', R.settingsFor('cp2k', { kpoints: 'grid', grid: [2, 2, 2], isolated: true }), { charge: 0, multiplicities: [1] }), 'CP2K: PBE, CUTOFF 400 Ry, Γ point, single point, isolated (MT Poisson solver, vacuum 10 Å), singlet'); checks++
 // Gaussian ADMP is NVE only, with no target temperature to report.
 assert.equal(R.describe('gaussian', R.settingsFor('gaussian', { calc: 'md' }), { charge: 0, multiplicities: [1] }), 'Gaussian: b3lyp/6-31+g(d,p) (unrestricted), molecular dynamics (NVE, 0.5 fs × 1000 steps), singlet'); checks++
 assert.equal(R.describe('orca', R.settingsFor('orca', { calc: 'md' }), { charge: 0, multiplicities: [1] }), 'ORCA: b3lyp/6-31+g(d,p) (unrestricted), molecular dynamics (NVT, 300 K, 0.5 fs × 1000 steps), singlet'); checks++
@@ -161,19 +166,21 @@ assert.deepEqual(ready(['gaussian'], { gaussian: { nproc: 0 } }, noCell).blocked
 assert.deepEqual(ready(['gaussian'], { gaussian: { nproc: 2.5 } }, noCell).blocked, ['Gaussian: processors must be a positive integer.']); checks++
 assert.deepEqual(ready(['orca'], { orca: { mem: '4 xb' } }, noCell).blocked, ['ORCA: memory must look like 4gb or 500mb.']); checks++
 assert.deepEqual(ready(['gaussian'], { gaussian: { mem: '500mb' } }, noCell).blocked, []); checks++
-assert.deepEqual(ready(['gaussian'], { gaussian: { mem: '4' } }, noCell).blocked, []); checks++
+assert.deepEqual(ready(['gaussian'], { gaussian: { mem: '4' } }, noCell).blocked, ['Gaussian: memory must look like 4gb or 500mb.']); checks++ // a bare number has no unit: Gaussian would read %mem=4 as 4 words
 
 // QE ph.x: warnings (not blocks) for open-shell multiplicities, hybrid functionals and isolated systems.
+// These only apply when ph.x is actually written (phx && calc is freq/optfreq — the same condition the qe resolver uses).
 // Effective multiplicities come from the card override, or ctx.common when the caller supplies it (backward compatible when absent).
-assert.deepEqual(ready(['qe'], { qe: { phx: true, isolated: true } }, { ...noCell, common: { charge: 0, multiplicities: [1] } }).warnings, ["Quantum ESPRESSO (pw.x): check that your ph.x version supports assume_isolated='mt'."]); checks++
-assert.deepEqual(ready(['qe'], { qe: { phx: true } }, { ...cubic, common: { charge: 0, multiplicities: [1, 3] } }).warnings, ['Quantum ESPRESSO (pw.x): ph.x may not support fixed total magnetization (open-shell multiplicities); check your QE version.']); checks++
-assert.deepEqual(ready(['qe'], { qe: { phx: true, override: { charge: 0, multiplicities: [2] } } }, { ...cubic, common: { charge: 0, multiplicities: [1] } }).warnings, ['Quantum ESPRESSO (pw.x): ph.x may not support fixed total magnetization (open-shell multiplicities); check your QE version.']); checks++
-assert.deepEqual(ready(['qe'], { qe: { phx: true, functional: 'pbe0' } }, { ...cubic, common: { charge: 0, multiplicities: [1] } }).warnings, ['Quantum ESPRESSO (pw.x): hybrid functionals are expensive with plane waves.', 'Quantum ESPRESSO (pw.x): ph.x does not support hybrid functionals.']); checks++
-assert.deepEqual(ready(['qe'], { qe: { phx: true } }, cubic).warnings, []); checks++ // no ctx.common: the multiplicity warning is skipped, not thrown
+assert.deepEqual(ready(['qe'], { qe: { phx: true, calc: 'freq', isolated: true } }, { ...noCell, common: { charge: 0, multiplicities: [1] } }).warnings, ["Quantum ESPRESSO (pw.x): check that your ph.x version supports assume_isolated='mt'."]); checks++
+assert.deepEqual(ready(['qe'], { qe: { phx: true, calc: 'freq' } }, { ...cubic, common: { charge: 0, multiplicities: [1, 3] } }).warnings, ['Quantum ESPRESSO (pw.x): ph.x may not support fixed total magnetization (open-shell multiplicities); check your QE version.']); checks++
+assert.deepEqual(ready(['qe'], { qe: { phx: true, calc: 'optfreq', override: { charge: 0, multiplicities: [2] } } }, { ...cubic, common: { charge: 0, multiplicities: [1] } }).warnings, ['Quantum ESPRESSO (pw.x): ph.x may not support fixed total magnetization (open-shell multiplicities); check your QE version.']); checks++
+assert.deepEqual(ready(['qe'], { qe: { phx: true, calc: 'freq', functional: 'pbe0' } }, { ...cubic, common: { charge: 0, multiplicities: [1] } }).warnings, ['Quantum ESPRESSO (pw.x): hybrid functionals are expensive with plane waves.', 'Quantum ESPRESSO (pw.x): ph.x does not support hybrid functionals.']); checks++
+assert.deepEqual(ready(['qe'], { qe: { phx: true, calc: 'freq' } }, cubic).warnings, []); checks++ // no ctx.common: the multiplicity warning is skipped, not thrown
 assert.deepEqual(ready(['qe'], { qe: {} }, { ...cubic, common: { charge: 0, multiplicities: [1, 3] } }).warnings, []); checks++ // phx off: no ph.x warnings at all
+assert.deepEqual(ready(['qe'], { qe: { phx: true, calc: 'sp', isolated: true } }, { ...cubic, common: { charge: 0, multiplicities: [1, 3] } }).warnings, []); checks++ // phx true but calc 'sp': ph.x is never written, so no ph.x warnings
 
 // CP2K: k-point grids with an isolated system or an ADMM hybrid (warnings).
-assert.deepEqual(ready(['cp2k'], { cp2k: { kpoints: 'grid', grid: [2, 2, 2], isolated: true } }, noCell).warnings, ['CP2K: k-point grids are ignored for an isolated system (PERIODIC NONE).']); checks++
+assert.deepEqual(ready(['cp2k'], { cp2k: { kpoints: 'grid', grid: [2, 2, 2], isolated: true } }, noCell).warnings, ['CP2K: k-point grids are not used for an isolated system (PERIODIC NONE).']); checks++
 assert.deepEqual(ready(['cp2k'], { cp2k: { kpoints: 'grid', grid: [2, 2, 2], functional: 'pbe0' } }, cubic).warnings, ['CP2K: hybrid functionals are expensive with plane waves.', 'CP2K: ADMM hybrids with k-points are expensive and not supported by every CP2K version.']); checks++
 
 console.log(`PASS: ${checks} QM resolve checks (keywords per code, defaults).`)

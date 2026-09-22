@@ -297,7 +297,7 @@ save {tag}_conf{index}.xml
         admm_basis_file: hybrid ? '    BASIS_SET_FILE_NAME BASIS_ADMM\n' : '',
         cutoff: String(s.cutoff), rel_cutoff: String(s.relCutoff),
         poisson: s.isolated ? '    &POISSON\n      PERIODIC NONE\n      PSOLVER MT\n    &END POISSON\n' : '',
-        kpoints: s.kpoints === 'grid' ? `    &KPOINTS\n      SCHEME MONKHORST-PACK ${s.grid.join(' ')}\n    &END KPOINTS\n` : '',
+        kpoints: s.kpoints === 'grid' && !s.isolated ? `    &KPOINTS\n      SCHEME MONKHORST-PACK ${s.grid.join(' ')}\n    &END KPOINTS\n` : '',
         admm: hybrid ? `    &AUXILIARY_DENSITY_MATRIX_METHOD\n      METHOD BASIS_PROJECTION\n      ADMM_PURIFICATION_METHOD MO_DIAG\n      EXCH_SCALING_MODEL NONE\n      EXCH_CORRECTION_FUNC ${s.functional === 'b3lyp' ? 'BECKE88X' : 'PBEX'}\n    &END AUXILIARY_DENSITY_MATRIX_METHOD\n` : '',
         xc: CP2K_XC[s.functional],
         vdw: s.dispersion === 'd3bj' ? `      &VDW_POTENTIAL\n        POTENTIAL_TYPE PAIR_POTENTIAL\n        &PAIR_POTENTIAL\n          TYPE DFTD3(BJ)\n          PARAMETER_FILE_NAME dftd3.dat\n          REFERENCE_FUNCTIONAL ${CP2K_VDW_REFERENCE[s.functional]}\n        &END PAIR_POTENTIAL\n      &END VDW_POTENTIAL\n` : '',
@@ -382,7 +382,7 @@ save {tag}_conf{index}.xml
   function describe (code, s, common) {
     const states = s.override || common
     const charge = states.charge ? `, charge ${states.charge}` : ''
-    const kp = s.kpoints === 'grid' ? `${s.grid.join('×')} k-points` : 'Γ point'
+    const kp = s.kpoints === 'grid' && !(code === 'cp2k' && s.isolated) ? `${s.grid.join('×')} k-points` : 'Γ point'
     const iso = corr => (s.isolated ? `, isolated (${corr}, vacuum ${s.padding} Å)` : '')
     let head
     if (code === 'gaussian' || code === 'orca') {
@@ -438,7 +438,7 @@ save {tag}_conf{index}.xml
       if (s.calc === 'td' && !(Number.isInteger(s.nstates) && s.nstates >= 1)) block('TD-DFT needs at least one excited state.')
       if (code === 'orca' && !(s.maxcorePct >= 1 && s.maxcorePct <= 100)) block('maxcore % must be between 1 and 100.')
       if ((code === 'gaussian' || code === 'orca') && !(Number.isInteger(s.nproc) && s.nproc >= 1)) block('processors must be a positive integer.')
-      if ((code === 'gaussian' || code === 'orca') && !/^\s*\d+(\.\d+)?\s*(gb|mb|g|m)?\s*$/i.test(s.mem)) block('memory must look like 4gb or 500mb.')
+      if ((code === 'gaussian' || code === 'orca') && !/^\s*\d+(\.\d+)?\s*(gb|mb|g|m)\s*$/i.test(s.mem)) block('memory must look like 4gb or 500mb.')
       if (pw && s.kpoints === 'grid' && !s.grid.every(n => Number.isInteger(n) && n >= 1)) block('k-point grid values must be integers ≥ 1.')
       const cutoffs = { qe: [s.ecutwfc, s.ecutrhoFactor], vasp: [s.encut], cp2k: [s.cutoff, s.relCutoff], qbox: [s.ecut] }[code] || []
       if (cutoffs.some(v => !(v > 0))) block('the cutoff must be positive.')
@@ -455,13 +455,13 @@ save {tag}_conf{index}.xml
       if (!pw && ctx.cell) warn('the configuration is written as an isolated cluster without PBC; molecules cut by the box must be made whole first.')
       if (pw && isHybrid(code, s.functional)) warn('hybrid functionals are expensive with plane waves.')
       if (s.calc === 'vcrelax') warn('raise the cutoff by about 30 % to limit Pulay stress.')
-      if (code === 'qe' && s.phx) {
+      if (code === 'qe' && s.phx && (s.calc === 'freq' || s.calc === 'optfreq')) {
         const mults = s.override ? s.override.multiplicities : (ctx.common ? ctx.common.multiplicities : [])
         if ((mults || []).some(m => m > 1)) warn('ph.x may not support fixed total magnetization (open-shell multiplicities); check your QE version.')
         if (isHybrid('qe', s.functional)) warn('ph.x does not support hybrid functionals.')
         if (s.isolated) warn('check that your ph.x version supports assume_isolated=\'mt\'.')
       }
-      if (code === 'cp2k' && s.kpoints === 'grid' && s.isolated) warn('k-point grids are ignored for an isolated system (PERIODIC NONE).')
+      if (code === 'cp2k' && s.kpoints === 'grid' && s.isolated) warn('k-point grids are not used for an isolated system (PERIODIC NONE).')
       if (code === 'cp2k' && s.kpoints === 'grid' && isHybrid('cp2k', s.functional)) warn('ADMM hybrids with k-points are expensive and not supported by every CP2K version.')
       if (code === 'cp2k' && ['pbe0', 'b3lyp'].includes(s.functional) && !s.isolated && ctx.cell) {
         const radius = hfCutoff(ctx.cell.rows)
