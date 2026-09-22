@@ -120,7 +120,7 @@ async function run () {
   assert.equal(result.success, true); assert.equal(result.sampledFrames, 2); checks++
   // Template-based QM inputs: same files from the desktop and browser engines.
   const qm = QM.defaultSpec(['orca', 'qe', 'vasp'])
-  qm.params.multiplicities = [1]
+  qm.common.multiplicities = [1]
   const withQm = { ...options, generateGaussian: false, qm }
   await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...withQm, filePath, outputDir: path.join(temp, 'desktop-qm') })
   const orca = fs.readFileSync(path.join(temp, 'desktop-qm/2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp'), 'utf8')
@@ -135,8 +135,23 @@ async function run () {
 import zipfile, sys, pathlib
 with zipfile.ZipFile(sys.argv[1]) as z:
  assert z.read('2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp').decode() == pathlib.Path(sys.argv[2]).read_text()
- assert 'qe/sing.pwi' in ' '.join(z.namelist())
+ assert 'qe/sing.inp' in ' '.join(z.namelist())
 `, localZip, path.join(temp, 'desktop-qm/2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp')]); checks++
+  // POTCAR assembly from a local library through the desktop IPC handler (water.XYZ: O and H).
+  {
+    const lib = fs.mkdtempSync(path.join(os.tmpdir(), 'potcar-'))
+    for (const [variant, zval] of [['O', 6], ['H', 1]]) {
+      fs.mkdirSync(path.join(lib, variant))
+      fs.writeFileSync(path.join(lib, variant, 'POTCAR'), `  PAW_PBE ${variant}\n   POMASS =   1.000; ZVAL   =    ${zval}.000    mass and valenz\nEnd of Dataset\n`)
+    }
+    const potcarQm = QM.defaultSpec(['vasp'])
+    potcarQm.codes.vasp.potcar = { library: lib }
+    potcarQm.common.multiplicities = [1]
+    const potcarResult = await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, filePath, outputDir: path.join(temp, 'desktop-potcar'), qm: potcarQm })
+    assert.equal(potcarResult.success, true); checks++
+    const potcarText = fs.readFileSync(path.join(temp, 'desktop-potcar/2-SAMPLED_CONFIGURATIONS/conf1/vasp/POTCAR'), 'utf8')
+    assert.match(potcarText, /PAW_PBE O[\s\S]*PAW_PBE H/); checks++
+  }
   const extracted = fs.readFileSync(path.join(temp, 'desktop/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz'), 'utf8')
   assert.equal(parse(extracted).configCount, 2); assert.equal(parse(extracted).atomCount, 2); checks++
   // Python's standard ZIP reader verifies CRCs and output numerics independently.

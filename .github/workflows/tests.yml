@@ -30,6 +30,7 @@ jobs:
         run: |
           node tests/regression.cjs
           node tests/qm-parity.cjs
+          node tests/qm-resolve.cjs
           node tests/formats.cjs
           node tests/analysis.cjs
           node tests/mdanalysis.cjs

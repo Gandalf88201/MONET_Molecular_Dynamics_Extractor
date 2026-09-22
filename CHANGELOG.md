@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- QE frequencies: ph.x runs need a k-point mesh, so Γ-only becomes a 1×1×1 automatic mesh when ph.x is ticked.
+- Processing Options: one settings card per quantum-chemistry code (Gaussian, ORCA, QE, VASP, CP2K, Qbox) with calculation type (SP, Opt, Opt+Freq, Freq, TD-DFT, MD, variable-cell relaxation), functional/method, basis or cutoff, dispersion, solvent, k-points and extra keywords; charge and multiplicities shared with a per-code override.
+- Plane-wave codes need a cell: the applied crystal cell or the trajectory lattice, or the new "Isolated system: vacuum box" flag (configuration centred; QE assume_isolated='mt', CP2K Poisson MT, VASP dipole correction). Run is disabled otherwise.
+- VASP: KPOINTS and POTCAR.spec written; POTCAR and exact NELECT assembled from a local POTCAR library (launcher, desktop app). QE: optional ph.x input for Γ phonons; input files end in .inp. CP2K: PBE0/B3LYP/HSE06 through ADMM.
+- Changed: ORCA %maxcore defaults to 75 % of memory per core (was 100 %); the vacuum box is now centred on the configuration.
+- Methods report: one line per quantum-chemistry code.
+- Edited templates follow their file name, so changing the calculation type never moves an edit to another file.
+- Equilibration: with several groups the text names the group that sets t₀ (the one that equilibrates last) and lists t₀ per group; the chart legend names it too.
+- Equilibration on a derived trajectory: the text and the cropped trajectory's label give the frame number of the full trajectory, not only the frame of the active file.
+- The ✂ production-window button is disabled while a calculation runs.
+- Going back to step 1 and re-analysing the original file drops a derived (uncorrelated, cropped, aligned) trajectory: its time stride, sampling frequency and full-trajectory frame numbering no longer carry over.
+- README: *Max lag (fs)* limits the ACF calculation and the τ fit and τ_int windows, not only the view.
 - Autocorrelation: Sokal (default) and Geyer estimators of τ_int with its error; run length in units of τ with warnings; residual correlation g and N_eff of the sampled configurations.
 - Changed: the default τ_int estimator is now Sokal's window (previously the first zero crossing), so τ_int, N_eff and the standard errors differ from 2.1; choose *first zero crossing* in the Autocorrelation tab to reproduce earlier results.
 - Block averaging (Flyvbjerg–Petersen) chart under the ACF, with plateau detection.

@@ -36,7 +36,7 @@ const atoms = [
   { index: 4, element: 'H', x: 0, y: 1, z: 1 }
 ]
 let lastProcessOptions, importCalls = []
-let activeAtoms = atoms, latestCommand, pendingResolve, defer = false, checks = 0
+let activeAtoms = atoms, latestCommand, pendingResolve, defer = false, checks = 0, equilT0 = 1
 const listeners = new Set()
 let nextFile = 'torsion.xyz'
 let frameCount = 2
@@ -95,7 +95,7 @@ w.monet = {
     if (defer) return new Promise(resolve => { pendingResolve = resolve })
     if (command.action === 'dihedrals') return { ok: true, frame_indices: [0, 1], series: { [command.quads[0].join('-')]: [270, 90] } }
     if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, tau_int_error: 5, tau_int_window: 3, tau_int_converged: true, tau_int_method: command.tau_int_method, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), frame_step: command.frame_step || 1, n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3], blocking: { sizes: [1, 2], times: [command.dt, 2 * command.dt], sem: [0.5, 0.7], sem_error: [0.01, 0.05], plateau_index: null, plateau_sem: null, g: null } }
-    if (command.action === 'equilibration') { latestCommand = command; return { ok: true, starts: [0, 1, 2], times: [0, command.dt, 2 * command.dt], g: [4, 2, 2], n_effective: [1, 1.5, 0.5], t0: 1, t0_time: command.dt, t0_frame: 1, group: 0, per_group_t0: [1], n_frames: 4, frame_step: 1, dt: command.dt, g_t0: 2, n_effective_t0: 1.5, n_effective_full: 1 } }
+    if (command.action === 'equilibration') { latestCommand = command; return { ok: true, starts: [0, 1, 2], times: [0, command.dt, 2 * command.dt], g: [4, 2, 2], n_effective: [1, 1.5, 0.5], t0: equilT0, t0_time: equilT0 * command.dt, t0_frame: equilT0, group: command.groups.length - 1, per_group_t0: command.groups.map((_, k) => k + 1), n_frames: 4, frame_step: 1, dt: command.dt, g_t0: 2, n_effective_t0: 1.5, n_effective_full: 1 } }
     if (command.action === 'rmsd_matrix') return { ok: true, matrix: [[0, 1], [1, 0]], frame_indices: [0, 10], aligned: true, truncated: false }
     if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
     if (command.action === 'vdos') return { ok: true, wavenumber: [0, 500, 1000], intensity: [0, .002, 0], nyquist_cm: 33356, resolution_cm: 8.3, n_frames: 100, dt: command.dt }
@@ -117,7 +117,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'qm-inputs.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player };' : ''))
+for (const file of ['theme.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -515,12 +515,63 @@ async function run () {
   await click('next-2'); await click('next-3'); await click('next-4')
   await tick(); await tick()
   assert.deepEqual(Object.keys(lastProcessOptions.qm.codes), ['gaussian', 'orca']); checks++
-  assert.equal(lastProcessOptions.qm.params.charge, -1); assert.deepEqual([...lastProcessOptions.qm.params.multiplicities], [2]); checks++
+  assert.equal(lastProcessOptions.qm.common.charge, -1); assert.deepEqual([...lastProcessOptions.qm.common.multiplicities], [2]); checks++
   assert.equal(lastProcessOptions.qm.codes.orca.files[0].template, '! custom {mult}\n{coords}'); assert.equal(lastProcessOptions.generateGaussian, false); checks++
+  assert.match(lastProcessOptions.qm.summary.orca, /^ORCA: b3lyp\/6-31\+g\(d,p\)/); checks++
   el('qm-mults').value = '1 1'; el('qm-mults').dispatchEvent(new w.Event('input'))
   assert.match(el('qm-status').textContent, /distinct/); checks++
-  await click('retry-processing'); await click('next-4')
-  assert.match(el('status-msg').textContent, /distinct/); checks++
+  await click('retry-processing')
+  assert.equal(el('next-4').disabled, true); checks++ // an invalid spec disables Run
+  el('next-4').disabled = false; await click('next-4') // the handler still refuses an invalid spec
+  assert.match(el('status-msg').textContent, /distinct/); assert.match(el('qm-status').textContent, /distinct/); checks++
+  // Per-code cards: one card per ticked code; old shared fields are gone.
+  assert.equal(el('qm-nproc'), null); assert.equal(el('qm-method'), null); assert.equal(el('qm-padding'), null); checks++
+  w.document.querySelector('[data-qm-code="qe"]').click()
+  assert.ok(el('qm-card-gaussian')); assert.ok(el('qm-card-orca')); assert.ok(el('qm-card-qe')); assert.equal(el('qm-card-vasp'), null); checks++
+  el('qm-qe-calc').value = 'freq'; el('qm-qe-calc').dispatchEvent(new w.Event('change'))
+  assert.equal(el('qm-qe-phx').checked, true); checks++
+  assert.equal(el('qm-qe-padding').closest('.field-label').hidden, true)
+  el('qm-qe-isolated').click(); assert.equal(el('qm-qe-padding').closest('.field-label').hidden, false); checks++
+  w.document.querySelector('[data-qm-code="qbox"]').click()
+  assert.deepEqual([...el('qm-qbox-calc').options].map(o => o.value), ['sp', 'opt', 'vcrelax', 'md']); checks++
+  // Cell check: a plane-wave code without a cell blocks Run; the isolated flag or an applied cell releases it.
+  w.document.querySelector('[data-qm-code="qbox"]').click() // only QE among the plane-wave codes
+  el('qm-charge').value = '0'; el('qm-charge').dispatchEvent(new w.Event('input'))
+  el('qm-mults').value = '1'; el('qm-mults').dispatchEvent(new w.Event('input'))
+  el('qm-qe-calc').value = 'sp'; el('qm-qe-calc').dispatchEvent(new w.Event('change'))
+  w.testMonet.state.outputDir = 'out'
+  el('qm-qe-isolated').click() // back to not isolated
+  assert.match(el('qm-status').textContent, /Quantum ESPRESSO \(pw\.x\): no cell/); assert.equal(el('next-4').disabled, true); checks++
+  assert.equal(el('qm-define-cell').classList.contains('hidden'), false); assert.match(el('qm-qe-cell').textContent, /✖ No cell/); checks++
+  assert.ok(w.testMonet.qmReadiness().blocked.some(m => /no cell/.test(m))); checks++
+  el('qm-qe-isolated').click()
+  assert.doesNotMatch(el('qm-status').textContent, /no cell/); assert.equal(el('next-4').disabled, false); assert.match(el('qm-qe-cell').textContent, /Vacuum box \(isolated\)/); checks++
+  el('qm-qe-isolated').click()
+  w.testMonet.aseState.cellParameters = [10, 10, 10, 90, 90, 90]; el('qm-charge').dispatchEvent(new w.Event('input'))
+  assert.match(el('qm-qe-cell').textContent, /Crystal cell applied \(10, 10, 10, 90, 90, 90\)/); assert.equal(el('next-4').disabled, false); checks++
+  assert.match(el('qm-status').textContent, /Gaussian: the configuration is written as an isolated cluster/); checks++
+  w.testMonet.aseState.cellParameters = null
+  // Override, preview, custom template marker (the ORCA edit made above is reset first).
+  el('qm-template-file').value = 'orca:0'; el('qm-template-file').dispatchEvent(new w.Event('change')); el('qm-template-reset').click()
+  assert.doesNotMatch(el('qm-card-orca').querySelector('summary').textContent, /custom template/); checks++
+  assert.equal(el('qm-orca-custom-note').hidden, true); checks++
+  el('qm-orca-override').click(); el('qm-orca-override-mults').value = '2'; el('qm-orca-override-mults').dispatchEvent(new w.Event('input'))
+  assert.match(el('qm-orca-preview').textContent, /\* xyz 0 2\n/); checks++
+  el('qm-template-file').value = 'orca:0'; el('qm-template-file').dispatchEvent(new w.Event('change'))
+  el('qm-template-text').value = '! custom {mult}\n{coords}'; el('qm-template-text').dispatchEvent(new w.Event('input'))
+  assert.match(el('qm-card-orca').querySelector('summary').textContent, /custom template \(\{tag\}\.inp\)/); checks++
+  // A custom template makes the card's Calculation select (etc.) misleading for that file; a note explains why.
+  assert.equal(el('qm-orca-custom-note').hidden, false); checks++
+  assert.match(el('qm-orca-custom-note').textContent, /Edited templates replace the card settings for those files\./); checks++
+  assert.equal(el('qm-gaussian-custom-note').hidden, true); checks++ // untouched cards show no note
+  assert.match(el('qm-orca-preview').textContent, /! custom 2\n/); checks++
+  // Define cell… opens Structure analysis › Cell (ASE workspace, cell panel unfolded); the workflow stays on Options.
+  el('qm-qe-isolated').click(); el('qm-qe-isolated').click() // ensure blocked state
+  assert.equal(el('qm-define-cell').classList.contains('hidden'), false)
+  w.testMonet.state.step = 4; el('qm-define-cell').click()
+  assert.equal(el('vtab-content-ase').classList.contains('active'), true); assert.equal(el('cell-apply').closest('details').open, true); checks++
+  assert.equal(w.testMonet.state.step, 4); checks++
+  w.document.querySelector('[data-qm-code="qe"]').click(); w.document.querySelector('[data-qm-code="orca"]').click()
   // New analyses: the MD time step must be set by the user; nothing is assumed.
   activeAtoms = atoms; nextFile = 'torsion.xyz'
   el('inp-format').value = 'auto'; el('inp-format').dispatchEvent(new w.Event('change'))
@@ -614,8 +665,26 @@ async function run () {
   el('acf-groups').value = '1 2 3 4' // activating a trajectory clears the ACF inputs, as elsewhere in this flow
   await click('btn-run-equil')
   assert.equal(el('equil-crop').disabled, false); checks++
+  // Saved frame 1 of the every-13-frames trajectory is frame 13 of the full one: text and crop label say so.
+  assert.match(el('equil-text').textContent, /saved frame 1, frame 13 of the full trajectory/); checks++
   await click('equil-crop'); await tick(); await tick()
   assert.equal(el('md-stride').value, '65', 'cropping the uncorrelated trajectory must not reset md-stride to the full-trajectory value'); checks++
+  assert.match(el('analysis-source').textContent, /production · from frame 13 of the full trajectory \(t₀ = .* fs into the active file\)/); checks++
+  // Crop of a crop: saved frame 1 of the production file is frame 13 + 1·13 = 26 of the full trajectory.
+  el('acf-groups').value = '1 2 3 4'; await click('btn-run-equil')
+  assert.match(el('equil-text').textContent, /saved frame 1, frame 26 of the full trajectory/); checks++
+  await click('equil-crop'); await tick(); await tick()
+  assert.match(el('analysis-source').textContent, /production · from frame 26 of the full trajectory/); checks++
+  // Back to step 1 and Next re-analyses the original file: derived stride, frequency and frame numbering are dropped.
+  await click('back-analysis'); await click('next-1'); await tick(); await tick()
+  w.testMonet.state.fileInfo.configCount = 200 // the mock re-analysis reports 2 frames; keep the 200-frame run of this flow
+  assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(w.testMonet.state.frameMap, null); assert.equal(el('md-stride').value, '5'); assert.equal(el('inp-freq').value, '13'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
+  el('acf-groups').value = '1 2 3 4'; await click('btn-run-equil')
+  assert.match(el('equil-text').textContent, /\(saved frame 1\)/); assert.doesNotMatch(el('equil-text').textContent, /of the full trajectory/); checks++
+  // Re-accept t* so the flow below starts from the uncorrelated trajectory, as before.
+  el('acf-groups').value = '1 2 3 4'; await click('btn-run-acf'); el('acf-tau-manual').value = '10'; el('acf-tau-manual').dispatchEvent(new w.Event('input'))
+  await click('acf-accept'); await tick(); await tick()
+  el('acf-groups').value = '1 2 3 4'; await click('btn-run-equil'); await click('equil-crop'); await tick(); await tick()
   await click('restore-full-trajectory'); await tick()
   assert.equal(el('md-stride').value, '5'); checks++
   el('acf-groups').value = '1 2 3 4'; el('acf-fit-model').value = 'exp_offset'; await click('btn-run-acf')
@@ -651,6 +720,24 @@ async function run () {
   assert.equal(latestCommand.action, 'equilibration'); assert.equal(latestCommand.tau_int_method, 'sokal'); checks++
   assert.match(el('equil-text').textContent, /Production starts at t₀ = .* \(saved frame 1\)/); assert.equal(el('equil-crop').disabled, false); checks++
   assert.equal(w.testMonet.charts.equil.data.markers.length, 1); checks++
+  assert.doesNotMatch(el('equil-text').textContent, /is set by/); checks++
+  // The crop button follows the busy state like the Run buttons.
+  defer = true
+  el('rmsd-atoms').value = ''; el('btn-run-rmsd').click(); await tick(); await tick()
+  assert.equal(el('equil-crop').disabled, true, 'crop disabled while a calculation runs'); checks++
+  defer = false; pendingResolve({ ok: true, frame_indices: [0, 1], rmsd: [0, 0.1] }); await tick(); await tick()
+  assert.equal(el('equil-crop').disabled, false); checks++
+  // t₀ = 0: no transient, nothing to crop, and ✂ stays disabled after another calculation finishes.
+  equilT0 = 0; await click('btn-run-equil')
+  assert.match(el('equil-text').textContent, /No transient found/); assert.equal(el('equil-crop').disabled, true); checks++
+  el('rmsd-atoms').value = ''; await click('btn-run-rmsd'); await tick()
+  assert.equal(el('equil-crop').disabled, true, 't₀ = 0 keeps ✂ disabled after a busy cycle'); checks++
+  equilT0 = 1; await click('btn-run-equil')
+  // With several groups the text names the group that set t₀ (the one that equilibrates last).
+  el('acf-groups').value = '1 2 3 4 4 3 2 1'; await click('btn-run-equil')
+  assert.match(el('equil-text').textContent, /t₀ is set by .+, the group that equilibrates last \(t₀ per group: .+ fs, .+ fs\)/); checks++
+  assert.match(w.testMonet.charts.equil.data.datasets[0].label, /^N_eff\(t₀\) · /); checks++
+  el('acf-groups').value = '1 2 3 4'; await click('btn-run-equil')
   const beforeCrop = w.testMonet.state.filePath
   await click('equil-crop'); await tick(); await tick()
   assert.equal(latestCommand.action, 'subsample'); assert.equal(latestCommand.stride, 1); assert.equal(latestCommand.start, 1); checks++

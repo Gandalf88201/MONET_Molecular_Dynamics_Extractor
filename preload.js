@@ -2,6 +2,7 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('monet', {
+  desktop: true, // Electron app: POTCAR can be assembled from a local library
   // ── core trajectory ops ──────────────────────────────────────────────────
   selectFile:        ()               => ipcRenderer.invoke('select-file'),
   selectOutputDir:   ()               => ipcRenderer.invoke('select-output-dir'),

@@ -127,6 +127,7 @@ function goTo (step) {
   $('rail-step').textContent = `${String(position + 1).padStart(2, '0')} · ${STEP_NAMES[step]}`
   $('rail-continue').classList.toggle('hidden', step !== 'analysis')
   if (step === 3) $('use-ase-selection').disabled = !aseState.pickedIds.length
+  if (String(step) === '4') updateQmUI()
 }
 
 // ── Collapsible workflow panel ──
@@ -225,6 +226,7 @@ function syncSelectionUI () {
 function clearTrajectory () {
   state.fullTrajectory = null
   state.derivedLabel = null
+  state.frameMap = null
   $('restore-full-trajectory')?.classList.add('hidden')
   state.fileInfo = null
   state.firstFrame = null
@@ -356,6 +358,17 @@ $('next-1').addEventListener('click', async () => {
       window.monet.releaseFile?.(state.filePath)
       state.filePath = state.source.original
     }
+    // Re-analysing the original file drops any derived trajectory (uncorrelated, cropped, aligned):
+    // its time stride, sampling frequency and frame numbering no longer apply.
+    const full = state.fullTrajectory
+    if (full) {
+      setTimeStride(full.mdStride)
+      $('inp-freq').value = full.frequency
+    }
+    state.fullTrajectory = null
+    state.derivedLabel = null
+    state.frameMap = null
+    $('restore-full-trajectory').classList.add('hidden')
     state.source.label = null
     if (needsImport()) {
       if (!window.monet.importFile) throw new Error('Importing this format needs the launcher (python3 start_monet.py) or the desktop app.')
@@ -395,7 +408,7 @@ $('next-1').addEventListener('click', async () => {
 })
 
 // Make another trajectory file (e.g. the uncorrelated configurations) the one MONET analyses and extracts.
-async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
+async function activateTrajectory (path, { label, strideFactor = 1, start = 0 } = {}) {
   if (typeof playerStop === 'function') playerStop()
   const info = await window.monet.analyzeFile(path)
   if (info.error) throw new Error(info.error)
@@ -405,6 +418,9 @@ async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
       lastResult: state.lastResult, mdStride: $('md-stride').value, frequency: $('inp-freq').value
     }
   }
+  // Frame k of the new file is frame offset + k·step of the full trajectory.
+  const base = state.frameMap || { offset: 0, step: 1 }
+  state.frameMap = { offset: base.offset + start * base.step, step: base.step * strideFactor }
   state.lastResult = null
   state.filePath = path
   state.fileInfo = info
@@ -420,6 +436,12 @@ async function activateTrajectory (path, { label, strideFactor = 1 } = {}) {
   $('inp-freq').value = 1
   await showActiveTrajectory()
   $('restore-full-trajectory').classList.remove('hidden')
+}
+
+// Frame number of the full trajectory for a saved frame of the active (possibly derived) file.
+function fullFrame (frame) {
+  const map = state.frameMap
+  return map ? map.offset + frame * map.step : frame
 }
 
 function setTimeStride (value) {
@@ -444,6 +466,7 @@ $('restore-full-trajectory').addEventListener('click', async () => {
   if (!full) return
   state.fullTrajectory = null
   state.derivedLabel = null
+  state.frameMap = null
   state.filePath = full.filePath
   state.fileInfo = full.fileInfo
   monetHistory.activeSource = monetHistory.sourceByPath.get(full.filePath) ?? monetHistory.activeSource
@@ -574,68 +597,145 @@ $('next-3').addEventListener('click', () => goTo(4))
 
 $('opt-average').addEventListener('change',  e => { state.opts.computeAverage   = e.target.checked })
 
-// Quantum-chemistry inputs: editable templates (kept for the session) + common parameters.
-const qmTemplates = Object.fromEntries(Object.entries(MonetQM.CODES).map(([code, def]) => [code, def.files.map(file => ({ ...file }))]))
+// Quantum-chemistry inputs: shared electronic states + one card per code (qm-panel.js) → per-code spec (qm-resolve.js).
+// Template edits are kept per session; previews render configuration 1 of the current selection.
 const qmCodes = () => [...$$('[data-qm-code]')].filter(input => input.checked).map(input => input.dataset.qmCode)
+const qmCustom = {} // code → { file name pattern → edited template }
+const qmPanel = MonetQMPanel.mount($('qm-cards'), { onChange: () => updateQmUI() })
+let qmSymbolsKey = null // species tables are rebuilt only when the selected elements change
 
+function qmAtoms () { return state.firstFrame ? MonetASEModel.atomMap(state.firstFrame, [...state.selectedAtoms]) : [] }
+function qmSymbols () { return qmAtoms().map(atom => atom.element) }
+function qmExtent () {
+  const atoms = qmAtoms()
+  if (!atoms.length) return null
+  return ['x', 'y', 'z'].map(k => Math.max(...atoms.map(a => a[k])) - Math.min(...atoms.map(a => a[k])))
+}
+function qmCellInfo () {
+  if (aseState.cellParameters) return { source: 'applied', rows: MonetASEModel.cellVectors(aseState.cellParameters) }
+  const lattice = player.cells && player.cells.get(0)
+  return lattice ? { source: 'trajectory', rows: lattice } : null
+}
+function qmPotcarAvailable () { return Boolean(aseState.available || window.monet.desktop) }
+function qmCommon () {
+  return { charge: Number($('qm-charge').value), multiplicities: $('qm-mults').value.trim().split(/[\s,]+/).filter(Boolean).map(Number) }
+}
 function buildQmSpec () {
   const codes = qmCodes()
   if (!codes.length) return null
-  const spec = MonetQM.defaultSpec(codes)
-  for (const code of codes) spec.codes[code].files = qmTemplates[code].map(file => ({ ...file }))
-  const mults = $('qm-mults').value.trim().split(/[\s,]+/).filter(Boolean).map(Number)
-  Object.assign(spec.params, {
-    charge: Number($('qm-charge').value), multiplicities: mults, nproc: Number($('qm-nproc').value),
-    mem: $('qm-mem').value.trim(), method: $('qm-method').value.trim(), basis: $('qm-basis').value.trim(),
-    padding: Number($('qm-padding').value)
-  })
-  spec.cell = aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null
+  const spec = { ...MonetQMResolve.buildSpec({ codes, common: qmCommon(), cards: qmPanel.read(), symbols: qmSymbols(), cell: aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, custom: qmCustom }), masses: MonetQM.MASSES }
   return MonetQM.validate(spec)
+}
+function qmReadiness () {
+  return MonetQMResolve.readiness(qmCodes(), qmPanel.read(), { cell: qmCellInfo(), extent: qmExtent(), symbols: qmSymbols(), potcarAvailable: qmPotcarAvailable(), common: qmCommon() })
 }
 
 function updateQmUI () {
   const codes = qmCodes()
   state.opts.generateGaussian = codes.includes('gaussian')
   $('gaussian-details').classList.toggle('disabled', !codes.length)
-  const select = $('qm-template-file'), previous = select.value
-  select.replaceChildren()
-  for (const code of codes) {
-    qmTemplates[code].forEach((file, i) => {
-      const option = document.createElement('option')
-      option.value = `${code}:${i}`
-      option.textContent = `${MonetQM.CODES[code].label} — ${file.name}`
-      select.appendChild(option)
-    })
+  qmPanel.show(codes)
+  const symbols = qmSymbols()
+  const symbolsKey = [...new Set(symbols)].join(' ')
+  if (symbolsKey !== qmSymbolsKey) { qmSymbolsKey = symbolsKey; qmPanel.setSymbols(symbols) }
+  qmPanel.setPotcarAvailable(qmPotcarAvailable())
+  const cards = qmPanel.read()
+  const cell = qmCellInfo()
+  for (const code of codes.filter(c => MonetQMResolve.PLANE_WAVE.includes(c))) {
+    const s = cards[code]
+    const text = s.isolated ? `Vacuum box (isolated), ${s.padding} Å` : !cell ? '✖ No cell'
+      : cell.source === 'applied' ? `Crystal cell applied (${aseState.cellParameters.join(', ')})` : 'Lattice from the trajectory'
+    qmPanel.setCellStatus(code, text, !s.isolated && !cell)
   }
-  if ([...select.options].some(option => option.value === previous)) select.value = previous
-  showTemplate()
-  try {
-    buildQmSpec()
-    $('qm-status').textContent = codes.length ? `Inputs for: ${codes.map(code => MonetQM.CODES[code].label).join(', ')}.` : 'No quantum-chemistry inputs will be written.'
-  } catch (error) { $('qm-status').textContent = error.message }
+  let spec = null
+  const messages = []
+  const ready = qmReadiness()
+  try { spec = buildQmSpec() } catch (error) { messages.push(error.message) }
+  messages.push(...ready.blocked, ...ready.warnings.map(w => `⚠ ${w}`))
+  const blocked = Boolean(codes.length) && (ready.blocked.length > 0 || !spec)
+  $('qm-status').textContent = messages.length ? messages.join(' ') : codes.length ? `Inputs for: ${codes.map(code => MonetQMResolve.LABELS[code]).join(', ')}.` : 'No quantum-chemistry inputs will be written.'
+  $('qm-define-cell').classList.toggle('hidden', !ready.blocked.some(m => / no cell\./.test(m)))
+  $('next-4').disabled = !state.outputDir || blocked
+  // Card titles mark custom templates; previews render configuration 1.
+  const atoms = qmAtoms()
+  for (const code of codes) {
+    const summary = $(`qm-card-${code}`).querySelector('summary')
+    const edited = spec ? spec.codes[code].files.map(file => file.name).filter(name => qmCustom[code] && Object.prototype.hasOwnProperty.call(qmCustom[code], name)) : Object.keys(qmCustom[code] || {})
+    summary.textContent = MonetQMResolve.LABELS[code] + (edited.length ? ` · custom template (${edited.join(', ')})` : '')
+    qmPanel.setCustomNote(code, edited.length > 0)
+    let preview = ''
+    if (spec && atoms.length) {
+      try {
+        const conf = { index: 1, frame: 0, symbols: atoms.map(a => a.element), positions: atoms.map(a => [a.x, a.y, a.z]), lattice: cell && cell.source === 'trajectory' ? cell.rows : undefined }
+        const files = MonetQM.render({ ...spec, codes: { [code]: spec.codes[code] } }, conf)
+        preview = files.map(file => `── ${file.path}\n${file.text}`).join('\n')
+      } catch (error) { preview = error.message }
+    } else if (!atoms.length) preview = 'Select atoms to preview configuration 1.'
+    qmPanel.setPreview(code, preview)
+  }
+  // Template selector lists the resolved files of every selected code.
+  const select = $('qm-template-file'), previous = selectedTemplate()
+  select.replaceChildren()
+  if (spec) {
+    for (const code of codes) {
+      spec.codes[code].files.forEach((file, i) => {
+        const option = document.createElement('option')
+        option.value = `${code}:${i}`
+        option.dataset.name = file.name
+        option.textContent = `${MonetQMResolve.LABELS[code]} — ${file.name}`
+        select.appendChild(option)
+      })
+    }
+  }
+  // Keep the same file selected (by name) when a calculation change shifts the file list.
+  const same = previous && [...select.options].find(option => option.value.startsWith(`${previous.code}:`) && option.dataset.name === previous.name)
+  if (same) select.value = same.value
+  showTemplate(spec)
 }
 
+// The selector value is `${code}:${index}`; edits are stored by the file's name pattern so they follow their file.
 function selectedTemplate () {
   const [code, index] = ($('qm-template-file').value || '').split(':')
-  return code ? { code, index: Number(index) } : null
+  if (!code) return null
+  const option = $('qm-template-file').selectedOptions[0]
+  return { code, index: Number(index), name: option ? option.dataset.name : '' }
 }
-function showTemplate () {
+function showTemplate (spec = null) {
   const target = selectedTemplate()
-  $('qm-template-text').value = target ? qmTemplates[target.code][target.index].template : ''
+  let text = ''
+  if (target) {
+    const custom = qmCustom[target.code] && qmCustom[target.code][target.name]
+    if (custom !== undefined) text = custom
+    else {
+      try { text = (spec || buildQmSpec()).codes[target.code].files[target.index].template } catch { text = '' }
+    }
+  }
+  $('qm-template-text').value = text
   $('qm-template-text').disabled = !target
 }
 $$('[data-qm-code]').forEach(input => input.addEventListener('change', updateQmUI))
-for (const id of ['qm-charge', 'qm-mults', 'qm-nproc', 'qm-mem', 'qm-method', 'qm-basis', 'qm-padding']) $(id).addEventListener('input', updateQmUI)
-$('qm-template-file').addEventListener('change', showTemplate)
+for (const id of ['qm-charge', 'qm-mults']) $(id).addEventListener('input', updateQmUI)
+$('qm-template-file').addEventListener('change', () => showTemplate())
 $('qm-template-text').addEventListener('input', () => {
   const target = selectedTemplate()
-  if (target) qmTemplates[target.code][target.index].template = $('qm-template-text').value
+  if (!target) return
+  ;(qmCustom[target.code] ||= {})[target.name] = $('qm-template-text').value
+  updateQmUI()
 })
 $('qm-template-reset').addEventListener('click', () => {
   const target = selectedTemplate()
-  if (!target) return
-  qmTemplates[target.code][target.index] = { ...MonetQM.CODES[target.code].files[target.index] }
-  showTemplate()
+  if (!target || !qmCustom[target.code]) return
+  delete qmCustom[target.code][target.name]
+  updateQmUI()
+})
+$('qm-define-cell').addEventListener('click', () => {
+  // Structure analysis › Cell lives in the ASE workspace (the panel holding #cell-apply). The workflow stays on
+  // Options: the workspace folds the workflow panel away and ⇥ brings it back with the cards updated.
+  showViewerTab('ase')
+  const panel = $('cell-apply').closest('details')
+  if (panel) panel.open = true
+  if ($('cell-apply').scrollIntoView) $('cell-apply').scrollIntoView({ block: 'center' })
+  setStatus('Apply a crystal cell, then reopen the workflow panel (⇥) to return to Options.')
 })
 
 $('btn-output-dir').addEventListener('click', async () => {
@@ -643,12 +743,17 @@ $('btn-output-dir').addEventListener('click', async () => {
   if (!dir) return
   state.outputDir = dir
   $('output-dir-text').textContent = dir
-  $('next-4').disabled = false
+  updateQmUI()
 })
 
 $('back-4').addEventListener('click', () => goTo(3))
 
 $('next-4').addEventListener('click', () => {
+  const ready = qmReadiness()
+  if (ready.blocked.length) {
+    $('qm-status').textContent = ready.blocked.join(' ')
+    return setStatus(ready.blocked[0])
+  }
   try { state.opts.qm = buildQmSpec() } catch (error) {
     $('qm-status').textContent = error.message
     return setStatus(error.message)
@@ -777,7 +882,8 @@ function qmSummary () {
   return ', ' + Object.keys(spec.codes).map(code => {
     const folder = MonetQM.CODES[code].folder
     const names = spec.codes[code].files.map(file => /\{(tag|mult|state|chk)\}/.test(file.name)
-      ? spec.params.multiplicities.map(m => file.name.replace('{tag}', MonetQM.stateOf(m).tag)).join(', ') : file.name)
+      ? (spec.codes[code].override || spec.common).multiplicities.map(m => file.name.replace('{tag}', MonetQM.stateOf(m).tag)).join(', ') : file.name)
+    if (code === 'vasp' && spec.codes.vasp.potcar) names.push('POTCAR')
     return folder ? `${folder}/ (${names.join(', ')})` : names.join(', ')
   }).join('; ')
 }
@@ -823,7 +929,7 @@ $('back-6').addEventListener('click', () => {
   state.source.original = null
   state.source.label = null
   clearTrajectory()
-  $('next-4').disabled = !window.monet.isBrowser
+  updateQmUI()
   $('output-dir-text').textContent = window.monet.isBrowser ? 'Download results as a ZIP file' : 'Not selected'
 
   $('file-display').classList.add('hidden')
@@ -1011,6 +1117,7 @@ function invalidateCellAnalyses () {
   applyDisplay()
   updateLive()
   if (aseState.cellParameters) $('cell-status').textContent += describeCellFit()
+  updateQmUI()
 }
 $('cell-apply').addEventListener('click', () => {
   try {
@@ -1571,6 +1678,7 @@ function updateAseControls () {
   $('ase-cancel').disabled = !aseState.busy || !window.monet.cancel
   $('ase-mic').disabled = aseState.busy
   if ($('console-input')) $('console-input').disabled = aseState.busy || monetHistory.readOnly
+  $('equil-crop').disabled = !lastResults.equil || lastResults.equil.t0 === 0 || !aseState.available || aseState.busy
 }
 
 async function checkAseStatus () {
@@ -2673,14 +2781,19 @@ function showEquilibration () {
   if (!r) return
   $('equil-text').textContent = r.t0 === 0
     ? `No transient found: N_eff is largest with the whole run (N_eff ≈ ${fmt(r.n_effective_t0, 4)} of ${r.n_frames} analysed frames). Keep the full trajectory.`
-    : `Production starts at t₀ = ${fmt(r.t0_time, 5)} fs (saved frame ${r.t0_frame}): discarding the transient raises N_eff from ${fmt(r.n_effective_full, 4)} to ${fmt(r.n_effective_t0, 4)} (g = ${fmt(r.g_t0, 4)} analysed frames).`
-  $('equil-crop').disabled = r.t0 === 0 || !aseState.available
+    : `Production starts at t₀ = ${fmt(r.t0_time, 5)} fs (saved frame ${r.t0_frame}${state.frameMap ? `, frame ${fullFrame(r.t0_frame)} of the full trajectory` : ''}): discarding the transient raises N_eff from ${fmt(r.n_effective_full, 4)} to ${fmt(r.n_effective_t0, 4)} (g = ${fmt(r.g_t0, 4)} analysed frames).`
+  const labels = r.groupLabels || []
+  if (labels.length > 1) {
+    const perGroup = (r.per_group_t0 || []).map((t0, k) => `${labels[k] ?? `group ${k + 1}`} ${fmt(t0 * r.dt, 4)} fs`).join(', ')
+    $('equil-text').textContent += ` t₀ is set by ${labels[r.group] ?? `group ${r.group + 1}`}, the group that equilibrates last (t₀ per group: ${perGroup}); the curve is that group's.`
+  }
+  $('equil-crop').disabled = r.t0 === 0 || !aseState.available || aseState.busy
   $('equil-result').classList.remove('hidden')
   charts.equil.setData({
     title: 'Equilibration: effective sample size against the start of production (Chodera 2016)', source: charts.acf.source,
     xLabel: 'Start of production t₀ (fs)', yLabel: 'N_eff = (N − t₀) / g(t₀)',
     labels: r.times.map(t => String(Number(t.toPrecision(6)))),
-    datasets: [{ label: 'N_eff(t₀)', data: r.n_effective, colorIndex: 0 }],
+    datasets: [{ label: `N_eff(t₀)${r.groupLabels?.length > 1 ? ` · ${r.groupLabels[r.group]}` : ''}`, data: r.n_effective, colorIndex: 0 }],
     markers: [{ value: r.t0_time, label: `t₀ = ${fmt(r.t0_time, 4)} fs` }]
   })
 }
@@ -2692,6 +2805,7 @@ $('btn-run-equil').addEventListener('click', async () => {
   try { command = acfCommand() } catch (error) { return acfError(error.message) }
   const r = await runAse('equil', { ...command, action: 'equilibration' })
   if (!r.ok) return acfError(r.message || r.error)
+  r.groupLabels = command.quantity === 'rmsd' ? ['RMSD'] : command.groups.map(group => MonetASEModel.seriesLabel(group.join('-'), r.atomMapping))
   lastResults.equil = r
   showEquilibration()
   setStatus(r.t0 === 0 ? 'Equilibration: no transient found.' : `Equilibration: production starts at t₀ = ${fmt(r.t0_time, 4)} fs.`)
@@ -2707,8 +2821,10 @@ $('equil-crop').addEventListener('click', async () => {
   const s = await runAse('subsample', { action: 'subsample', filename, stride: 1, start: r.t0_frame, output })
   if (!s.ok) return acfError(s.message || s.error)
   try {
-    await activateTrajectory(s.filePath || output, { label: `production · from frame ${r.t0_frame} (t₀ = ${fmt(r.t0_time, 4)} fs)` })
-    setStatus(`Production window active: ${s.n_frames} frames from saved frame ${r.t0_frame}. Compute the ACF again on it (↩ Full trajectory to go back).`)
+    const first = fullFrame(r.t0_frame)
+    const derived = Boolean(state.frameMap)
+    await activateTrajectory(s.filePath || output, { label: `production · from frame ${first} of the full trajectory (t₀ = ${fmt(r.t0_time, 4)} fs${derived ? ' into the active file' : ''})`, start: r.t0_frame })
+    setStatus(`Production window active: ${s.n_frames} frames from frame ${first} of the full trajectory. Compute the ACF again on it (↩ Full trajectory to go back).`)
   } catch (error) { acfError('The production window was written but could not be loaded: ' + error.message) }
 })
 
@@ -3696,7 +3812,7 @@ window.addEventListener('load', () => {
     state.outputDir = 'MONET-results'
     $('output-dir-text').textContent = 'Download results as a ZIP file'
     $('btn-output-dir').classList.add('hidden')
-    $('next-4').disabled = false
+    updateQmUI()
     setStatus('Browser mode · Select an XYZ file to begin')
     $('btn-conv-output').textContent = 'Set download name'
     $('conv-format').value = 'extxyz'
