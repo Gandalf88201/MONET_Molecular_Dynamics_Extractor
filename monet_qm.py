@@ -54,7 +54,7 @@ def normalize(spec):
     """Legacy specs ({params}) -> {common, legacy}; missing per-code fields get their defaults."""
     if not isinstance(spec, dict):
         return spec
-    if isinstance(spec.get('params'), dict) and not spec.get('common'):
+    if isinstance(spec.get('params'), dict) and 'common' not in spec:
         p = spec['params']
         spec['common'] = {'charge': p.get('charge'), 'multiplicities': p.get('multiplicities')}
         spec['legacy'] = {k: p.get(k) for k in ('nproc', 'mem', 'method', 'basis', 'padding')}
@@ -81,6 +81,27 @@ def _truthy(value):
     return isinstance(value, (dict, list)) or bool(value)
 
 
+def _finite(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _js_string(value):
+    """String(value) of JavaScript for the scalars checked here."""
+    if value is None:
+        return 'null'
+    if isinstance(value, bool):
+        return 'true' if value else 'false'
+    if type(value) in (int, float):
+        return _num(value) if math.isfinite(value) else 'NaN'
+    return str(value)
+
+
+def _mass_ok(value):
+    if not (isinstance(value, str) or _finite(value)):
+        return False
+    return re.match(r'^[0-9.]+$', _js_string(value)) is not None
+
+
 def _finite_non_negative(value):
     return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
@@ -96,6 +117,11 @@ def validate(spec):
             raise ValueError('Processors must be a positive integer.')
         if not _finite_non_negative(legacy.get('padding')):
             raise ValueError('Vacuum padding must be zero or positive.')
+        if any(re.search(r'[/\\\r\n]', _js_string(legacy.get(key))) for key in ('method', 'basis', 'mem')):
+            raise ValueError('Method, basis and memory must not contain slashes or line breaks.')
+    masses = spec.get('masses')
+    if masses is not None and not (isinstance(masses, dict) and all(_mass_ok(m) for m in masses.values())):
+        raise ValueError('Invalid atomic masses.')
     for code, entry in spec['codes'].items():
         if code not in FOLDERS:
             raise ValueError(f'Unknown input code {code}.')
@@ -128,7 +154,7 @@ def validate(spec):
                     or not isinstance(item.get('template'), str)):
                 raise ValueError(f"Invalid file name pattern {item.get('name') if isinstance(item, dict) else None}.")
     cell = spec.get('cell')
-    if cell is not None and (not isinstance(cell, list) or len(cell) != 3 or any(not isinstance(row, list) or len(row) != 3 for row in cell)):
+    if cell is not None and (not isinstance(cell, list) or len(cell) != 3 or any(not isinstance(row, list) or len(row) != 3 or not all(_finite(v) for v in row) for row in cell)):
         raise ValueError('Cell must be a 3x3 matrix.')
     summary = spec.get('summary')
     if summary is not None and not (isinstance(summary, dict) and all(isinstance(text, str) for text in summary.values())):
@@ -158,15 +184,23 @@ def _cell(code, entry, conf, spec):
         return [[float(v) for v in r] for r in spec['cell']], positions, 'Cell: applied manual cell.'
     if conf.get('lattice') is not None:
         return [[float(v) for v in r] for r in conf['lattice']], positions, 'Cell: from the trajectory.'
-    if _truthy(spec.get('legacy')):
-        return box(float(spec['legacy']['padding']))
+    if _truthy(spec.get('legacy')) and code in PLANE_WAVE:
+        # Legacy specs ({params}): plane-wave codes only, box not centred, old note (output as before).
+        pad = float(spec['legacy']['padding'])
+        rows = []
+        for axis in range(3):
+            values = [p[axis] for p in positions]
+            row = [0.0, 0.0, 0.0]
+            row[axis] = max(max(values) - min(values) + pad, 1)
+            rows.append(row)
+        return rows, positions, f'Cell: orthorhombic box = extent + {_num(pad)} A padding (no cell in the trajectory).'
     if code in PLANE_WAVE:
         raise ValueError(f"{LABELS[code]}: no cell for configuration {_num(conf['index'])}. Apply a crystal cell or tick “Isolated system: vacuum box”.")
     return None, positions, 'No cell (isolated cluster).'
 
 
-def _widths(rows):
-    """Perpendicular widths of the cell (same arithmetic as qm-inputs.js)."""
+def _hf_cutoff(rows):
+    """CP2K truncation radius from the perpendicular widths (same arithmetic as qm-inputs.js); '' for a degenerate cell."""
     a, b, c = rows
 
     def cross(u, v):
@@ -176,7 +210,10 @@ def _widths(rows):
         return math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
     bc, ca, ab = cross(b, c), cross(c, a), cross(a, b)
     volume = abs(a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2])
-    return [volume / norm(bc), volume / norm(ca), volume / norm(ab)]
+    norms = [norm(bc), norm(ca), norm(ab)]
+    if not (math.isfinite(volume) and volume > 0) or any(not (math.isfinite(n) and n > 0) for n in norms):
+        return ''
+    return _fixed(min(6, min(volume / n for n in norms) / 2 - 0.1), 4)
 
 
 def _kind(value):
@@ -209,9 +246,13 @@ def _context(code, entry, conf, spec, states, mult, runtime):
     nelect = f'# Net charge {_num(charge)}: set NELECT = (sum of ZVAL in POTCAR) - ({_num(charge)}) for charged systems.'
     potcar = runtime.get('potcar') if runtime else None
     if _truthy(potcar):
+        zval = potcar.get('zval') or {}
+        for s in species:
+            if not _finite(zval.get(s)):
+                raise ValueError(f'VASP: no ZVAL for {s} in the POTCAR.')
         total = 0
         for s, n in zip(species, counts):
-            total = total + potcar['zval'][s] * n
+            total = total + zval[s] * n
         total = total - charge
         nelect = f'NELECT = {_num(total)}' if charge else '# NELECT: neutral system, taken from POTCAR'
     kinds = []
@@ -233,7 +274,7 @@ def _context(code, entry, conf, spec, states, mult, runtime):
         'qbox_cell': ' '.join(_fixed(v / BOHR, 8) for row in rows for v in row) if rows else '',
         'qbox_species': '\n'.join(f"species {s.lower()} {name(s, f'{s}_ONCV_PBE-1.0.xml')}" for s in species),
         'qbox_atoms': '\n'.join(qbox_atoms),
-        'qe_species': '\n'.join(f"  {s} {masses.get(s) or '1.0'} {name(s, f'{s}.UPF')}" for s in species),
+        'qe_species': '\n'.join(f"  {s} {_js_string(masses[s]) if _truthy(masses.get(s)) else '1.0'} {name(s, f'{s}.UPF')}" for s in species),
         'qe_magnetization': f'  tot_magnetization = {unpaired}\n' if unpaired else '',
         'vasp_species': ' '.join(species),
         'vasp_counts': ' '.join(str(n) for n in counts),
@@ -242,7 +283,7 @@ def _context(code, entry, conf, spec, states, mult, runtime):
         'vasp_nelect': nelect,
         'cp2k_cell': '\n'.join(f"      {axis} {' '.join(_fixed(v, 10) for v in rows[k])}" for k, axis in enumerate('ABC')) if rows else '',
         'cp2k_kinds': '\n'.join(kinds),
-        'cp2k_hf_cutoff': _fixed(min(6, min(_widths(rows)) / 2 - 0.1), 4) if rows else '',
+        'cp2k_hf_cutoff': _hf_cutoff(rows) if rows else '',
     })
     legacy = spec.get('legacy')
     if _truthy(legacy):

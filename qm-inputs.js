@@ -30,6 +30,7 @@
   }
   const PLANE_WAVE = ['qe', 'vasp', 'cp2k', 'qbox']
   const SAFE = /^[A-Za-z0-9_.+()-]+$/
+  const isObject = value => typeof value === 'object' && value !== null && !Array.isArray(value)
   const resolver = () => (node ? require('./qm-resolve.js') : root.MonetQMResolve)
 
   // Default spec: default cards, plane-wave codes isolated so they always render.
@@ -53,7 +54,7 @@
 
   // Legacy specs ({ params }) → { common, legacy }; missing per-code fields get their defaults.
   function normalize (spec) {
-    if (spec && spec.params && !spec.common) {
+    if (isObject(spec) && isObject(spec.params) && !('common' in spec)) {
       const p = spec.params
       spec.common = { charge: p.charge, multiplicities: p.multiplicities }
       spec.legacy = { nproc: p.nproc, mem: p.mem, method: p.method, basis: p.basis, padding: p.padding }
@@ -75,14 +76,14 @@
     if (!Number.isInteger(states.charge) || Math.abs(states.charge) > 50) throw new Error(`${where}Charge must be an integer.`)
   }
 
-  const isObject = value => typeof value === 'object' && value !== null && !Array.isArray(value)
-
   function validate (spec) {
     if (!isObject(spec) || !isObject(spec.codes)) throw new Error('Invalid quantum-chemistry input settings.')
     normalize(spec)
     checkStates(spec.common, '')
     if (spec.legacy && (!Number.isInteger(spec.legacy.nproc) || spec.legacy.nproc < 1)) throw new Error('Processors must be a positive integer.')
     if (spec.legacy && !(Number.isFinite(spec.legacy.padding) && spec.legacy.padding >= 0)) throw new Error('Vacuum padding must be zero or positive.')
+    if (spec.legacy && ['method', 'basis', 'mem'].some(key => /[/\\\r\n]/.test(String(spec.legacy[key])))) throw new Error('Method, basis and memory must not contain slashes or line breaks.')
+    if (spec.masses != null && !(isObject(spec.masses) && Object.values(spec.masses).every(m => (typeof m === 'string' || (typeof m === 'number' && Number.isFinite(m))) && /^[0-9.]+$/.test(String(m))))) throw new Error('Invalid atomic masses.')
     for (const [code, entry] of Object.entries(spec.codes)) {
       if (!CODES[code]) throw new Error(`Unknown input code ${code}.`)
       if (!isObject(entry) || !Array.isArray(entry.files)) throw new Error('Invalid quantum-chemistry input settings.')
@@ -102,13 +103,25 @@
       }
     }
     const cell = spec.cell
-    if (cell != null && !(Array.isArray(cell) && cell.length === 3 && cell.every(row => Array.isArray(row) && row.length === 3))) throw new Error('Cell must be a 3x3 matrix.')
+    if (cell != null && !(Array.isArray(cell) && cell.length === 3 && cell.every(row => Array.isArray(row) && row.length === 3 && row.every(v => typeof v === 'number' && Number.isFinite(v))))) throw new Error('Cell must be a 3x3 matrix.')
     if (spec.summary != null && !(isObject(spec.summary) && Object.values(spec.summary).every(text => typeof text === 'string'))) throw new Error('Invalid quantum-chemistry input summary.')
     return spec
   }
 
   // Cell rows (Å), shifted positions and note for one code and configuration.
   function cellFor (code, entry, conf, spec) {
+    // Legacy specs ({ params }): plane-wave codes only, box not centred, old note (output as before).
+    const legacyBox = padding => ({
+      rows: [0, 1, 2].map(axis => {
+        let low = Infinity, high = -Infinity
+        for (const p of conf.positions) { low = Math.min(low, p[axis]); high = Math.max(high, p[axis]) }
+        const row = [0, 0, 0]
+        row[axis] = Math.max(high - low + padding, 1)
+        return row
+      }),
+      positions: conf.positions,
+      note: `Cell: orthorhombic box = extent + ${num(padding)} A padding (no cell in the trajectory).`
+    })
     const box = padding => {
       const shift = [], rows = []
       for (let axis = 0; axis < 3; axis++) {
@@ -123,19 +136,22 @@
     if (entry.isolated) return box(Number(entry.isolated.padding))
     if (spec.cell) return { rows: spec.cell, positions: conf.positions, note: 'Cell: applied manual cell.' }
     if (conf.lattice) return { rows: conf.lattice, positions: conf.positions, note: 'Cell: from the trajectory.' }
-    if (spec.legacy) return box(Number(spec.legacy.padding))
+    if (spec.legacy && PLANE_WAVE.includes(code)) return legacyBox(Number(spec.legacy.padding))
     if (PLANE_WAVE.includes(code)) throw new Error(`${CODES[code].label}: no cell for configuration ${conf.index}. Apply a crystal cell or tick “Isolated system: vacuum box”.`)
     return { rows: null, positions: conf.positions, note: 'No cell (isolated cluster).' }
   }
 
-  // Perpendicular widths of the cell. Plain sqrt (not Math.hypot) so Python gives the same bits.
-  function widths (rows) {
+  // CP2K truncation radius from the perpendicular widths of the cell; '' for a degenerate cell.
+  // Plain sqrt (not Math.hypot) so Python gives the same bits.
+  function hfCutoff (rows) {
     const [a, b, c] = rows
     const cross = (u, v) => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]]
     const norm = v => Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2])
     const bc = cross(b, c), ca = cross(c, a), ab = cross(a, b)
     const volume = Math.abs(a[0] * bc[0] + a[1] * bc[1] + a[2] * bc[2])
-    return [volume / norm(bc), volume / norm(ca), volume / norm(ab)]
+    const norms = [norm(bc), norm(ca), norm(ab)]
+    if (!(Number.isFinite(volume) && volume > 0) || norms.some(n => !(Number.isFinite(n) && n > 0))) return ''
+    return fixed(Math.min(6, Math.min(...norms.map(n => volume / n)) / 2 - 0.1), 4)
   }
 
   function context (code, entry, conf, spec, states, mult, runtime) {
@@ -157,7 +173,9 @@
     const charge = states.charge
     let nelect = `# Net charge ${num(charge)}: set NELECT = (sum of ZVAL in POTCAR) - (${num(charge)}) for charged systems.`
     if (runtime && runtime.potcar) {
-      const total = species.reduce((sum, s, k) => sum + runtime.potcar.zval[s] * counts[k], 0) - charge
+      const zval = runtime.potcar.zval || {}
+      for (const s of species) if (typeof zval[s] !== 'number' || !Number.isFinite(zval[s])) throw new Error(`VASP: no ZVAL for ${s} in the POTCAR.`)
+      const total = species.reduce((sum, s, k) => sum + zval[s] * counts[k], 0) - charge
       nelect = charge ? `NELECT = ${num(total)}` : '# NELECT: neutral system, taken from POTCAR'
     }
     const values = {
@@ -176,7 +194,7 @@
         seen[s] = (seen[s] || 0) + 1
         return `atom ${s}${seen[s]} ${s.toLowerCase()} ${positions[i].map(v => fixed(v / BOHR, 8)).join(' ')}`
       }).join('\n'),
-      qe_species: species.map(s => `  ${s} ${masses[s] || '1.0'} ${name(s, `${s}.UPF`)}`).join('\n'),
+      qe_species: species.map(s => `  ${s} ${String(masses[s] || '1.0')} ${name(s, `${s}.UPF`)}`).join('\n'),
       qe_magnetization: unpaired ? `  tot_magnetization = ${unpaired}\n` : '',
       vasp_species: species.join(' '),
       vasp_counts: counts.join(' '),
@@ -188,7 +206,7 @@
         const kind = isObject(table[s]) ? table[s] : {}
         return `    &KIND ${s}\n      BASIS_SET ${kind.basis || 'DZVP-MOLOPT-SR-GTH'}\n${kind.aux ? `      BASIS_SET AUX_FIT ${kind.aux}\n` : ''}      POTENTIAL ${kind.potential || 'GTH-PBE'}\n    &END KIND`
       }).join('\n'),
-      cp2k_hf_cutoff: rows ? fixed(Math.min(6, Math.min(...widths(rows)) / 2 - 0.1), 4) : ''
+      cp2k_hf_cutoff: rows ? hfCutoff(rows) : ''
     }
     if (spec.legacy) {
       const p = spec.legacy

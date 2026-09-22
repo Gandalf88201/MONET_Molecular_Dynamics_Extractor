@@ -30,10 +30,17 @@ cases.push([build(['gaussian', 'orca', 'qe', 'vasp', 'cp2k', 'qbox'], {
 cases.push([build(['vasp', 'cp2k'], { vasp: { calc: 'optfreq' }, cp2k: { functional: 'hse06' } }), { ...conf, lattice }, {}])
 // 3: custom template, legacy spec shape
 cases.push([build(['gaussian'], {}, { custom: { gaussian: { 0: '{unknown} {ref}{guess} {state}\n{coords}' } } }), conf, {}])
-cases.push([{ codes: { gaussian: { folder: '', files: [{ name: 'conf{index}_{tag}.gjf', template: '{mem} {maxcore} {method}/{basis} {nproc}\n' }] }, qe: { folder: 'qe', files: [{ name: '{tag}.pwi', template: '{cell_note}\n{cell_ang}\n' }] } },
+cases.push([{ codes: { gaussian: { folder: '', files: [{ name: 'conf{index}_{tag}.gjf', template: '{mem} {maxcore} {method}/{basis} {nproc}\n{coords}' }] }, qe: { folder: 'qe', files: [{ name: '{tag}.pwi', template: '{cell_note}\n{cell_ang}\n' }] } },
   params: { charge: 0, multiplicities: [1], nproc: 6, mem: '4gb', method: 'b3lyp', basis: 'sto-3g', padding: 10 }, masses: QM.MASSES, cell: null }, conf, {}])
 // 5: POTCAR runtime, charged
 cases.push([build(['vasp'], { vasp: { isolated: true, override: { charge: 1, multiplicities: [2] } } }), conf, { potcar: { text: 'PAW C\nPAW O\nPAW H\nPAW N\n', zval: { C: 4, O: 6, H: 1, N: 5 } } }])
+// 6-7: degenerate (all-zero) trajectory lattice: Gaussian still renders, no CP2K truncation radius
+const zero = [[0, 0, 0], [0, 0, 0], [0, 0, 0]]
+cases.push([build(['gaussian', 'cp2k'], { cp2k: { isolated: true } }), { ...conf, lattice: zero }, {}])
+cases.push([build(['gaussian'], {}, { custom: { gaussian: { 0: '[{cp2k_hf_cutoff}] {cell_note}\n{cell_ang}\n' } } }), { ...conf, lattice: zero }, {}])
+// 8: CP2K user species table with AUX_FIT, isolated padding 7.5
+const kinds = { C: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, O: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, H: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' }, N: { basis: 'TZV2P-MOLOPT-GTH', potential: 'GTH-PBE', aux: 'cpFIT3' } }
+cases.push([build(['cp2k', 'qe'], { cp2k: { functional: 'pbe0', isolated: true, padding: 7.5, species: kinds }, qe: { isolated: true, padding: 7.5 } }), conf, {}])
 
 const js = cases.map(([spec, c, runtime]) => QM.render(QM.validate(spec), c, runtime).map(file => [file.path, file.text]))
 const py = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
@@ -70,7 +77,17 @@ assert.match(text(0)['qe/sing.inp'], /Cell: vacuum box = extent \+ 10 A, configu
 assert.match(text(2)['vasp/POSCAR'], /-4.5500000000  7.8810000000/); assert.match(text(2)['vasp/INCAR_sing_relax'], /# Cell: from the trajectory.\n/); checks++
 // Custom template and legacy shape
 assert.match(text(3)['sing.dat'], /^\{unknown\} u singlet\nC  0.0000000/); checks++
-assert.equal(text(4)['conf4_sing.gjf'], '4gb 666 b3lyp/sto-3g 6\n'); assert.match(text(4)['qe/sing.pwi'], /^Cell: vacuum box = extent \+ 10 A/); checks++
+// Legacy specs render as before this plan: Gaussian keeps the raw coordinates, QE gets the uncentred box and old note.
+const raw = conf.symbols.map((s, i) => `${s}  ${conf.positions[i].map(v => v.toFixed(7)).join('  ')}\n`).join('')
+assert.equal(text(4)['conf4_sing.gjf'], `4gb 666 b3lyp/sto-3g 6\n${raw}`); checks++
+assert.equal(text(4)['qe/sing.pwi'].split('\n')[0], 'Cell: orthorhombic box = extent + 10 A padding (no cell in the trajectory).'); checks++
+assert.match(text(4)['qe/sing.pwi'], /\n13.0400000000  0.0000000000  0.0000000000\n/); checks++
+// Degenerate lattice
+assert.match(text(6)['sing.dat'], /\n0 1\nC  0.0000000  0.0000000  0.0000000\n/); assert.match(text(6)['cp2k/sing.inp'], /A 13.0400000000 /); checks++
+assert.match(text(7)['sing.dat'], /^\[\] Cell: from the trajectory.\n0.0000000000  0.0000000000  0.0000000000\n/); checks++
+// CP2K user AUX_FIT basis, padding 7.5
+assert.match(text(8)['cp2k/sing.inp'], /    &KIND C\n      BASIS_SET TZV2P-MOLOPT-GTH\n      BASIS_SET AUX_FIT cpFIT3\n      POTENTIAL GTH-PBE\n    &END KIND/); checks++
+assert.match(text(8)['cp2k/sing.inp'], /A 10.5400000000 0.0000000000 0.0000000000\n/); assert.match(text(8)['qe/sing.inp'], /Cell: vacuum box = extent \+ 7.5 A, configuration centred/); checks++
 // POTCAR runtime and exact NELECT: 4 + 6 + 2·1 + 5 − 1 = 16
 assert.equal(text(5)['vasp/POTCAR'], 'PAW C\nPAW O\nPAW H\nPAW N\n'); assert.match(text(5)['vasp/INCAR_doub'], /\nNELECT = 16\n/); checks++
 assert.match(text(0)['vasp/INCAR_sing'], /\n# Net charge 0: set NELECT = \(sum of ZVAL in POTCAR\) - \(0\) for charged systems.\n/); checks++
@@ -86,7 +103,45 @@ spec, conf = json.load(sys.stdin)
 monet_qm.render(monet_qm.validate(spec), conf)
 `, root], { input: JSON.stringify([bare, conf]), stdio: 'pipe' })); checks++
 
-// Validation
+// Missing ZVAL: both engines refuse with the same message.
+const noZval = [build(['vasp'], { vasp: { isolated: true } }), conf, { potcar: { text: 'PAW\n', zval: { C: 4, O: 6, H: 1 } } }]
+assert.throws(() => QM.render(QM.validate(noZval[0]), noZval[1], noZval[2]), /^Error: VASP: no ZVAL for N in the POTCAR\.$/); checks++
+assert.throws(() => execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+spec, conf, runtime = json.load(sys.stdin)
+monet_qm.render(monet_qm.validate(spec), conf, runtime)
+`, root], { input: JSON.stringify(noZval), stdio: 'pipe' }), error => /ValueError: VASP: no ZVAL for N in the POTCAR\./.test(String(error.stderr))); checks++
+
+// Validation (JS and Python reject the same specs)
+const legacySpec = () => ({ codes: { gaussian: { files: [{ name: '{tag}.dat', template: '{coords}' }] } }, params: { charge: 0, multiplicities: [1], nproc: 6, mem: '4gb', method: 'b3lyp', basis: 'sto-3g', padding: 10 }, masses: QM.MASSES, cell: null })
+const rejected = [
+  Object.assign(QM.defaultSpec(), { masses: { C: '12/0' } }),
+  Object.assign(QM.defaultSpec(), { masses: { C: -12 } }),
+  Object.assign(QM.defaultSpec(), { masses: { C: '12.0\nX' } }),
+  Object.assign(QM.defaultSpec(), { cell: [[10, 0, 0], [0, 10, 0], [0, 0, '10']] }),
+  Object.assign(QM.defaultSpec(), { cell: [[10, 0, 0], [0, 10, 0], [0, 0, null]] }),
+  (() => { const spec = legacySpec(); spec.params.method = 'b3lyp/x'; return spec })(),
+  (() => { const spec = legacySpec(); spec.params.basis = 'sto-3g\\x'; return spec })(),
+  (() => { const spec = legacySpec(); spec.params.mem = '4gb\n%x'; return spec })()
+]
+const accepted = [Object.assign(QM.defaultSpec(), { masses: { C: 12.011, O: '15.999' } }), legacySpec()]
+const pyValid = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+out = []
+for spec in json.load(sys.stdin):
+    try:
+        monet_qm.validate(spec); out.append(True)
+    except ValueError:
+        out.append(False)
+print(json.dumps(out))
+`, root], { input: JSON.stringify([...rejected, ...accepted]) }))
+for (const spec of rejected) { assert.throws(() => QM.validate(structuredClone(spec))); checks++ }
+for (const spec of accepted) { QM.validate(structuredClone(spec)); checks++ }
+assert.deepEqual(pyValid, [...rejected.map(() => false), ...accepted.map(() => true)]); checks++
 for (const bad of [{ multiplicities: [] }, { multiplicities: [1, 1] }, { charge: 0.5 }]) {
   const spec = QM.defaultSpec(); Object.assign(spec.common, bad)
   assert.throws(() => QM.validate(spec)); checks++
