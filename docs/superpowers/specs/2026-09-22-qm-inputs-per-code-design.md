@@ -49,7 +49,7 @@ Defaults in *italics*. `{…}` are template placeholders.
 | Field | Values → output |
 |---|---|
 | Calculation | *SP* (nothing) · Opt → `opt` · Opt+Freq → `opt freq` · Freq → `freq` · TD-DFT → `td=(nstates=N)`, N *10* · MD → `admp(maxpoints=<steps>,stepsize=<dt fs × 10000>)` (ADMP; NVE only, the ensemble selector is fixed to NVE with a note) |
-| Reference | *Unrestricted* (`u` prefix) · Auto (`r` for multiplicity 1, `u` otherwise) · Restricted (`r`; open-shell multiplicities fall back to `u` with a warning) |
+| Reference | *Unrestricted* (`u` prefix) · Auto (`r` for multiplicity 1, `u` otherwise) · Restricted (`r` for multiplicity 1, restricted open-shell `ro` otherwise) |
 | Broken-symmetry singlet | off · on → `guess=mix` on multiplicity-1 files |
 | Method, Basis | *b3lyp*, *6-31+g(d,p)* |
 | Dispersion | *none* · D3BJ → `empiricaldispersion=gd3bj` · D3 → `empiricaldispersion=gd3` |
@@ -66,7 +66,7 @@ Route: `#p {u|r}{method}/{basis} {calc} maxdisk=300gb nosymm scf={scf} {dispersi
 | Field | Values → output |
 |---|---|
 | Calculation | *SP* · `Opt` · `Opt Freq` · `Freq` · TD-DFT → `%tddft nroots N end`, N *10* · MD → `! MD` + `%md Timestep <dt>_fs Initvel <T>_K [Thermostat CSVR <T>_K Timecon 100_fs] Run <steps> end` |
-| Reference | *UKS* · Auto (RKS for multiplicity 1) · RKS (open-shell fall back to UKS with a warning) |
+| Reference | *UKS* · Auto (RKS for multiplicity 1, UKS otherwise) · Restricted (RKS for multiplicity 1, `ROKS` otherwise) |
 | Method, Basis | *b3lyp*, *6-31+g(d,p)* |
 | Dispersion | *none* · `D3BJ` · `D4` |
 | Solvent | *none* · CPCM + name → `CPCM(<name>)` |
@@ -170,7 +170,6 @@ Warnings:
 - isolated vacuum smaller than the configuration extent on any axis (MT / dipole corrections need a box ≥ 2× the charge density);
 - Gaussian/ORCA on a periodic trajectory;
 - hybrid functional with a plane-wave code (cost);
-- Restricted reference with an open-shell multiplicity (falls back to unrestricted).
 - vc-relax: raise the cutoff to limit Pulay stress.
 - CP2K PBE0/B3LYP truncation radius below 4 Å (cell too small for the truncated Coulomb operator).
 
