@@ -120,7 +120,7 @@ async function run () {
   assert.equal(result.success, true); assert.equal(result.sampledFrames, 2); checks++
   // Template-based QM inputs: same files from the desktop and browser engines.
   const qm = QM.defaultSpec(['orca', 'qe', 'vasp'])
-  qm.params.multiplicities = [1]
+  qm.common.multiplicities = [1]
   const withQm = { ...options, generateGaussian: false, qm }
   await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...withQm, filePath, outputDir: path.join(temp, 'desktop-qm') })
   const orca = fs.readFileSync(path.join(temp, 'desktop-qm/2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp'), 'utf8')
@@ -135,7 +135,7 @@ async function run () {
 import zipfile, sys, pathlib
 with zipfile.ZipFile(sys.argv[1]) as z:
  assert z.read('2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp').decode() == pathlib.Path(sys.argv[2]).read_text()
- assert 'qe/sing.pwi' in ' '.join(z.namelist())
+ assert 'qe/sing.inp' in ' '.join(z.namelist())
 `, localZip, path.join(temp, 'desktop-qm/2-SAMPLED_CONFIGURATIONS/conf2/orca/sing.inp')]); checks++
   const extracted = fs.readFileSync(path.join(temp, 'desktop/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz'), 'utf8')
   assert.equal(parse(extracted).configCount, 2); assert.equal(parse(extracted).atomCount, 2); checks++

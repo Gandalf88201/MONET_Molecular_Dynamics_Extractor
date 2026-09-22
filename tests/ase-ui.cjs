@@ -117,7 +117,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'qm-inputs.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player };' : ''))
+for (const file of ['theme.js', 'qm-resolve.js', 'qm-inputs.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -515,7 +515,7 @@ async function run () {
   await click('next-2'); await click('next-3'); await click('next-4')
   await tick(); await tick()
   assert.deepEqual(Object.keys(lastProcessOptions.qm.codes), ['gaussian', 'orca']); checks++
-  assert.equal(lastProcessOptions.qm.params.charge, -1); assert.deepEqual([...lastProcessOptions.qm.params.multiplicities], [2]); checks++
+  assert.equal(lastProcessOptions.qm.common.charge, -1); assert.deepEqual([...lastProcessOptions.qm.common.multiplicities], [2]); checks++
   assert.equal(lastProcessOptions.qm.codes.orca.files[0].template, '! custom {mult}\n{coords}'); assert.equal(lastProcessOptions.generateGaussian, false); checks++
   el('qm-mults').value = '1 1'; el('qm-mults').dispatchEvent(new w.Event('input'))
   assert.match(el('qm-status').textContent, /distinct/); checks++

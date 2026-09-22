@@ -596,23 +596,24 @@ $('next-3').addEventListener('click', () => goTo(4))
 
 $('opt-average').addEventListener('change',  e => { state.opts.computeAverage   = e.target.checked })
 
-// Quantum-chemistry inputs: editable templates (kept for the session) + common parameters.
-const qmTemplates = Object.fromEntries(Object.entries(MonetQM.CODES).map(([code, def]) => [code, def.files.map(file => ({ ...file }))]))
+// Quantum-chemistry inputs: step-4 fields → per-code spec (qm-resolve.js); template edits kept per session.
+// Temporary bridge until the per-code cards replace the step-4 fields.
+const qmCustom = {} // code → { file index → edited template }
+let qmFiles = {} // code → resolved files (with edits) of the last spec built
 const qmCodes = () => [...$$('[data-qm-code]')].filter(input => input.checked).map(input => input.dataset.qmCode)
 
-function buildQmSpec () {
+function rawQmSpec () {
   const codes = qmCodes()
   if (!codes.length) return null
-  const spec = MonetQM.defaultSpec(codes)
-  for (const code of codes) spec.codes[code].files = qmTemplates[code].map(file => ({ ...file }))
   const mults = $('qm-mults').value.trim().split(/[\s,]+/).filter(Boolean).map(Number)
-  Object.assign(spec.params, {
-    charge: Number($('qm-charge').value), multiplicities: mults, nproc: Number($('qm-nproc').value),
-    mem: $('qm-mem').value.trim(), method: $('qm-method').value.trim(), basis: $('qm-basis').value.trim(),
-    padding: Number($('qm-padding').value)
-  })
-  spec.cell = aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null
-  return MonetQM.validate(spec)
+  const shared = { nproc: Number($('qm-nproc').value), mem: $('qm-mem').value.trim(), method: $('qm-method').value.trim(), basis: $('qm-basis').value.trim() }
+  const cards = Object.fromEntries(codes.map(code => [code, MonetQMResolve.PLANE_WAVE.includes(code) ? { isolated: !aseState.cellParameters, padding: Number($('qm-padding').value) } : { ...shared }]))
+  return { ...MonetQMResolve.buildSpec({ codes, common: { charge: Number($('qm-charge').value), multiplicities: mults }, cards, symbols: [], cell: aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, custom: qmCustom }), masses: MonetQM.MASSES }
+}
+
+function buildQmSpec () {
+  const spec = rawQmSpec()
+  return spec && MonetQM.validate(spec)
 }
 
 function updateQmUI () {
@@ -621,11 +622,15 @@ function updateQmUI () {
   $('gaussian-details').classList.toggle('disabled', !codes.length)
   const select = $('qm-template-file'), previous = select.value
   select.replaceChildren()
+  try {
+    const spec = rawQmSpec()
+    qmFiles = spec ? Object.fromEntries(Object.entries(spec.codes).map(([code, entry]) => [code, entry.files])) : {}
+  } catch { qmFiles = {} }
   for (const code of codes) {
-    qmTemplates[code].forEach((file, i) => {
+    (qmFiles[code] || []).forEach((file, i) => {
       const option = document.createElement('option')
       option.value = `${code}:${i}`
-      option.textContent = `${MonetQM.CODES[code].label} — ${file.name}`
+      option.textContent = `${MonetQMResolve.LABELS[code]} — ${file.name}`
       select.appendChild(option)
     })
   }
@@ -633,7 +638,7 @@ function updateQmUI () {
   showTemplate()
   try {
     buildQmSpec()
-    $('qm-status').textContent = codes.length ? `Inputs for: ${codes.map(code => MonetQM.CODES[code].label).join(', ')}.` : 'No quantum-chemistry inputs will be written.'
+    $('qm-status').textContent = codes.length ? `Inputs for: ${codes.map(code => MonetQMResolve.LABELS[code]).join(', ')}.` : 'No quantum-chemistry inputs will be written.'
   } catch (error) { $('qm-status').textContent = error.message }
 }
 
@@ -643,7 +648,8 @@ function selectedTemplate () {
 }
 function showTemplate () {
   const target = selectedTemplate()
-  $('qm-template-text').value = target ? qmTemplates[target.code][target.index].template : ''
+  const file = target && (qmFiles[target.code] || [])[target.index]
+  $('qm-template-text').value = target ? (qmCustom[target.code]?.[target.index] ?? (file ? file.template : '')) : ''
   $('qm-template-text').disabled = !target
 }
 $$('[data-qm-code]').forEach(input => input.addEventListener('change', updateQmUI))
@@ -651,13 +657,13 @@ for (const id of ['qm-charge', 'qm-mults', 'qm-nproc', 'qm-mem', 'qm-method', 'q
 $('qm-template-file').addEventListener('change', showTemplate)
 $('qm-template-text').addEventListener('input', () => {
   const target = selectedTemplate()
-  if (target) qmTemplates[target.code][target.index].template = $('qm-template-text').value
+  if (target) (qmCustom[target.code] ||= {})[target.index] = $('qm-template-text').value
 })
 $('qm-template-reset').addEventListener('click', () => {
   const target = selectedTemplate()
   if (!target) return
-  qmTemplates[target.code][target.index] = { ...MonetQM.CODES[target.code].files[target.index] }
-  showTemplate()
+  if (qmCustom[target.code]) delete qmCustom[target.code][target.index]
+  updateQmUI()
 })
 
 $('btn-output-dir').addEventListener('click', async () => {
@@ -799,7 +805,7 @@ function qmSummary () {
   return ', ' + Object.keys(spec.codes).map(code => {
     const folder = MonetQM.CODES[code].folder
     const names = spec.codes[code].files.map(file => /\{(tag|mult|state|chk)\}/.test(file.name)
-      ? spec.params.multiplicities.map(m => file.name.replace('{tag}', MonetQM.stateOf(m).tag)).join(', ') : file.name)
+      ? (spec.codes[code].override || spec.common).multiplicities.map(m => file.name.replace('{tag}', MonetQM.stateOf(m).tag)).join(', ') : file.name)
     return folder ? `${folder}/ (${names.join(', ')})` : names.join(', ')
   }).join('; ')
 }
