@@ -226,7 +226,7 @@ assert.equal(R.validCustomCell([10, 11, 12.5, 10, 10, 170]), false); // in-range
 {
   const common = { charge: 0, multiplicities: [1] }
   const rows = [[10, 0, 0], [0, 11, 0], [0, 0, 12.5]]
-  assert.equal(R.describe('qe', R.settingsFor('qe'), common, rows), 'QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, single point, singlet cell 10×11×12.5 Å (90/90/90°)'); checks++
+  assert.equal(R.describe('qe', R.settingsFor('qe'), common, rows), 'QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, single point, singlet, cell 10×11×12.5 Å (90/90/90°)'); checks++
   // No 4th argument, or a falsy one: unchanged from before this argument existed (no cell text).
   assert.equal(R.describe('qe', R.settingsFor('qe'), common), 'QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, single point, singlet'); checks++
   assert.equal(R.describe('qe', R.settingsFor('qe'), common, null), R.describe('qe', R.settingsFor('qe'), common)); checks++
@@ -248,6 +248,28 @@ assert.equal(R.validCustomCell([10, 11, 12.5, 10, 10, 170]), false); // in-range
   assert.match(withCustom.summary.qe, / cell 10×11×12.5 Å \(90\/90\/90°\)$/); checks++
   const withNeither = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: null, cards: { qe: { isolated: true } } })
   assert.doesNotMatch(withNeither.summary.qe, / cell /); checks++
+  // The isolated vacuum box wins over the custom and the applied cell, as in the engines.
+  const isolatedCustom = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: applied, cards: { qe: { isolated: true, cellSource: 'custom', cellCustom: custom } } })
+  assert.equal(isolatedCustom.codes.qe.cell, null); assert.doesNotMatch(isolatedCustom.summary.qe, /cell/); checks++
+  const isolatedApplied = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: applied, cards: { qe: { isolated: true } } })
+  assert.doesNotMatch(isolatedApplied.summary.qe, /cell/); checks++
+  // An invalid custom cell never reaches the engines (readiness blocks it).
+  const invalidCustom = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: applied, cards: { qe: { cellSource: 'custom', cellCustom: [0, 11, 12.5, 90, 90, 90] } } })
+  assert.equal(invalidCustom.codes.qe.cell, null); checks++
+}
+// A custom cell keeps the orientation of the structure lattice (buildSpec's structureRows), never rotating it relative to the atoms.
+{
+  const common = { charge: 0, multiplicities: [1] }
+  const mp = [[1.6, -2.771281, 0], [1.6, 2.771281, 0], [0, 0, 5.2]]
+  const longer = U.cellParameters(mp); longer[2] = 10
+  const spec = R.buildSpec({ codes: ['qe', 'vasp'], common, symbols: syms, cell: null, structureRows: mp, cards: { qe: { cellSource: 'custom', cellCustom: longer }, vasp: { cellSource: 'custom', cellCustom: U.cellParameters(mp) } } })
+  const near = (rows, expected) => rows.flat().forEach((v, i) => assert.ok(Math.abs(v - expected.flat()[i]) <= 1e-9, `${v} vs ${expected.flat()[i]}`))
+  near(spec.codes.qe.cell.rows, [mp[0], mp[1], [0, 0, 10]]); checks++
+  near(spec.codes.vasp.cell.rows, mp); checks++
+  assert.match(spec.summary.qe, /, cell 3\.2×3\.2×10 Å \(90\/90\/120°\)$/); checks++
+  // A structure cell in the standard orientation (e.g. an applied crystal cell) leaves the custom rows as they are.
+  const standard = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: null, structureRows: [[9, 0, 0], [0, 9, 0], [0, 0, 9]], cards: { qe: { cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } } })
+  assert.deepEqual(standard.codes.qe.cell.rows, U.cellVectors([10, 11, 12.5, 90, 90, 90])); checks++
 }
 
 // readiness: cellSource 'custom' skips the "no cell" block even without an applied/trajectory cell.
@@ -265,6 +287,9 @@ assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: [10, 11
 assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } }, cubic).warnings, []); checks++
 // A valid custom cell with no known cell at all (noCell) does not warn either (nothing is being replaced).
 assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } }, noCell).warnings, []); checks++
+// Isolated wins over the custom cell: no custom-cell block, no "replaces the trajectory lattice" warning.
+assert.deepEqual(ready(['qe'], { qe: { isolated: true, cellSource: 'custom', cellCustom: null } }, noCell).blocked, []); checks++
+assert.ok(!ready(['qe'], { qe: { isolated: true, cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } }, trajectory).warnings.some(w => /replaces the trajectory lattice/.test(w))); checks++
 
 // CP2K hybrid truncation radius uses the effective cell: a valid custom cell overrides ctx.cell for the radius warning.
 {

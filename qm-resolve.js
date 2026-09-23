@@ -391,7 +391,7 @@ save {tag}_conf{index}.xml
     if (s.calc === 'td') return `excited states (TD-DFT, ${s.nstates} states)`
     return CALC_LABELS[s.calc].toLowerCase()
   }
-  // rows: the effective cell (Å), when known, for a plane-wave code; appends " cell a×b×c Å (α/β/γ°)".
+  // rows: the effective cell (Å), when known, for a plane-wave code; appends ", cell a×b×c Å (α/β/γ°)".
   // Unknown (no rows, or a degenerate/invalid cell) → no cell text, same as before this cell text existed.
   function describe (code, s, common, rows) {
     const states = s.override || common
@@ -412,18 +412,21 @@ save {tag}_conf{index}.xml
         const [a, b, c, alpha, beta, gamma] = U.cellParameters(rows)
         const len = v => Number(v.toFixed(3))
         const ang = v => Number(v.toFixed(1))
-        cellText = ` cell ${len(a)}×${len(b)}×${len(c)} Å (${ang(alpha)}/${ang(beta)}/${ang(gamma)}°)`
+        cellText = `, cell ${len(a)}×${len(b)}×${len(c)} Å (${ang(alpha)}/${ang(beta)}/${ang(gamma)}°)`
       } catch (error) { cellText = '' }
     }
     return `${head}${charge}, ${stateList(states.multiplicities)}${cellText}`
   }
 
-  function buildSpec ({ codes, common, cards = {}, symbols = [], cell = null, custom = {} }) {
+  // structureRows: the structure cell the cards show (applied crystal cell or the lattice of frame 0); a custom
+  // cell takes its orientation so the cell never rotates relative to the atoms.
+  function buildSpec ({ codes, common, cards = {}, symbols = [], cell = null, custom = {}, structureRows = null }) {
     const spec = { common: { charge: common.charge, multiplicities: [...common.multiplicities] }, codes: {}, cell, summary: {} }
     for (const code of codes) {
       const s = settingsFor(code, cards[code] || {})
       const pw = PLANE_WAVE.includes(code)
-      const customRows = pw && s.cellSource === 'custom' && s.cellCustom ? U.cellVectors(s.cellCustom) : null
+      // The isolated vacuum box wins over a custom cell, as in the engines; an invalid custom cell is never passed on.
+      const customRows = pw && !s.isolated && s.cellSource === 'custom' && validCustomCell(s.cellCustom) ? U.orientLike(U.cellVectors(s.cellCustom), structureRows) : null
       // custom[code]: file name pattern → edited template; edits for files this calculation no longer writes are ignored.
       const edits = custom[code] || {}
       const files = resolve(code, s).map(file => (Object.prototype.hasOwnProperty.call(edits, file.name) ? { ...file, template: edits[file.name] } : file))
@@ -440,7 +443,7 @@ save {tag}_conf{index}.xml
         cell: pw && customRows ? { rows: customRows } : null,
         ...(pw ? { format: { cellUnits: s.cellUnits || 'angstrom', cellStyle: s.cellStyle || 'abc', positions: s.positions || 'cartesian' } } : {})
       }
-      spec.summary[code] = describe(code, s, spec.common, customRows || cell)
+      spec.summary[code] = describe(code, s, spec.common, s.isolated ? null : (customRows || cell))
     }
     return spec
   }
@@ -457,7 +460,7 @@ save {tag}_conf{index}.xml
       const warn = message => warnings.push(`${label}: ${message}`)
       if (!CALCS[code].includes(s.calc)) block(code === 'qbox' ? 'Qbox has no built-in vibrational analysis.' : `${CALC_LABELS[s.calc]} is not available.`)
       if (pw && !ctx.cell && !s.isolated && s.cellSource !== 'custom') block('no cell. Apply a crystal cell (Structure analysis › Cell) or tick “Isolated system: vacuum box”.')
-      if (pw && s.cellSource === 'custom') {
+      if (pw && !s.isolated && s.cellSource === 'custom') {
         if (!validCustomCell(s.cellCustom)) block('enter a valid custom cell (positive lengths, angles between 0° and 180°).')
         else if (ctx.cell && ctx.cell.source === 'trajectory') warn('the custom cell replaces the trajectory lattice for every configuration.')
       }
