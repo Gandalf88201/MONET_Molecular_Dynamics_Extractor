@@ -88,6 +88,12 @@ async function run () {
   assert.equal((await api.analyzeFile('water.XYZ')).configCount, 2); checks++
   assert.equal((await api.readFrame('water.XYZ', 1)).atoms[0].x, .1); checks++
   assert.match((await api.readFrame('water.XYZ', 99)).error, /outside/); checks++
+  // The first frame's lattice travels with it (extended XYZ Lattice="…"); plain XYZ has none.
+  assert.equal((await api.readFrame('water.XYZ', 0)).lattice, null); checks++
+  chosenFile = new File([fs.readFileSync(path.join(root, 'examples/periodic-water.xyz'), 'utf8')], 'periodic-water.xyz')
+  assert.equal(await api.selectFile(), 'periodic-water.xyz')
+  assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame('periodic-water.xyz', 0)).lattice)), [[10, 0, 0], [0, 10, 0], [0, 0, 10]]); checks++
+  chosenFile = new File([source], 'water.XYZ')
   chosenEvent = 'cancel'; assert.equal(await api.selectFile(), null); chosenEvent = 'change'; checks++
   const options = { filePath: 'water.XYZ', atomCount: 3, selectedAtoms: [1, 3], frequency: 1, computeAverage: true, generateGaussian: true }
   const output = await api.processTrajectory(options)
@@ -115,6 +121,8 @@ async function run () {
   const filePath = path.join(root, 'examples/water.XYZ')
   assert.equal((await handlers.get('analyze-file')(null, filePath)).configCount, 2); checks++
   assert.equal((await handlers.get('read-frame')(null, filePath, 1, 3)).atoms[0].x, .1); checks++
+  assert.equal((await handlers.get('read-frame')(null, filePath, 0, 3)).lattice, null); checks++
+  assert.deepEqual((await handlers.get('read-frame')(null, path.join(root, 'examples/periodic-water.xyz'), 0, 6)).lattice, [[10, 0, 0], [0, 10, 0], [0, 0, 10]]); checks++
   assert.ok((await handlers.get('analyze-file')(null, path.join(temp, 'missing.xyz'))).error); checks++
   const result = await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, filePath, outputDir: path.join(temp, 'desktop') })
   assert.equal(result.success, true); assert.equal(result.sampledFrames, 2); checks++

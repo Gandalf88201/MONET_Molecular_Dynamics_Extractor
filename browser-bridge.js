@@ -281,10 +281,11 @@
       if (server) {
         const result = await serverRun({ action: 'frame', filename: name, index })
         if (!result.ok) throw new Error(result.message || result.error)
-        return { atoms: result.atoms }
+        return { atoms: result.atoms, lattice: result.lattice || null }
       }
+      // lattice: the frame's extended XYZ Lattice="…" (3×3 Å rows) or null; step 4 uses frame 0's as the structure cell.
       for await (const frame of MonetXYZ.frames(lines(name))) {
-        if (frame.index === index) return { atoms: frame.atoms }
+        if (frame.index === index) return { atoms: frame.atoms, lattice: frame.lattice || null }
       }
       throw new Error('Frame index is outside the trajectory.')
     }),

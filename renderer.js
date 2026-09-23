@@ -230,6 +230,7 @@ function clearTrajectory () {
   $('restore-full-trajectory')?.classList.add('hidden')
   state.fileInfo = null
   state.firstFrame = null
+  state.firstLattice = null
   state.selectedAtoms.clear()
   state.lastResult = null
   updateAnalysisSource()
@@ -531,6 +532,9 @@ async function loadFrameForViewer (frameIdx) {
   $('viewer-overlay').classList.add('hidden')
 
   state.firstFrame = result.atoms
+  // The lattice of frame 0 (extended XYZ Lattice="…", also written by the importer for CIF/cell files) is the
+  // structure cell of the QM cards, available at once without waiting for the player's frame requests.
+  if (frameIdx === 0) state.firstLattice = usableLattice(result.lattice)
   viewer.loadAtoms(result.atoms)
   viewerNeedsFit = true
   buildAtomTable(result.atoms)
@@ -611,10 +615,31 @@ function qmExtent () {
   if (!atoms.length) return null
   return ['x', 'y', 'z'].map(k => Math.max(...atoms.map(a => a[k])) - Math.min(...atoms.map(a => a[k])))
 }
+// A 3×3 lattice (Å rows) with a non-zero volume, or null (absent, all zeros, malformed).
+function usableLattice (rows) {
+  if (!Array.isArray(rows) || rows.length !== 3 || !rows.every(row => Array.isArray(row) && row.length === 3 && row.every(Number.isFinite))) return null
+  try { MonetUnits.cellParameters(rows); return rows.map(row => [...row]) } catch { return null }
+}
+// Structure cell for the plane-wave cards: the applied crystal cell, else the lattice of frame 0.
 function qmCellInfo () {
-  if (aseState.cellParameters) return { source: 'applied', rows: MonetASEModel.cellVectors(aseState.cellParameters) }
-  const lattice = player.cells && player.cells.get(0)
-  return lattice ? { source: 'trajectory', rows: lattice } : null
+  if (aseState.cellParameters) {
+    const label = aseState.cellSourceName ? `Cell from ${aseState.cellSourceName}` : 'Crystal cell applied'
+    return { source: 'applied', rows: MonetASEModel.cellVectors(aseState.cellParameters), label, detail: aseState.cellParameters.join(', ') }
+  }
+  const lattice = usableLattice(player.cells && player.cells.get(0)) || state.firstLattice
+  if (!lattice) return null
+  const label = state.source.cellFile ? `Lattice from the trajectory (cell file ${fileName(state.source.cellFile)})` : 'Lattice from the trajectory'
+  return { source: 'trajectory', rows: lattice, label }
+}
+function qmCellStatus (s, cell) {
+  if (s.isolated) return { text: `Vacuum box (isolated), ${s.padding} Å`, blocked: false }
+  if (s.cellSource === 'custom') {
+    if (!s.cellCustom) return { text: '✖ Invalid custom cell', blocked: true }
+    const len = v => Number(v.toFixed(4))
+    return { text: `Custom cell ${s.cellCustom.slice(0, 3).map(len).join('×')} Å (${s.cellCustom.slice(3).map(v => Number(v.toFixed(2))).join('/')}°)`, blocked: false }
+  }
+  if (!cell) return { text: '✖ No cell', blocked: true }
+  return { text: cell.detail ? `${cell.label} (${cell.detail})` : cell.label, blocked: false }
 }
 function qmPotcarAvailable () { return Boolean(aseState.available || window.monet.desktop) }
 function qmCommon () {
@@ -639,13 +664,12 @@ function updateQmUI () {
   const symbolsKey = [...new Set(symbols)].join(' ')
   if (symbolsKey !== qmSymbolsKey) { qmSymbolsKey = symbolsKey; qmPanel.setSymbols(symbols) }
   qmPanel.setPotcarAvailable(qmPotcarAvailable())
-  const cards = qmPanel.read()
   const cell = qmCellInfo()
+  qmPanel.setStructureCell(cell ? { label: cell.label, rows: cell.rows } : null)
+  const cards = qmPanel.read()
   for (const code of codes.filter(c => MonetQMResolve.PLANE_WAVE.includes(c))) {
-    const s = cards[code]
-    const text = s.isolated ? `Vacuum box (isolated), ${s.padding} Å` : !cell ? '✖ No cell'
-      : cell.source === 'applied' ? `Crystal cell applied (${aseState.cellParameters.join(', ')})` : 'Lattice from the trajectory'
-    qmPanel.setCellStatus(code, text, !s.isolated && !cell)
+    const status = qmCellStatus(cards[code], cell)
+    qmPanel.setCellStatus(code, status.text, status.blocked)
   }
   let spec = null
   const messages = []
@@ -1034,6 +1058,7 @@ const aseState = {
   pickedIds: [],
   centreIds: null, // atoms centred in the cell ("centre selection"), fixed when the option is ticked
   cellParameters: null,
+  cellSourceName: null, // file name when the applied cell came from Load cell file
   mic: true,
   cellPbc: [true, true, true],
   cellSource: null
@@ -1124,6 +1149,7 @@ $('cell-apply').addEventListener('click', () => {
     if (!aseState.analysisAtoms.length) throw new Error('Load a trajectory before applying a cell.')
     aseState.cellParameters = MonetASEModel.cellParameters($('cell-system').value, cellFields.map(field => $(`cell-${field}`).value))
     aseState.cellPbc = ['a', 'b', 'c'].map(axis => $(`cell-pbc-${axis}`).checked)
+    aseState.cellSourceName = null
     invalidateCellAnalyses()
     setStatus('Crystal cell applied without changing Cartesian coordinates.')
     historyRecord({ kind: 'cell', action: 'apply', params: { cell: aseState.cellParameters, pbc: aseState.cellPbc, mic: aseState.mic } })
@@ -1131,6 +1157,7 @@ $('cell-apply').addEventListener('click', () => {
 })
 $('cell-reset').addEventListener('click', () => {
   aseState.cellParameters = null
+  aseState.cellSourceName = null
   invalidateCellAnalyses()
   historyRecord({ kind: 'cell', action: 'reset', params: { mic: aseState.mic } })
 })
@@ -1158,6 +1185,7 @@ $('cell-read').addEventListener('click', async () => {
     ;['a', 'b', 'c'].forEach((axis,i) => { $(`cell-pbc-${axis}`).checked = Boolean(info.pbc[i]) })
     updateCellPreset()
     aseState.cellParameters = null
+    aseState.cellSourceName = null
     aseState.sourceRevision++; clearAllAnalyses(false)
     // Preserve the source vectors' orientation, rather than rebuilding from metrics.
     aseViewer.cell = info.cell
@@ -1185,6 +1213,7 @@ $('cell-load-file').addEventListener('click', async () => {
     if (aseState.analysisAtoms.length) {
       aseState.cellParameters = MonetASEModel.cellParameters('triclinic', cellFields.map(field => $(`cell-${field}`).value))
       aseState.cellPbc = ['a', 'b', 'c'].map(axis => $(`cell-pbc-${axis}`).checked)
+      aseState.cellSourceName = name // the QM cards name the cell's file
       invalidateCellAnalyses()
       $('cell-status').textContent += ` Read from ${name}.${info.note ? ' ' + info.note : ''}`
       setStatus(`Cell from ${name} applied.`)
@@ -1611,6 +1640,7 @@ function updateAnalysisSource () {
   aseState.sourceRevision++
   if (aseState.cellSource !== state.filePath) {
     aseState.cellParameters = null
+    aseState.cellSourceName = null
     aseState.cellSource = state.filePath
     aseViewer.cell = null
     $('cell-status').textContent = 'No manual cell. Source lattice/PBC are used when present.'

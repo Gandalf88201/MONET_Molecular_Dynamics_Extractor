@@ -21,6 +21,8 @@
   ]
   const PW_COMMON = [
     { key: 'isolated', label: 'Isolated system: vacuum box', type: 'check' },
+    // The isolated flag builds its own vacuum box, so the Cell group only shows for periodic systems.
+    { key: 'cell', type: 'cell', when: s => !s.isolated },
     { key: 'padding', label: 'Vacuum (Å)', type: 'number', min: 0, step: 0.5, when: s => s.isolated },
     { key: 'pressure', label: 'Target pressure (GPa)', type: 'number', step: 0.1, when: s => s.calc === 'vcrelax' },
     { key: 'md', type: 'md', when: s => s.calc === 'md' }
@@ -88,6 +90,38 @@
   const parseMults = text => String(text).trim().split(/[\s,]+/).filter(Boolean).map(Number)
   const parseGrid = text => String(text).trim().split(/\s+/).map(Number)
 
+  // Cell section of the plane-wave cards: a, b, c (Å), α, β, γ (°); per-code cell/position formats.
+  const U = globalThis.MonetUnits
+  const CELL_KEYS = ['a', 'b', 'c', 'alpha', 'beta', 'gamma']
+  const CELL_LABELS = ['a (Å)', 'b (Å)', 'c (Å)', 'α (°)', 'β (°)', 'γ (°)']
+  const CELL_FORMATS = {
+    qe: { key: 'cellUnits', label: 'Cell units', options: [opt('angstrom', 'Å (CELL_PARAMETERS angstrom)'), opt('bohr', 'bohr (CELL_PARAMETERS bohr)'), opt('alat', 'alat (celldm(1) = a)')] },
+    cp2k: { key: 'cellStyle', label: 'Cell format', options: [opt('abc', 'ABC + angles'), opt('vectors', 'Vectors A, B, C')] }
+  }
+  const FRACTIONAL_LABELS = { qe: 'Fractional (crystal)', vasp: 'Fractional (Direct)', cp2k: 'Fractional (SCALED)' }
+  const QBOX_NOTE = 'Qbox uses bohr (1 bohr = 0.529177210903 Å).'
+  const cellParams = rows => { try { return U.cellParameters(rows) } catch (error) { return null } }
+  const f10 = v => (v + 0).toFixed(10)
+  const matrixText = rows => rows.map(row => row.map(f10).join('  ')).join('\n')
+  // The cell as the code writes it (same numbers as the engines, lengths with 10 decimals).
+  function vectorsText (code, rows, s) {
+    const params = cellParams(rows)
+    if (!params) return 'The cell is degenerate (zero volume).'
+    if (code === 'qbox') return `set cell ${rows.flat().map(v => f10(U.angstromToBohr(v))).join(' ')}`
+    if (code === 'qe') {
+      if (s.cellUnits === 'bohr') return `CELL_PARAMETERS bohr\n${matrixText(rows.map(row => row.map(U.angstromToBohr)))}`
+      if (s.cellUnits === 'alat') return `celldm(1) = ${f10(U.angstromToBohr(params[0]))}\nCELL_PARAMETERS alat\n${matrixText(rows.map(row => row.map(v => v / params[0])))}`
+      return `CELL_PARAMETERS angstrom\n${matrixText(rows)}`
+    }
+    if (code === 'cp2k') {
+      const standard = U.isStandardOrientation(rows)
+      if (s.cellStyle === 'abc' && standard) return `ABC [angstrom] ${params.slice(0, 3).map(f10).join(' ')}\nALPHA_BETA_GAMMA ${params.slice(3).map(v => v.toFixed(6)).join(' ')}`
+      const vectors = ['A', 'B', 'C'].map((axis, k) => `${axis} [angstrom] ${rows[k].map(f10).join(' ')}`).join('\n')
+      return s.cellStyle === 'abc' ? `${vectors}\n(written as vectors: the cell is not in the standard orientation)` : vectors
+    }
+    return matrixText(rows) // VASP: POSCAR lattice vectors in Å (scale 1.0)
+  }
+
   function make (tag, props = {}, children = []) {
     const node = document.createElement(tag)
     for (const [key, value] of Object.entries(props)) {
@@ -132,6 +166,8 @@
     const cards = {} // code → card object (kept while hidden)
     let elements = [] // unique element symbols of the selection
     let potcarAvailable = true
+    let structureCell = null // { label, rows } detected by the renderer (applied cell, trajectory lattice) or null
+    let structureKey = ''
 
     function createCard (code) {
       const pw = R.PLANE_WAVE.includes(code)
@@ -170,6 +206,63 @@
       const grid = make('div', { className: 'qm-grid' })
       el.appendChild(grid)
       const readers = {} // key → () => value
+
+      // Cell group: source (structure cell or a custom cell for this code), a…γ, format options, vectors preview.
+      let cellParts = null
+      function createCellGroup () {
+        const group = make('div', { className: 'qm-cell-group' })
+        group.appendChild(make('p', { className: 'qm-cell-title', text: 'Cell' }))
+        const structureOption = make('option', { value: 'structure', text: '' })
+        const source = make('select', { className: 'field-input', id: id('cellSource') }, [structureOption, make('option', { value: 'custom', text: 'Custom cell for this code' })])
+        source.value = s.cellSource === 'custom' ? 'custom' : 'structure'
+        group.appendChild(labelled('Source', source))
+        const inputs = CELL_KEYS.map(key => {
+          const input = make('input', { className: 'field-input', id: id(`cell-${key}`), type: 'number', step: 'any', min: '0' })
+          input.dataset.cellField = key
+          return input
+        })
+        group.appendChild(make('div', { className: 'qm-cell-fields' }, inputs.map((input, i) => labelled(CELL_LABELS[i], input))))
+        const formats = make('div', { className: 'qm-grid qm-cell-formats' })
+        const format = CELL_FORMATS[code]
+        if (format) {
+          const control = select(id(format.key), format.options, s[format.key])
+          readers[format.key] = () => control.value
+          formats.appendChild(labelled(format.label, control))
+        }
+        if (FRACTIONAL_LABELS[code]) {
+          const control = select(id('positions'), [opt('cartesian', 'Cartesian'), opt('fractional', FRACTIONAL_LABELS[code])], s.positions)
+          readers.positions = () => control.value
+          formats.appendChild(labelled('Positions', control))
+        }
+        if (formats.childElementCount) group.appendChild(formats)
+        if (code === 'qbox') group.appendChild(make('p', { className: 'panel-desc qm-note', id: id('cell-note'), text: QBOX_NOTE }))
+        const vectors = make('pre', { className: 'qm-cell-vectors', id: id('cell-vectors') })
+        group.appendChild(vectors)
+        const values = () => inputs.map(input => (input.value.trim() === '' ? NaN : Number(input.value)))
+        readers.cellSource = () => source.value
+        // Only a complete, valid custom cell is passed on; readiness blocks the code otherwise.
+        readers.cellCustom = () => {
+          if (source.value !== 'custom') return null
+          const cell = values()
+          return R.validCustomCell(cell) ? cell : null
+        }
+        function fill () {
+          const params = structureCell ? cellParams(structureCell.rows) : null
+          inputs.forEach((input, i) => { input.value = params ? String(Number(params[i].toFixed(6))) : '' })
+        }
+        function setStructure () {
+          structureOption.textContent = structureCell ? structureCell.label : 'No cell in the structure'
+          if (source.value === 'structure') fill()
+        }
+        function updateVectors () {
+          const custom = source.value === 'custom' ? values() : null
+          const rows = custom ? (R.validCustomCell(custom) ? U.cellVectors(custom) : null) : structureCell && structureCell.rows
+          vectors.textContent = rows ? vectorsText(code, rows, s)
+            : custom ? 'Enter positive lengths and angles between 0° and 180°.' : 'No cell.'
+        }
+        setStructure()
+        return { group, source, fill, setStructure, updateVectors }
+      }
       for (const f of FIELDS[code]) {
         let wrapper
         if (f.type === 'select') {
@@ -203,6 +296,9 @@
             wrapper.appendChild(labelled(m.label, inputs[m.key]))
           }
           readers.md = () => ({ ensemble: f.nveOnly ? 'nve' : ensemble.value, temperature: Number(inputs.temperature.value), timestep: Number(inputs.timestep.value), steps: Number(inputs.steps.value) })
+        } else if (f.type === 'cell') {
+          cellParts = createCellGroup()
+          wrapper = cellParts.group
         }
         grid.appendChild(wrapper)
         if (f.when) toggles.push({ node: wrapper, when: f.when })
@@ -263,6 +359,7 @@
         const potcar = el.querySelector(`#${id('buildPotcar')}`)
         if (code === 'vasp' && potcar) potcar.disabled = !potcarAvailable
         for (const t of toggles) t.node.hidden = !t.when(s)
+        if (cellParts) cellParts.updateVectors()
       }
 
       let lastCalc = s.calc
@@ -270,6 +367,9 @@
       function handle (event) {
         const target = event.target
         if (target === overrideBox && event.type === 'change') toggleOverride()
+        // Typing a cell value makes the cell custom for this code; back to the structure cell refills the fields.
+        if (cellParts && target && target.dataset && target.dataset.cellField) cellParts.source.value = 'custom'
+        if (cellParts && target === cellParts.source && target.value === 'structure') cellParts.fill()
         if (target && target.dataset && target.dataset.species) {
           const sym = target.dataset.species
           if (code === 'cp2k') (edits[sym] ||= {})[target.dataset.part] = target.value.trim()
@@ -300,6 +400,7 @@
           if (pw) out.species = species()
           return out
         },
+        setStructure () { if (cellParts) { cellParts.setStructure(); sync() } },
         setCell (text, blocked) { if (cell) { cell.textContent = text; cell.classList.toggle('blocked', Boolean(blocked)) } },
         setPreview (text) { preview.textContent = text },
         setCustomNote (has) { customNote.hidden = !has }
@@ -325,6 +426,14 @@
       setSymbols (symbols) {
         elements = [...new Set(symbols || [])]
         for (const card of Object.values(cards)) card.buildTable()
+      },
+      // info = { label, rows (3×3 Å) } for the structure cell of every plane-wave card, or null (no cell).
+      setStructureCell (info) {
+        const key = info ? JSON.stringify([info.label, info.rows]) : ''
+        if (key === structureKey) return
+        structureKey = key
+        structureCell = info ? { label: info.label, rows: info.rows.map(row => [...row]) } : null
+        for (const card of Object.values(cards)) card.setStructure()
       },
       setCellStatus (code, text, blocked) { if (cards[code]) cards[code].setCell(text, blocked) },
       setPreview (code, text) { if (cards[code]) cards[code].setPreview(text) },

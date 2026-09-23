@@ -81,6 +81,15 @@ async function main () {
   assert.deepEqual(JSON.parse(JSON.stringify(await api.analyzeFile(name))), { atomCount: 3, configCount: 2, format: 'XYZ', filePath: name }); checks++
   assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame(name, 1)).atoms[0])), { index: 1, element: 'O', x: .1, y: 0, z: 0 }); checks++
   assert.match((await api.readFrame(name, 5)).error, /outside/); checks++
+  // The launcher's frame action returns the frame's lattice (null without one).
+  assert.equal((await api.readFrame(name, 0)).lattice, null); checks++
+  {
+    const saved = file
+    file = new File([fs.readFileSync(path.join(root, 'examples/periodic-water.xyz'), 'utf8')], 'periodic-water.xyz')
+    const periodicWater = await api.selectFile()
+    assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame(periodicWater, 0)).lattice)), [[10, 0, 0], [0, 10, 0], [0, 0, 10]]); checks++
+    file = saved
+  }
   const events = []
   api.onProgress(event => events.push(event))
   const processed = await api.processTrajectory({ filePath: name, atomCount: 3, selectedAtoms: [1, 3], frequency: 1, computeAverage: true, generateGaussian: true })
