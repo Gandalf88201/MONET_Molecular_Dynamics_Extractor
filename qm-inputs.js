@@ -191,9 +191,12 @@
     const matrix = (m, sep) => m.map(row => row.map(v => fixed(v, 10)).join(sep)).join('\n')
     const coords = symbols.map((s, i) => line(s, positions[i], 7)).join('')
     const frac = Boolean(rows) && format.positions === 'fractional'
-    const fractional = () => U.fractional(rows, positions)
+    // Errors from these two (e.g. a degenerate trajectory lattice) are only raised when a template actually
+    // needs the value; label them with the code and configuration so they are traceable to their source.
+    const labeled = fn => { try { return fn() } catch (error) { throw new Error(`${CODES[code].label}: configuration ${conf.index}: ${error.message}`) } }
+    const fractional = () => labeled(() => U.fractional(rows, positions))
     const fracLines = () => { const f = fractional(); return symbols.map((s, i) => line(s, f[i], 10)).join('') }
-    const params = () => U.cellParameters(rows)
+    const params = () => labeled(() => U.cellParameters(rows))
     const units = rows ? format.cellUnits : 'angstrom'
     const standard = Boolean(rows) && U.isStandardOrientation(rows)
     const vectorsNote = code === 'cp2k' && rows && !spec.legacy && format.cellStyle === 'abc' && !standard

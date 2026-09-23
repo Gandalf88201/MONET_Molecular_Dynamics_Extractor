@@ -175,6 +175,22 @@ spec, conf = json.load(sys.stdin)
 monet_qm.render(monet_qm.validate(spec), conf)
 `, root], { input: JSON.stringify([bare, conf]), stdio: 'pipe' })); checks++
 
+// Degenerate cell only found lazily (e.g. a near-collinear trajectory lattice in CP2K ABC mode, where
+// isStandardOrientation is satisfied but the volume is not): both engines label the error with the code
+// and configuration, identically, rather than surfacing the bare units-module message.
+{
+  const nearCollinear = [[10, 0, 0], [10, 1e-15, 0], [0, 0, 10]]
+  const degenerate = build(['cp2k'], {}, { cell: nearCollinear })
+  assert.throws(() => QM.render(QM.validate(degenerate), conf), /^Error: CP2K: configuration 4: The cell is degenerate \(zero volume\)\.$/); checks++
+  assert.throws(() => execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+spec, conf = json.load(sys.stdin)
+monet_qm.render(monet_qm.validate(spec), conf)
+`, root], { input: JSON.stringify([degenerate, conf]), stdio: 'pipe' }), error => /ValueError: CP2K: configuration 4: The cell is degenerate \(zero volume\)\./.test(String(error.stderr))); checks++
+}
+
 // Missing ZVAL: both engines refuse with the same message.
 const noZval = [build(['vasp'], { vasp: { isolated: true } }), conf, { potcar: { text: 'PAW\n', zval: { C: 4, O: 6, H: 1 } } }]
 assert.throws(() => QM.render(QM.validate(noZval[0]), noZval[1], noZval[2]), /^Error: VASP: no ZVAL for N in the POTCAR\.$/); checks++

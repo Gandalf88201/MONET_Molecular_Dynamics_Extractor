@@ -310,15 +310,23 @@ def _context(code, entry, conf, spec, states, mult, runtime):
     coords = ''.join(line(s, p, 7) for s, p in zip(symbols, positions))
     frac = bool(rows) and fmt['positions'] == 'fractional'
 
+    # Errors from these two (e.g. a degenerate trajectory lattice) are only raised when a template actually
+    # needs the value; label them with the code and configuration so they are traceable to their source.
+    def _labeled(fn):
+        try:
+            return fn()
+        except ValueError as error:
+            raise ValueError(f"{LABELS[code]}: configuration {_num(conf['index'])}: {error}") from None
+
     def fractional():
-        return units.fractional(rows, positions)
+        return _labeled(lambda: units.fractional(rows, positions))
 
     def frac_lines():
         f = fractional()
         return ''.join(line(s, f[i], 10) for i, s in enumerate(symbols))
 
     def params():
-        return units.cell_parameters(rows)
+        return _labeled(lambda: units.cell_parameters(rows))
     cell_units = fmt['cellUnits'] if rows else 'angstrom'
     standard = bool(rows) and units.is_standard_orientation(rows)
     vectors_note = code == 'cp2k' and bool(rows) and not _truthy(legacy) and fmt['cellStyle'] == 'abc' and not standard

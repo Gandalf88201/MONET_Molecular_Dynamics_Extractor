@@ -16,13 +16,15 @@
   const HA_FS = U.AU_TIME_FS
   const MD = { ensemble: 'nvt', temperature: 300, timestep: 0.5, steps: 1000 }
   const GRID = [1, 1, 1]
-  const PW = { isolated: false, padding: 10, pressure: 0, kpoints: 'gamma', grid: GRID, extra: '', species: null, md: MD }
+  // cellSource/cellCustom: per-card cell, independent of the crystal cell in Structure analysis (plan4-constraints.md).
+  // cellCustom is [a, b, c, α, β, γ] in Å/°; positions is Cartesian vs. fractional (qbox ignores it, always bohr Cartesian).
+  const PW = { isolated: false, padding: 10, pressure: 0, kpoints: 'gamma', grid: GRID, extra: '', species: null, md: MD, cellSource: 'structure', cellCustom: null, positions: 'cartesian' }
   const DEFAULTS = {
     gaussian: { calc: 'sp', nstates: 10, reference: 'u', brokenSymmetry: false, method: 'b3lyp', basis: '6-31+g(d,p)', dispersion: 'none', solvent: '', scf: 'tight', nproc: 6, mem: '4gb', extra: '', override: null, md: { ...MD, ensemble: 'nve' } },
     orca: { calc: 'sp', nstates: 10, reference: 'u', method: 'b3lyp', basis: '6-31+g(d,p)', dispersion: 'none', solvent: '', scf: 'tight', nproc: 6, mem: '4gb', maxcorePct: 75, extra: '', override: null, md: MD },
-    qe: { ...PW, calc: 'sp', phx: false, functional: 'default', ecutwfc: 50, ecutrhoFactor: 4, dispersion: 'none', pseudoDir: './pseudo', override: null },
+    qe: { ...PW, calc: 'sp', phx: false, functional: 'default', ecutwfc: 50, ecutrhoFactor: 4, dispersion: 'none', pseudoDir: './pseudo', override: null, cellUnits: 'angstrom' },
     vasp: { ...PW, calc: 'sp', functional: 'pbe', encut: 500, dispersion: 'none', buildPotcar: false, potcarLibrary: '', override: null },
-    cp2k: { ...PW, calc: 'sp', functional: 'pbe', cutoff: 400, relCutoff: 60, dispersion: 'none', basisFile: 'BASIS_MOLOPT', potentialFile: 'GTH_POTENTIALS', hfMemory: 2000, override: null },
+    cp2k: { ...PW, calc: 'sp', functional: 'pbe', cutoff: 400, relCutoff: 60, dispersion: 'none', basisFile: 'BASIS_MOLOPT', potentialFile: 'GTH_POTENTIALS', hfMemory: 2000, override: null, cellStyle: 'abc' },
     qbox: { ...PW, calc: 'sp', functional: 'pbe', ecut: 70, override: null }
   }
 
@@ -353,6 +355,17 @@ save {tag}_conf{index}.xml
   }
   const hfCutoff = rows => Math.min(6, Math.min(...cellWidths(rows)) / 2 - 0.1)
 
+  // cellCustom = [a, b, c, α, β, γ] (Å/°): 6 finite numbers, positive lengths, angles strictly between 0° and 180°,
+  // and a non-degenerate resulting cell (U.cellParameters throws on zero volume).
+  function validCustomCell (cellCustom) {
+    if (!Array.isArray(cellCustom) || cellCustom.length !== 6 || !cellCustom.every(v => typeof v === 'number' && Number.isFinite(v))) return false
+    const [a, b, c, alpha, beta, gamma] = cellCustom
+    if (!(a > 0 && b > 0 && c > 0)) return false
+    if (![alpha, beta, gamma].every(v => v > 0 && v < 180)) return false
+    try { U.cellParameters(U.cellVectors(cellCustom)) } catch (error) { return false }
+    return true
+  }
+
   function defaultSpecies (code, symbols, s) {
     const out = {}
     for (const el of new Set(symbols)) {
@@ -378,7 +391,9 @@ save {tag}_conf{index}.xml
     if (s.calc === 'td') return `excited states (TD-DFT, ${s.nstates} states)`
     return CALC_LABELS[s.calc].toLowerCase()
   }
-  function describe (code, s, common) {
+  // rows: the effective cell (Å), when known, for a plane-wave code; appends " cell a×b×c Å (α/β/γ°)".
+  // Unknown (no rows, or a degenerate/invalid cell) → no cell text, same as before this cell text existed.
+  function describe (code, s, common, rows) {
     const states = s.override || common
     const charge = states.charge ? `, charge ${states.charge}` : ''
     const kp = s.kpoints === 'grid' && !(code === 'cp2k' && s.isolated) ? `${s.grid.join('×')} k-points` : 'Γ point'
@@ -391,26 +406,41 @@ save {tag}_conf{index}.xml
     else if (code === 'vasp') head = `VASP: ${FUNCTIONAL_LABELS[s.functional]}, ENCUT ${s.encut} eV, ${kp}, ${calcText(code, s)}${iso('dipole correction')}`
     else if (code === 'cp2k') head = `CP2K: ${FUNCTIONAL_LABELS[s.functional]}${isHybrid('cp2k', s.functional) ? ' (ADMM)' : ''}, CUTOFF ${s.cutoff} Ry, ${kp}, ${calcText(code, s)}${iso('MT Poisson solver')}`
     else head = `Qbox: ${FUNCTIONAL_LABELS[s.functional]}, ecut ${s.ecut} Ry, ${calcText(code, s)}${iso('no Poisson correction')}`
-    return `${head}${charge}, ${stateList(states.multiplicities)}`
+    let cellText = ''
+    if (PLANE_WAVE.includes(code) && rows) {
+      try {
+        const [a, b, c, alpha, beta, gamma] = U.cellParameters(rows)
+        const len = v => Number(v.toFixed(3))
+        const ang = v => Number(v.toFixed(1))
+        cellText = ` cell ${len(a)}×${len(b)}×${len(c)} Å (${ang(alpha)}/${ang(beta)}/${ang(gamma)}°)`
+      } catch (error) { cellText = '' }
+    }
+    return `${head}${charge}, ${stateList(states.multiplicities)}${cellText}`
   }
 
   function buildSpec ({ codes, common, cards = {}, symbols = [], cell = null, custom = {} }) {
     const spec = { common: { charge: common.charge, multiplicities: [...common.multiplicities] }, codes: {}, cell, summary: {} }
     for (const code of codes) {
       const s = settingsFor(code, cards[code] || {})
+      const pw = PLANE_WAVE.includes(code)
+      const customRows = pw && s.cellSource === 'custom' && s.cellCustom ? U.cellVectors(s.cellCustom) : null
       // custom[code]: file name pattern → edited template; edits for files this calculation no longer writes are ignored.
       const edits = custom[code] || {}
       const files = resolve(code, s).map(file => (Object.prototype.hasOwnProperty.call(edits, file.name) ? { ...file, template: edits[file.name] } : file))
       spec.codes[code] = {
         files,
         override: s.override ? { charge: s.override.charge, multiplicities: [...s.override.multiplicities] } : null,
-        isolated: PLANE_WAVE.includes(code) && s.isolated ? { padding: s.padding } : null,
+        isolated: pw && s.isolated ? { padding: s.padding } : null,
         species: s.species || defaultSpecies(code, symbols, s),
         reference: code === 'gaussian' || code === 'orca' ? s.reference : 'u',
         brokenSymmetry: code === 'gaussian' ? Boolean(s.brokenSymmetry) : false,
-        potcar: code === 'vasp' && s.buildPotcar ? { library: words(s.potcarLibrary) } : null
+        potcar: code === 'vasp' && s.buildPotcar ? { library: words(s.potcarLibrary) } : null,
+        // Molecular codes have no cell/format of their own (qm-inputs.js/monet_qm.py default an
+        // absent format to Cartesian Å for them; nothing there ever reads it).
+        cell: pw && customRows ? { rows: customRows } : null,
+        ...(pw ? { format: { cellUnits: s.cellUnits || 'angstrom', cellStyle: s.cellStyle || 'abc', positions: s.positions || 'cartesian' } } : {})
       }
-      spec.summary[code] = describe(code, s, spec.common)
+      spec.summary[code] = describe(code, s, spec.common, customRows || cell)
     }
     return spec
   }
@@ -426,7 +456,11 @@ save {tag}_conf{index}.xml
       const block = message => blocked.push(`${label}: ${message}`)
       const warn = message => warnings.push(`${label}: ${message}`)
       if (!CALCS[code].includes(s.calc)) block(code === 'qbox' ? 'Qbox has no built-in vibrational analysis.' : `${CALC_LABELS[s.calc]} is not available.`)
-      if (pw && !ctx.cell && !s.isolated) block('no cell. Apply a crystal cell (Structure analysis › Cell) or tick “Isolated system: vacuum box”.')
+      if (pw && !ctx.cell && !s.isolated && s.cellSource !== 'custom') block('no cell. Apply a crystal cell (Structure analysis › Cell) or tick “Isolated system: vacuum box”.')
+      if (pw && s.cellSource === 'custom') {
+        if (!validCustomCell(s.cellCustom)) block('enter a valid custom cell (positive lengths, angles between 0° and 180°).')
+        else if (ctx.cell && ctx.cell.source === 'trajectory') warn('the custom cell replaces the trajectory lattice for every configuration.')
+      }
       if (pw) {
         for (const el of elements) {
           const entry = s.species && s.species[el]
@@ -462,15 +496,19 @@ save {tag}_conf{index}.xml
       }
       if (code === 'cp2k' && s.kpoints === 'grid' && s.isolated) warn('k-point grids are not used for an isolated system (PERIODIC NONE).')
       if (code === 'cp2k' && s.kpoints === 'grid' && isHybrid('cp2k', s.functional)) warn('ADMM hybrids with k-points are expensive and not supported by every CP2K version.')
-      if (code === 'cp2k' && ['pbe0', 'b3lyp'].includes(s.functional) && !s.isolated && ctx.cell) {
-        const radius = hfCutoff(ctx.cell.rows)
-        if (radius < 4) warn(`truncation radius ${Number(radius.toFixed(2))} Å is below 4 Å; the cell is too small for the truncated Coulomb operator.`)
+      if (code === 'cp2k' && ['pbe0', 'b3lyp'].includes(s.functional) && !s.isolated) {
+        const customRows = s.cellSource === 'custom' && validCustomCell(s.cellCustom) ? U.cellVectors(s.cellCustom) : null
+        const effectiveRows = customRows || (ctx.cell ? ctx.cell.rows : null)
+        if (effectiveRows) {
+          const radius = hfCutoff(effectiveRows)
+          if (radius < 4) warn(`truncation radius ${Number(radius.toFixed(2))} Å is below 4 Å; the cell is too small for the truncated Coulomb operator.`)
+        }
       }
     }
     return { blocked, warnings }
   }
 
-  const api = { LABELS, PLANE_WAVE, CALCS, CALC_LABELS, DEFAULTS, RY_FS, HA_FS, SKELETONS, settingsFor, memoryMB, resolve, fill, fixed, lines, words, scaled, HYBRIDS, isHybrid, cellWidths, hfCutoff, defaultSpecies, buildSpec, describe, readiness }
+  const api = { LABELS, PLANE_WAVE, CALCS, CALC_LABELS, DEFAULTS, RY_FS, HA_FS, SKELETONS, settingsFor, memoryMB, resolve, fill, fixed, lines, words, scaled, HYBRIDS, isHybrid, cellWidths, hfCutoff, validCustomCell, defaultSpecies, buildSpec, describe, readiness }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.MonetQMResolve = api
 })(globalThis)
