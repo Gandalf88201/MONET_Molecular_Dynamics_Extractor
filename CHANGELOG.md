@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Plane-wave cards: a Cell section shows the structure cell (applied cell, cell file, trajectory lattice) and accepts a custom cell per code; the cell and positions are written in each code's native units (Qbox bohr; QE angstrom, bohr or alat, crystal positions; CP2K ABC/ALPHA_BETA_GAMMA or vectors, SCALED; VASP Direct or Cartesian).
+- Fixed: a lattice from the loaded file (extended XYZ, or a CIF/cell file given at import) is now recognised on the Processing Options page without waiting for the launcher.
+- Changed: CP2K writes ABC and ALPHA_BETA_GAMMA by default (vectors when the cell is not in the standard orientation).
+- New units module (units.js, monet_units.py): CODATA 2018 bohr, atomic time and cell conversions shared by all QM inputs.
 - QE frequencies: ph.x runs need a k-point mesh, so Γ-only becomes a 1×1×1 automatic mesh when ph.x is ticked.
 - Processing Options: one settings card per quantum-chemistry code (Gaussian, ORCA, QE, VASP, CP2K, Qbox) with calculation type (SP, Opt, Opt+Freq, Freq, TD-DFT, MD, variable-cell relaxation), functional/method, basis or cutoff, dispersion, solvent, k-points and extra keywords; charge and multiplicities shared with a per-code override.
 - Plane-wave codes need a cell: the applied crystal cell or the trajectory lattice, or the new "Isolated system: vacuum box" flag (configuration centred; QE assume_isolated='mt', CP2K Poisson MT, VASP dipole correction). Run is disabled otherwise.
