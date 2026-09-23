@@ -333,7 +333,7 @@ async function qmCellChecks () {
   setCodes(['qbox', 'vasp'])
   assert.equal(sourceLabel('qbox'), 'Crystal cell applied'); checks++
   assert.match(el('qm-card-qbox').textContent, /Qbox uses bohr \(1 bohr = 0\.529177210903 Å\)\./); checks++
-  assert.match(el('qm-qbox-cell-vectors').textContent, /^set cell 18\.8972612463 0\.0000000000 0\.0000000000 0\.0000000000 18\.8972612463/); checks++
+  assert.match(el('qm-qbox-cell-vectors').textContent, /^set cell 18\.89726125 0\.00000000 0\.00000000 0\.00000000 18\.89726125/); checks++
   assert.equal(el('qm-qbox-positions'), null); assert.match(el('qm-vasp-positions').textContent, /Direct/); checks++
   await click('cell-reset')
   // No cell anywhere: a custom cell releases VASP only.

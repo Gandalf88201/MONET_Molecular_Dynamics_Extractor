@@ -107,7 +107,7 @@
   function vectorsText (code, rows, s) {
     const params = cellParams(rows)
     if (!params) return 'The cell is degenerate (zero volume).'
-    if (code === 'qbox') return `set cell ${rows.flat().map(v => f10(U.angstromToBohr(v))).join(' ')}`
+    if (code === 'qbox') return `set cell ${rows.flat().map(v => U.angstromToBohr(v).toFixed(8)).join(' ')}`
     if (code === 'qe') {
       if (s.cellUnits === 'bohr') return `CELL_PARAMETERS bohr\n${matrixText(rows.map(row => row.map(U.angstromToBohr)))}`
       if (s.cellUnits === 'alat') return `celldm(1) = ${f10(U.angstromToBohr(params[0]))}\nCELL_PARAMETERS alat\n${matrixText(rows.map(row => row.map(v => v / params[0])))}`
