@@ -154,7 +154,7 @@ async function run () {
   await click('btn-browse'); await click('next-1'); await settle()
   // Load: a new history with the source, its checksum and the software versions.
   assert.equal(H.session.data.sources[0].name, 'torsion.xyz'); assert.equal(H.session.data.sources[0].sha256, SHA); assert.equal(steps()[0].kind, 'load'); checks++
-  assert.equal(H.session.data.environment.ase, 'test'); assert.equal(H.session.data.environment.python, '3.12.1'); assert.equal(H.session.data.monet_version, '2.1.0'); checks++
+  assert.equal(H.session.data.environment.ase, 'test'); assert.equal(H.session.data.environment.python, '3.12.1'); assert.equal(H.session.data.monet_version, '2.2.0'); checks++
   // The time axis is logged when the value is committed.
   el('md-timestep').value = '0.5'; el('md-timestep').dispatchEvent(new w.Event('change'))
   assert.deepEqual(plain(steps().at(-1)), { ...plain(steps().at(-1)), kind: 'time', params: { timestep: 0.5, unit: 'fs', steps_per_frame: 1, dt: 0.5 } }); checks++
