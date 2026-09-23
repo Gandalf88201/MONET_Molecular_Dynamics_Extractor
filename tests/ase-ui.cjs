@@ -93,6 +93,7 @@ w.monet = {
     }
     if (command.action === 'read_info') return { ok: true, n_atoms: activeAtoms.length, symbols: activeAtoms.map(a => a.element), positions: activeAtoms.map(a => [a.x, a.y, a.z]) }
     latestCommand = command
+    if (command.action === 'subsample' && command.frames) return { ok: true, n_frames: command.frames.length, source_frames: 6, selected: true, first: command.frames[0], last: command.frames.at(-1), output: 'torsion-pca-selected.extxyz', downloadURL: '/api/download/p1', filePath: 'derived/torsion-pca-selected.extxyz' }
     if (command.action === 'subsample') {
       latestCommand = command
       const kept = Math.floor((w.testMonet.state.fileInfo.configCount - 1) / command.stride) + 1
@@ -111,6 +112,13 @@ w.monet = {
     if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
     if (command.action === 'vdos') return { ok: true, wavenumber: [0, 500, 1000], intensity: [0, .002, 0], nyquist_cm: 33356, resolution_cm: 8.3, n_frames: 100, dt: command.dt }
     if (command.action === 'mda_select') return { ok: true, indices: [1, 3], n_atoms: 2, n_residues: 1, residues: ['MOL1'] }
+    if (command.action === 'mda_run' && command.analysis === 'pca') {
+      const data = [[-2, -1, 0, 1, 2, 3], [1, -1, 1, -1, 1, -1], [0, 0.5, 0, -0.5, 0, 0], [0.1, 0, -0.1, 0, 0.1, -0.1]]
+      return { ok: true, kind: 'series', x: [0, 1, 2, 3, 4, 5], xLabel: 'Frame', yLabel: 'Projection (Å)', n_frames: 6, frame_indices: [0, 1, 2, 3, 4, 5],
+        series: data.map((values, k) => ({ label: `PC${k + 1} (${[50, 30, 15, 5][k]}.0 %)`, data: values })),
+        pca: { components: 4, shown: command.params.n_components, variance_ratio: [0.5, 0.3, 0.15, 0.05] }, notes: ['2 components explain 90 % of the variance'],
+        table: { columns: ['Component', 'Variance (Å²)', 'Cumulated (%)'], rows: [[1, 3.5, 50], [2, 1, 80], [3, 0.1, 95], [4, 0.01, 100]] } }
+    }
     if (command.action === 'mda_run' && command.analysis === 'rmsf') return { ok: true, kind: 'profile', x: [1, 2], xLabel: 'MONET atom ID', yLabel: 'RMSF (Å)', atoms: [0, 1], bars: true, series: [{ label: 'RMSF of "all"', data: [0.2, 0.4] }], n_frames: 5, frame_indices: [0, 1, 2, 3, 4] }
     if (command.action === 'mda_run' && command.analysis === 'hbonds') return { ok: true, kind: 'series', x: [0, 1], xLabel: 'Frame', yLabel: 'Hydrogen bonds', series: [{ label: 'H-bond count', data: [2, 4] }], n_frames: 2, frame_indices: [0, 1], table: { columns: ['Donor', 'Hydrogen', 'Acceptor', 'Occupancy (%)'], rows: [[0, 3, 2, 50]], atom_columns: [0, 1, 2] } }
     if (command.action === 'mda_run' && command.analysis === 'interrdf') return { ok: true, kind: 'profile', x: [0.5, 1.5], xLabel: 'r (Å)', yLabel: 'g(r)', series: [{ label: 'g(r)', data: [0, 1.2] }], n_frames: 2, notes: ['InterRDF'] }
@@ -210,6 +218,66 @@ async function mdaChecks () {
     await click('restore-full-trajectory'); await tick()
     assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(el('md-stride').value, '3'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
     el('mda-step').value = step }
+  // PCA: up to 10 components ticked in the list; configurations picked on them are written and extracted.
+  { const charts = w.testMonet.charts
+    chooseMda('pca')
+    assert.equal(el('mda-p-n_components').value, '3'); assert.equal(el('mda-pca-block').classList.contains('hidden'), true); checks++
+    await click('btn-run-mda')
+    assert.equal(latestCommand.params.n_components, 3); assert.equal(el('mda-pca-block').classList.contains('hidden'), false); checks++
+    assert.equal($$('#pca-components tbody tr').length, 4); assert.equal(el('mda-table').textContent, ''); checks++
+    const plotted = () => [...charts.mda.data.datasets].filter(d => !d.points).map(d => d.label.split(' ')[0])
+    assert.deepEqual(plotted(), ['PC1', 'PC2', 'PC3']); assert.match(charts.mda.data.datasets[0].label, /PC1 \(50\.0 %\) · mean 0\.5 ± /); checks++
+    el('pca-show-3').click(); el('pca-show-0').click(); await tick()
+    assert.deepEqual(plotted(), ['PC2', 'PC3', 'PC4']); assert.deepEqual([...charts.mdadist.data.datasets].map(d => d.label), ['PC2', 'PC3', 'PC4']); checks++
+    el('pca-show-2').click(); el('pca-show-3').click(); el('pca-show-1').click(); await tick()
+    assert.equal(el('pca-show-1').checked, true); assert.deepEqual(plotted(), ['PC2']); assert.match(el('status-msg').textContent, /at least one component/); checks++
+    // Projection window on PC2 (0…2 Å), two frames apart at least: frames 0, 2, 4 → 0, 4 with spacing 3.
+    el('pca-win-pc').value = '1'; el('pca-win-low').value = '0'; el('pca-win-high').value = '2'; el('pca-spacing').value = '3'
+    await click('pca-select')
+    assert.match(el('pca-selection-text').textContent, /^2 configurations selected \(PC2 from 0 to 2 Å, at least 3 frames apart; frames 0…4\)/); checks++
+    assert.deepEqual($$('#pca-selected-table tbody tr').map(row => row.cells[0].textContent), ['0', '4']); checks++
+    const marks = [...charts.mda.data.datasets].find(d => d.points)
+    assert.deepEqual([...marks.data].map(v => Number.isFinite(v) ? v : null), [1, null, null, null, 1, null]); assert.deepEqual([...charts.mdadist.data.markers].map(m => m.value), [0, 2]); checks++
+    // Extremes of PC1: the lowest and the highest projection.
+    el('pca-show-0').click(); await tick()
+    el('pca-mode').value = 'extremes'; el('pca-mode').dispatchEvent(new w.Event('change')); el('pca-ext-pc').value = '0'; el('pca-ext-n').value = '1'; el('pca-spacing').value = '1'
+    assert.equal($$('.pca-mode-row').filter(row => !row.classList.contains('hidden')).map(row => row.dataset.mode).join(), 'extremes'); checks++
+    await click('pca-select')
+    assert.deepEqual($$('#pca-selected-table tbody tr').map(row => [...row.cells].slice(0, 2).map(c => c.textContent)), [['0', 'lowest'], ['5', 'highest']]); checks++
+    // A frame list, typed or added from the viewer.
+    el('pca-mode').value = 'list'; el('pca-mode').dispatchEvent(new w.Event('change')); el('pca-frame-list').value = '1 0-1'
+    await click('pca-select')
+    assert.deepEqual($$('#pca-selected-table tbody tr').map(row => row.cells[0].textContent), ['0', '1']); checks++
+    el('pca-frame-list').value = `1 ${w.testMonet.state.fileInfo.configCount}`
+    await click('pca-select')
+    assert.match(el('status-msg').textContent, /past the last frame \(199\)/); checks++
+    // Clicking a bar of the distribution selects its bin as the window of that component.
+    const dist = charts.mdadist
+    dist.canvas.getBoundingClientRect = () => ({ left: 0, top: 0, width: dist.canvas.clientWidth, height: dist.canvas.clientHeight })
+    dist._render()
+    const axis = dist._axis
+    // The PC2 bar (second of each bin) that holds the projections +1 Å (frames 0, 2, 4).
+    const bin = [...dist.data.datasets[1].data].findIndex((density, i) => density > 0 && Number(dist.data.labels[i]) > 0)
+    dist.canvas.dispatchEvent(new w.MouseEvent('click', { clientX: axis.left + axis.width * (bin + 0.75) / axis.slots, bubbles: true }))
+    await tick()
+    assert.equal(el('pca-mode').value, 'window'); assert.equal(el('pca-win-pc').value, '1'); assert.ok(Number(el('pca-win-high').value) >= 1); checks++
+    assert.match(el('pca-selection-text').textContent, /^3 configurations selected \(PC2 from /); checks++
+    await click('pca-write')
+    assert.equal(latestCommand.action, 'subsample'); assert.deepEqual([...latestCommand.frames], [0, 2, 4]); assert.equal(latestCommand.output, 'torsion-pca-selected.extxyz'); checks++
+    assert.equal(el('pca-download').classList.contains('hidden'), false); assert.equal(el('pca-activate').classList.contains('hidden'), false); checks++
+    const fullPath = w.testMonet.state.filePath
+    // The applied cell (e.g. from a CIF) follows the derived trajectory and comes back with the full one.
+    Object.assign(w.testMonet.aseState, { cellParameters: [10, 11, 12, 90, 90, 90], cellSource: fullPath, cellSourceName: 'UNITCELL.cif' })
+    await click('pca-activate'); await tick()
+    assert.deepEqual([...w.testMonet.aseState.cellParameters], [10, 11, 12, 90, 90, 90]); assert.equal(w.testMonet.aseState.cellSourceName, 'UNITCELL.cif'); checks++
+    assert.equal(w.testMonet.state.filePath, 'derived/torsion-pca-selected.extxyz'); assert.deepEqual([...w.testMonet.state.frameMap.frames], [0, 2, 4]); checks++
+    assert.match(el('stat-format').textContent, /PCA selection · 3 configurations/); assert.match($$('.time-info')[0].textContent, /not evenly spaced/); checks++
+    await click('restore-full-trajectory'); await tick()
+    assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(w.testMonet.state.frameMap, null); assert.doesNotMatch($$('.time-info')[0].textContent, /not evenly spaced/); checks++
+    assert.deepEqual([...w.testMonet.aseState.cellParameters], [10, 11, 12, 90, 90, 90]); checks++
+    Object.assign(w.testMonet.aseState, { cellParameters: null, cellSourceName: null })
+    chooseMda('pca')
+    assert.equal(el('mda-pca-block').classList.contains('hidden'), true); assert.equal(charts.mdadist.data, null); checks++ }
   // Switching the module keeps the other module's sub-tab.
   await click('vtab-ase')
   assert.ok(el('vtab-ase').classList.contains('active')); assert.equal(el('ase-sub-mda').classList.contains('active'), false); checks++

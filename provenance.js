@@ -65,7 +65,7 @@
     mda_run: r => pick(r, ['kind', 'n_frames']),
     ase_structure: r => pick(r, ['frame']),
     ase_coordination: r => seriesStat(r, mean, 'mean'),
-    subsample: r => pick(r, ['n_frames', 'stride', 'start', 'source_frames']),
+    subsample: r => pick(r, ['n_frames', 'stride', 'start', 'source_frames', 'selected', 'first', 'last']),
     mda_align: r => pick(r, ['n_frames']),
     wrap: r => pick(r, ['n_frames']),
     unwrap: r => pick(r, ['n_frames']),

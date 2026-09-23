@@ -433,19 +433,26 @@ def run_analysis(universe, name, params, frames, dt=None, output=None):
     if name == 'pca':
         from MDAnalysis.analysis import pca
         group = _group(universe, sel, 'PCA', 2)
+        # With align=True, PCA.run() superimposes every frame of the in-memory trajectory in place,
+        # so transform() below projects the aligned coordinates (it does no fitting of its own).
         analysis = pca.PCA(universe, select=sel, align=bool(p.get('align', True))).run()
         # Eigen-decomposition may return a zero imaginary part.
         variance = np.real(np.asarray(analysis.results.variance))
         cumulated = np.real(np.asarray(analysis.results.cumulated_variance)).tolist()
-        count = min(3, len(cumulated))
+        # Up to 10 projections are returned so that the plotted components can be changed without
+        # computing again; `shown` is how many are plotted at first.
+        count = min(10, len(cumulated))
+        shown = max(1, min(count, int(p.get('n_components', 3))))
         projection = np.real(analysis.transform(group, n_components=count))
         take = int(np.searchsorted(np.asarray(cumulated), 0.9)) + 1
+        ratio = variance / variance.sum()
         return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Projection (Å)',
-                'series': [{'label': f'PC{k + 1} ({100 * variance[k] / variance.sum():.1f} %)', 'data': projection[:, k].tolist()} for k in range(count)],
-                'notes': [f'{take} components explain 90 % of the variance; cumulated variance of PC1–PC{min(10, len(cumulated))}: ' +
-                          ', '.join(f'{100 * v:.1f} %' for v in cumulated[:10])],
+                'series': [{'label': f'PC{k + 1} ({100 * ratio[k]:.1f} %)', 'data': projection[:, k].tolist()} for k in range(count)],
+                'pca': {'components': count, 'shown': shown, 'variance_ratio': [float(v) for v in ratio[:count]]},
+                'notes': [f'{take} components explain 90 % of the variance; cumulated variance of PC1–PC{count}: ' +
+                          ', '.join(f'{100 * v:.1f} %' for v in cumulated[:count])],
                 'table': {'columns': ['Component', 'Variance (Å²)', 'Cumulated (%)'],
-                          'rows': [[k + 1, round(float(variance[k]), 5), round(100 * cumulated[k], 2)] for k in range(min(10, len(cumulated)))]}}
+                          'rows': [[k + 1, round(float(variance[k]), 5), round(100 * cumulated[k], 2)] for k in range(count)]}}
     if name in ('com_distance', 'min_distance'):
         from MDAnalysis.lib.distances import distance_array, minimize_vectors
         a = _group(universe, p.get('group_a') or sel, 'first group')

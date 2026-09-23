@@ -115,7 +115,14 @@
     parser.finish()
   }
 
-  const api = { Parser, frames }
+  // Comment line of an extracted frame: its index in the file being extracted, plus the frame of the
+  // original trajectory when this file is derived (uncorrelated, cropped, PCA selection: source_frame=).
+  function outputComment (index, comment) {
+    const source = /(?:^|\s)source_frame=(\d+)/.exec(comment || '')
+    return source ? `frame ${index} source_frame=${source[1]}` : `frame ${index}`
+  }
+
+  const api = { Parser, frames, outputComment }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.MonetXYZ = api
 })(globalThis)

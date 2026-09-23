@@ -627,8 +627,20 @@ def action_vdos(cmd):
 
 
 def action_subsample(cmd):
-    """Write every `stride`-th frame (from `start`) as a new trajectory: the uncorrelated configurations."""
+    """Write every `stride`-th frame (from `start`) as a new trajectory: the uncorrelated configurations.
+    With `frames` (indices of this file, e.g. picked on a PCA projection) exactly those frames are written."""
     traj = _require_xyz(cmd['filename'])
+    frames = cmd.get('frames')
+    if frames is not None:
+        if (not isinstance(frames, list) or not frames
+                or any(type(i) is not int or not 0 <= i < traj.nframes for i in frames)):
+            raise ValueError(f'Frame numbers must be between 0 and {traj.nframes - 1}.')
+        indices = sorted(set(frames))
+        prog(f'Writing {len(indices):,} selected configurations …', 10)
+        count = traj.write_frames(indices, cmd['output'])
+        prog('Done', 100)
+        ok(n_frames=count, source_frames=traj.nframes, selected=True, first=indices[0], last=indices[-1])
+        return
     stride = cmd.get('stride')
     start = cmd.get('start', 0)
     if type(stride) is not int or stride < 1:

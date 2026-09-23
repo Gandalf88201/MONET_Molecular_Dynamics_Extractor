@@ -103,7 +103,7 @@
     emit({ step: 'extraction', status: 'started', message: 'Reading trajectory …' })
     for await (const frame of MonetXYZ.frames(lines(filePath))) {
       const atoms = frame.atoms.filter(atom => selected.has(atom.index))
-      const xyz = xyzText(atoms, `frame ${frame.index}`)
+      const xyz = xyzText(atoms, MonetXYZ.outputComment(frame.index, frame.comment))
       full.push(xyz)
       if (frame.index % frequency === 0) {
         sampled.push(xyz)

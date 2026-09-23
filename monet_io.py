@@ -467,6 +467,18 @@ GAUSSIAN_TEMPLATE = ('%nproc=6\n%chk={chk}\n%mem=4gb\n'
                      '{tag}\n\n0 {mult}\n{positions}\n')
 
 
+_SOURCE_FRAME = re.compile(r'(?:^|\s)source_frame=(\d+)')
+
+
+def output_comment(index, comment):
+    """Comment line of an extracted frame: its index in the file being extracted, plus the frame of the
+    original trajectory when this file is derived (uncorrelated, cropped, PCA selection: source_frame=)."""
+    if isinstance(comment, bytes):
+        comment = comment.decode('utf-8', 'replace')
+    source = _SOURCE_FRAME.search(comment or '')
+    return f'frame {index} source_frame={source.group(1)}' if source else f'frame {index}'
+
+
 def _row_format(symbols):
     return ''.join(f'{symbol}  %.7f  %.7f  %.7f\n' for symbol in symbols)
 
@@ -504,7 +516,7 @@ def extract(traj, out_dir, selected, frequency, compute_average=False, generate_
                 sums += positions
             positions = positions[indices]
             atoms_text = row % tuple(positions.ravel())
-            text = f'{count}\nframe {frame}\n{atoms_text}'
+            text = f'{count}\n{output_comment(frame, comment)}\n{atoms_text}'
             full.write(text)
             if frame % frequency == 0:
                 sample.write(text)

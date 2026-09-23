@@ -165,6 +165,15 @@ r = run('lineardensity', { selection: 'all', binsize: 1, axes: 'x' })
 assert.equal(r.series.length, 1); assert.ok(r.series[0].data.some(v => v > 0)); checks++
 r = run('pca', { selection: 'name OW' })
 assert.equal(r.ok, true, JSON.stringify(r)); assert.ok(r.series.length >= 1); assert.ok(r.table.rows.length >= 1); checks++
+// Up to 10 projections come back (the list chooses which are plotted); 3 are plotted at first.
+assert.equal(r.series.length, r.pca.components); assert.equal(r.table.rows.length, r.pca.components); assert.ok(r.pca.components <= 10); assert.equal(r.pca.shown, Math.min(3, r.pca.components)); checks++
+assert.equal(r.series[0].data.length, 10); assert.ok(r.pca.variance_ratio.every((v, k) => k === 0 || v <= r.pca.variance_ratio[k - 1] + 1e-12)); checks++
+// PCA.run(align=True) aligns the in-memory frames that transform() projects: every projection averages to zero.
+for (const series of r.series) near(series.data.reduce((a, b) => a + b, 0) / series.data.length, 0, 1e-6, `${series.label} mean`)
+checks++
+r = run('pca', { selection: 'all', n_components: 10 })
+assert.equal(r.pca.components, 10); assert.equal(r.series.length, 10); assert.equal(r.pca.shown, 10); assert.match(r.series[9].label, /^PC10 \(/); checks++
+assert.equal(run('pca', { selection: 'all', n_components: 1 }).pca.shown, 1); checks++
 r = run('contacts', { group_a: 'name OW', group_b: 'name OW', radius: 3.5 })
 assert.ok(r.series[0].data.every(v => v >= 0 && v <= 1)); checks++
 r = run('gnm', { selection: 'name OW', cutoff: 7 })

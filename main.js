@@ -205,7 +205,7 @@ async function processTrajectory (event, options) {
         }
       }
       const rows = atomRows(selected.map(i => atoms[i]))
-      const text = `${selected.length}\nframe ${frameIndex}\n${rows}`
+      const text = `${selected.length}\n${XYZ.outputComment(frameIndex, frame.comment)}\n${rows}`
       await writeText(ftStream, text)
 
       // Write to sampled every `frequency` frames (include frame 0)

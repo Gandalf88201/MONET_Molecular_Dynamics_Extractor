@@ -411,7 +411,7 @@ $('next-1').addEventListener('click', async () => {
 })
 
 // Make another trajectory file (e.g. the uncorrelated configurations) the one MONET analyses and extracts.
-async function activateTrajectory (path, { label, strideFactor = 1, start = 0 } = {}) {
+async function activateTrajectory (path, { label, strideFactor = 1, start = 0, frames = null } = {}) {
   if (typeof playerStop === 'function') playerStop()
   const info = await window.monet.analyzeFile(path)
   if (info.error) throw new Error(info.error)
@@ -421,10 +421,14 @@ async function activateTrajectory (path, { label, strideFactor = 1, start = 0 } 
       lastResult: state.lastResult, mdStride: $('md-stride').value, frequency: $('inp-freq').value
     }
   }
-  // Frame k of the new file is frame offset + k·step of the full trajectory.
+  // Frame k of the new file is frame offset + k·step of the full trajectory, or frames[k] when the
+  // new file holds picked frames (e.g. a PCA selection) that are not evenly spaced.
   const base = state.frameMap || { offset: 0, step: 1 }
-  state.frameMap = { offset: base.offset + start * base.step, step: base.step * strideFactor }
+  if (frames) state.frameMap = { frames: frames.map(fullFrame) }
+  else if (base.frames) state.frameMap = { frames: Array.from({ length: info.configCount }, (_, k) => fullFrame(start + k * strideFactor)) }
+  else state.frameMap = { offset: base.offset + start * base.step, step: base.step * strideFactor }
   state.lastResult = null
+  carryCell(state.filePath, path)
   state.filePath = path
   state.fileInfo = info
   state.derivedLabel = label
@@ -441,10 +445,17 @@ async function activateTrajectory (path, { label, strideFactor = 1, start = 0 } 
   $('restore-full-trajectory').classList.remove('hidden')
 }
 
+// A derived trajectory comes from the same simulation: the applied cell (typed or read from a cell
+// file) follows it there and back, instead of being dropped as for a newly loaded file.
+function carryCell (from, to) {
+  if (aseState.cellParameters && aseState.cellSource === from) aseState.cellSource = to
+}
+
 // Frame number of the full trajectory for a saved frame of the active (possibly derived) file.
 function fullFrame (frame) {
   const map = state.frameMap
-  return map ? map.offset + frame * map.step : frame
+  if (!map) return frame
+  return map.frames ? map.frames[frame] : map.offset + frame * map.step
 }
 
 function setTimeStride (value) {
@@ -470,6 +481,7 @@ $('restore-full-trajectory').addEventListener('click', async () => {
   state.fullTrajectory = null
   state.derivedLabel = null
   state.frameMap = null
+  carryCell(state.filePath, full.filePath)
   state.filePath = full.filePath
   state.fileInfo = full.fileInfo
   monetHistory.activeSource = monetHistory.sourceByPath.get(full.filePath) ?? monetHistory.activeSource
@@ -1611,6 +1623,7 @@ const charts = {
   anglesdist: new MonetLineChart('chart-anglesdist', 'chart-anglesdist-ph'),
   dihedralsdist: new MonetLineChart('chart-dihedralsdist', 'chart-dihedralsdist-ph'),
   mda: new MonetLineChart('chart-mda', 'chart-mda-ph'),
+  mdadist: new MonetLineChart('chart-mdadist', 'chart-mdadist-ph'),
   coordination: new MonetLineChart('chart-coordination', 'chart-coordination-ph'),
   mdamatrix: new MonetHeatmapChart('chart-mdamatrix', 'chart-mdamatrix-ph'),
   fluct: new MonetLineChart('chart-fluct', 'chart-fluct-ph'),
@@ -1775,6 +1788,7 @@ function clearAnalysis (kind, report = true) {
   for (const id of { msd: ['msd-info'], vdos: ['vdos-info'], mda: ['mda-download', 'mda-activate'] }[kind] || []) $(id).classList.add('hidden')
   if (kind === 'mda') {
     $('mda-table').replaceChildren()
+    resetPca()
     clearAnalysis('mdamatrix', false)
     $('mda-matrix-block').classList.add('hidden')
   }
@@ -2370,6 +2384,7 @@ function fmt (value, digits = 3) {
 
 // Returns { timestep (fs per MD step), stride (MD steps per saved frame), dt (fs per saved frame) } or null.
 function timeAxis () {
+  if (state.frameMap?.frames) return null
   const value = Number($('md-timestep').value)
   const stride = Number($('md-stride').value)
   if (!$('md-timestep').value.trim() || !(value > 0) || !Number.isInteger(stride) || stride < 1) return null
@@ -2381,7 +2396,9 @@ function updateTimeInfo () {
   const axis = timeAxis()
   const text = axis
     ? `Time between saved frames: ${fmt(axis.dt, 6)} fs (${fmt(axis.timestep, 6)} fs × ${axis.stride}).`
-    : 'Set the MD time step used in your simulation (needed for MSD, VDOS and autocorrelation).'
+    : state.frameMap?.frames
+      ? 'The active trajectory holds picked configurations that are not evenly spaced in time: MSD, VDOS and autocorrelation need the full trajectory (↩ Full trajectory).'
+      : 'Set the MD time step used in your simulation (needed for MSD, VDOS and autocorrelation).'
   $$('.time-info').forEach(info => { info.textContent = text })
   if (axis) $$('.time-step').forEach(input => input.classList.remove('field-missing'))
   if (lastResults.acf) showAcfResult()
@@ -3114,8 +3131,8 @@ const MDA_SPECS = {
   rmsf: { text: 'rms.RMSF: fluctuation of every selected atom around its average position.',
     fields: [['selection', 'Selection', 'sel', 'all'], ['align', 'Align on the selection first', 'check', true]] },
   rgyr: { text: 'Mass-weighted radius of gyration of the selection in every frame.', fields: [['selection', 'Selection', 'sel', 'all']] },
-  pca: { text: 'pca.PCA: principal components of the selected coordinates; projections of the first three components along the trajectory and the variance table.',
-    fields: [['selection', 'Selection', 'sel', 'all'], ['align', 'Align on the selection first', 'check', true]] },
+  pca: { text: 'pca.PCA: principal components of the selected coordinates; projections of up to 10 components along the trajectory (tick them in the list), their distribution, and the configurations picked on them, written as a trajectory for the extraction.',
+    fields: [['selection', 'Selection', 'sel', 'all'], ['align', 'Align on the selection first', 'check', true], ['n_components', 'Components plotted at first (1–10)', 'number', 3]] },
   msd: { text: 'msd.EinsteinMSD: windowed mean-squared displacement (set the time axis for a lag in fs). Use an unwrapped trajectory for periodic runs.',
     fields: [['selection', 'Selection', 'sel', 'all'], ['msd_type', 'Dimensions', 'select', 'xyz', ['xyz', 'xy', 'yz', 'xz', 'x', 'y', 'z']]] },
   gnm: { text: 'gnm.GNMAnalysis: lowest non-zero eigenvalue of the Kirchhoff matrix in every frame.',
@@ -3213,7 +3230,7 @@ function mdaParams () {
     else if (type === 'number') {
       const value = Number(input.value)
       if (!input.value.trim() || !Number.isFinite(value) || value <= 0) throw new Error(`Enter a positive number for “${input.parentElement.firstChild.textContent}”.`)
-      params[param] = ['nbins', 'max_frames'].includes(param) ? Math.round(value) : value
+      params[param] = ['nbins', 'max_frames', 'n_components'].includes(param) ? Math.round(value) : value
     } else if (type === 'lines') params[param] = input.value.split('\n').map(line => line.trim()).filter(Boolean)
     else if (type === 'quads') {
       // MONET IDs → positions in the analysed file.
@@ -3307,6 +3324,9 @@ $('btn-run-mda').addEventListener('click', async () => {
       title: 'Pairwise RMSD (MDAnalysis)', source: charts.mda.source, xLabel: r.xLabel, yLabel: r.yLabel, colorLabel: r.colorLabel,
       labels: r.labels.map(String), matrix: r.matrix, notes: r.notes || []
     }))
+  } else if (r.pca) {
+    lastResults.mda = r
+    showPca(r, { title: spec, notes, filename, step: command.frame_step })
   } else if (r.kind !== 'table') {
     const frames = r.xLabel === 'Frame'
     let labels = frames ? r.x.map(String) : lineLabels(r.x)
@@ -3320,7 +3340,7 @@ $('btn-run-mda').addEventListener('click', async () => {
     })
     lastResults.mda = r
   }
-  if (r.table) renderTable($('mda-table'), r.table, { mapping: r.atomMapping, title: r.kind === 'table' ? spec : null })
+  if (r.table && !r.pca) renderTable($('mda-table'), r.table, { mapping: r.atomMapping, title: r.kind === 'table' ? spec : null })
   if (r.kind === 'table' && notes.length) {
     const note = document.createElement('p')
     note.className = 'panel-desc'
@@ -3336,6 +3356,329 @@ $('mda-activate').addEventListener('click', async () => {
     await activateTrajectory(mdaAlignedPath, { label: 'aligned (MDAnalysis AlignTraj)', strideFactor: mdaAlignedStep })
     setStatus('MONET now analyses and extracts the aligned trajectory (↩ Full trajectory to go back).')
   } catch (error) { setStatus('The aligned trajectory could not be loaded: ' + error.message) }
+})
+
+// =============================================================================
+// ── PCA: plotted components, distribution and picked configurations ──────────
+// =============================================================================
+
+// `var`: clearAnalysis('mda') resets it, possibly before this block has run.
+var pca = null
+const PCA_TABLE_ROWS = 500
+
+function resetPca () {
+  pca = null
+  $('mda-pca-block').classList.add('hidden')
+  $('pca-components').replaceChildren()
+  $('pca-selected-table').replaceChildren()
+  $('pca-selection').classList.add('hidden')
+  $('pca-clear').disabled = true
+}
+
+// r: mda_run result of pca.PCA (up to 10 projections, the first `r.pca.shown` plotted).
+function showPca (r, { title, notes, filename }) {
+  const count = r.pca.components
+  pca = {
+    title, notes, filename, xLabel: r.xLabel,
+    frames: r.frame_indices,
+    index: new Map(r.frame_indices.map((frame, i) => [frame, i])),
+    labels: r.series.map(series => series.label.replace(/ \(.*$/, '')),
+    legends: r.series.map(series => series.label),
+    projections: r.series.map(series => series.data),
+    stats: r.series.map(series => MonetASEModel.seriesStats(series.data)),
+    variance: r.table.rows.map(row => row[1]),
+    cumulated: r.table.rows.map(row => row[2]),
+    ratio: r.pca.variance_ratio,
+    shown: new Set(Array.from({ length: r.pca.shown }, (_, k) => k)),
+    selected: [], sides: null, component: null, written: null
+  }
+  for (const id of ['pca-win-pc', 'pca-win2-pc', 'pca-ext-pc']) {
+    const select = $(id)
+    select.replaceChildren()
+    if (id === 'pca-win2-pc') select.add(new Option('—', ''))
+    for (let k = 0; k < count; k++) select.add(new Option(pca.labels[k], String(k)))
+  }
+  for (const id of ['pca-win-low', 'pca-win-high', 'pca-win2-low', 'pca-win2-high']) $(id).value = ''
+  $('pca-selection').classList.add('hidden')
+  $('pca-selected-table').replaceChildren()
+  $('pca-clear').disabled = true
+  renderPcaComponents()
+  $('mda-pca-block').classList.remove('hidden')
+  drawPca({ keepView: false })
+}
+
+// The component list: tick the ones to plot (at least one).
+function renderPcaComponents () {
+  const table = document.createElement('table')
+  table.className = 'atom-table pca-components-table'
+  const head = table.createTHead().insertRow()
+  for (const column of ['Plot', 'Component', 'Variance (Å²)', 'Explained (%)', 'Cumulated (%)', 'Mean ± std (Å)']) {
+    const th = document.createElement('th')
+    th.textContent = column
+    head.appendChild(th)
+  }
+  const body = table.createTBody()
+  pca.labels.forEach((label, k) => {
+    const row = body.insertRow()
+    row.classList.toggle('pca-off', !pca.shown.has(k))
+    const box = document.createElement('input')
+    box.type = 'checkbox'
+    box.id = `pca-show-${k}`
+    box.checked = pca.shown.has(k)
+    box.setAttribute('aria-label', `Plot ${label}`)
+    box.addEventListener('change', () => {
+      if (!box.checked && pca.shown.size === 1) { box.checked = true; return setStatus('Keep at least one component plotted.') }
+      if (box.checked) pca.shown.add(k)
+      else pca.shown.delete(k)
+      row.classList.toggle('pca-off', !box.checked)
+      drawPca()
+    })
+    row.insertCell().appendChild(box)
+    const stats = pca.stats[k]
+    for (const value of [label, pca.variance[k], fmt(100 * pca.ratio[k], 3), pca.cumulated[k], `${fmt(stats.mean, 3)} ± ${fmt(stats.std, 3)}`]) row.insertCell().textContent = value
+  })
+  const scroll = document.createElement('div')
+  scroll.className = 'ase-atom-scroll'
+  scroll.appendChild(table)
+  $('pca-components').replaceChildren(scroll)
+}
+
+function pcaShown () {
+  return [...pca.shown].sort((a, b) => a - b)
+}
+
+function drawPca ({ keepView = true } = {}) {
+  if (!pca) return
+  const shown = pcaShown()
+  const datasets = shown.map(k => ({
+    label: `${pca.legends[k]} · mean ${fmt(pca.stats[k].mean, 4)} ± ${fmt(pca.stats[k].std, 3)}`,
+    // Eight series colours: PC9 and PC10 are dashed so they differ from PC1 and PC2.
+    data: pca.projections[k], colorIndex: k, dash: k >= 8 || undefined
+  }))
+  if (pca.selected.length) {
+    // Picked frames are marked on the component they were picked on (or the first plotted one).
+    const k = shown.includes(pca.component) ? pca.component : shown[0]
+    const picked = new Set(pca.selected)
+    // A series colour not used by the plotted components, the high-contrast ones first.
+    const free = [4, 5, 1, 6, 7, 0, 2, 3].find(c => !shown.includes(c)) ?? 4
+    datasets.push({
+      label: `selected configurations (${pca.selected.length}) on ${pca.labels[k]}`, points: true, colorIndex: free,
+      data: pca.frames.map((frame, i) => picked.has(frame) ? pca.projections[k][i] : NaN)
+    })
+  }
+  charts.mda.setData({
+    title: pca.title, source: charts.mda.source, xLabel: pca.xLabel, yLabel: 'Projection (Å)',
+    labels: pca.frames.map(String), notes: pca.notes, datasets
+  }, { keepView })
+  drawPcaDistribution(shown)
+}
+
+// Probability density of every plotted projection on common bins, with the projection window marked.
+function drawPcaDistribution (shown) {
+  const bins = Math.max(2, Math.min(500, Math.round(Number($('mdadist-bins').value)) || 60))
+  let low = Infinity, high = -Infinity
+  for (const k of shown) for (const value of pca.projections[k]) {
+    if (Number.isFinite(value)) { low = Math.min(low, value); high = Math.max(high, value) }
+  }
+  const hists = shown.map(k => MonetASEModel.histogram(pca.projections[k], bins, low, high))
+  const { centres, width } = hists[0]
+  pca.hist = { low: centres[0] - width / 2, width, shown }
+  const markers = []
+  const window = pcaWindow()
+  if (window && shown.includes(window.component)) {
+    markers.push({ value: window.low, label: `${pca.labels[window.component]} window` }, { value: window.high, label: '' })
+  }
+  charts.mdadist.setData({
+    title: `${pca.title} — distribution`, source: charts.mda.source,
+    xLabel: 'Projection (Å)', yLabel: 'Probability density (1/Å)', yMin: 0, markers,
+    labels: centres.map(value => fmt(value, 5)),
+    notes: [`${pca.frames.length} analysed frames · click a bar to select that projection window (Shift-click widens it)`],
+    datasets: shown.map((k, i) => ({ label: pca.labels[k], data: hists[i].density, bars: true, colorIndex: k }))
+  })
+}
+
+// First projection window typed or clicked, or null when incomplete.
+function pcaWindow () {
+  const component = $('pca-win-pc').value
+  const low = Number($('pca-win-low').value), high = Number($('pca-win-high').value)
+  if (component === '' || !$('pca-win-low').value.trim() || !$('pca-win-high').value.trim() || !Number.isFinite(low) || !Number.isFinite(high)) return null
+  return { component: Number(component), low: Math.min(low, high), high: Math.max(low, high) }
+}
+
+function updatePcaMode () {
+  const mode = $('pca-mode').value
+  for (const row of $$('.pca-mode-row')) row.classList.toggle('hidden', row.dataset.mode !== mode)
+}
+
+function applyPcaSelection () {
+  if (!pca) return
+  const spacing = Math.max(1, Math.round(Number($('pca-spacing').value)) || 1)
+  const mode = $('pca-mode').value
+  let selected, describe, sides = null, component = null
+  try {
+    if (mode === 'window') {
+      const first = pcaWindow()
+      if (!first) throw new Error('Enter both ends of the projection window, or click a bar of the distribution.')
+      const windows = [first]
+      const second = $('pca-win2-pc').value
+      const low = $('pca-win2-low').value.trim(), high = $('pca-win2-high').value.trim()
+      if (second !== '' && (low || high)) {
+        if (!low || !high || !Number.isFinite(Number(low)) || !Number.isFinite(Number(high))) throw new Error('Enter both ends of the second window, or set its component to —.')
+        windows.push({ component: Number(second), low: Math.min(Number(low), Number(high)), high: Math.max(Number(low), Number(high)) })
+      }
+      component = first.component
+      selected = MonetASEModel.thinFrames(MonetASEModel.framesInWindows(pca.frames, pca.projections, windows), spacing)
+      describe = windows.map(w => `${pca.labels[w.component]} from ${fmt(w.low, 4)} to ${fmt(w.high, 4)} Å`).join(' and ')
+    } else if (mode === 'extremes') {
+      component = Number($('pca-ext-pc').value)
+      const n = Math.round(Number($('pca-ext-n').value))
+      if (!(n >= 1)) throw new Error('Enter how many configurations to take at each end.')
+      const ends = MonetASEModel.extremeFrames(pca.frames, pca.projections[component], n, spacing)
+      sides = new Map([...ends.low.map(item => [item.frame, 'lowest']), ...ends.high.map(item => [item.frame, 'highest'])])
+      selected = [...sides.keys()].sort((a, b) => a - b)
+      describe = `the ${n} lowest and ${n} highest projections on ${pca.labels[component]}`
+    } else {
+      selected = MonetASEModel.thinFrames(MonetASEModel.parseFrameList($('pca-frame-list').value, playerCount() || undefined), spacing)
+      if (!selected.length) throw new Error('Enter frame numbers, or Shift-click the projection plot.')
+      describe = 'frames picked by number'
+    }
+  } catch (error) { return setStatus(error.message) }
+  if (spacing > 1) describe += `, at least ${spacing} frames apart`
+  Object.assign(pca, { selected, sides, component, written: null })
+  showPcaSelection(describe)
+  drawPca()
+}
+
+function showPcaSelection (describe) {
+  const n = pca.selected.length
+  $('pca-selection').classList.remove('hidden')
+  $('pca-clear').disabled = false
+  $('pca-write').disabled = !n
+  $('pca-download').classList.add('hidden')
+  $('pca-activate').classList.add('hidden')
+  $('pca-selection-text').textContent = n
+    ? `${n} configuration${n > 1 ? 's' : ''} selected (${describe}; ${n > 1 ? `frames ${pca.selected[0]}…${pca.selected[n - 1]}` : `frame ${pca.selected[0]}`}). Click a row to show it in the viewer.`
+    : `No analysed frame matches: ${describe}.`
+  const shown = pcaShown()
+  const table = document.createElement('table')
+  table.className = 'atom-table'
+  const head = table.createTHead().insertRow()
+  for (const column of ['Frame', ...(pca.sides ? ['End'] : []), ...shown.map(k => `${pca.labels[k]} (Å)`)]) {
+    const th = document.createElement('th')
+    th.textContent = column
+    head.appendChild(th)
+  }
+  const body = table.createTBody()
+  for (const frame of pca.selected.slice(0, PCA_TABLE_ROWS)) {
+    const row = body.insertRow()
+    row.tabIndex = 0
+    row.title = `Show frame ${frame} in the viewer`
+    const i = pca.index.get(frame)
+    const cells = [frame, ...(pca.sides ? [pca.sides.get(frame)] : []), ...shown.map(k => i === undefined ? '—' : fmt(pca.projections[k][i], 4))]
+    for (const value of cells) row.insertCell().textContent = value
+    const show = () => { playerStop(); goToFrame(frame) }
+    row.addEventListener('click', show)
+    row.addEventListener('keydown', event => { if (event.key === 'Enter') show() })
+  }
+  const scroll = document.createElement('div')
+  scroll.className = 'ase-atom-scroll'
+  scroll.appendChild(table)
+  const parts = [scroll]
+  if (n > PCA_TABLE_ROWS) {
+    const note = document.createElement('p')
+    note.className = 'panel-desc'
+    note.textContent = `First ${PCA_TABLE_ROWS} of ${n} configurations listed; all of them are written.`
+    parts.push(note)
+  }
+  $('pca-selected-table').replaceChildren(...(n ? parts : []))
+}
+
+function addPcaFrames (frames) {
+  const text = $('pca-frame-list').value.trim()
+  $('pca-frame-list').value = (text ? `${text} ` : '') + frames.join(' ')
+  $('pca-mode').value = 'list'
+  updatePcaMode()
+  applyPcaSelection()
+}
+
+$('pca-mode').addEventListener('change', updatePcaMode)
+$('pca-select').addEventListener('click', applyPcaSelection)
+$('mdadist-bins').addEventListener('input', () => { if (pca) drawPcaDistribution(pcaShown()) })
+for (const id of ['pca-win-pc', 'pca-win-low', 'pca-win-high']) $(id).addEventListener('input', () => { if (pca) drawPcaDistribution(pcaShown()) })
+$('pca-clear').addEventListener('click', () => {
+  if (!pca) return
+  Object.assign(pca, { selected: [], sides: null, component: null, written: null })
+  $('pca-selection').classList.add('hidden')
+  $('pca-selected-table').replaceChildren()
+  $('pca-clear').disabled = true
+  drawPca()
+})
+$('pca-add-shown').addEventListener('click', () => {
+  if (!pca) return
+  if (!player.count) return setStatus('Load a trajectory first.')
+  addPcaFrames([player.index])
+})
+
+// Shift-click on the projections: add that frame to the list (a plain click shows it, see bindPlayerCharts).
+charts.mda.canvas.addEventListener('click', event => {
+  if (!pca || !event.shiftKey) return
+  const label = charts.mda.labelAt(event.clientX)
+  if (label !== null && label !== undefined) addPcaFrames([Number(label)])
+})
+
+// Click a bar of the distribution: that bin becomes the projection window of its component.
+charts.mdadist.canvas.addEventListener('click', event => {
+  if (!pca?.hist || !charts.mdadist.data) return
+  const hit = charts.mdadist.slotAt(event.clientX)
+  if (!hit) return
+  const { low, width, shown } = pca.hist
+  const current = pcaWindow()
+  let component = hit.bar !== null ? shown[hit.bar] : shown.includes(current?.component) ? current.component : shown[0]
+  if (component === undefined) component = shown[0]
+  let from = low + hit.index * width, to = from + width
+  if (event.shiftKey && current && current.component === component) {
+    from = Math.min(from, current.low)
+    to = Math.max(to, current.high)
+  }
+  // Round outwards so that the frames on the bin edges stay inside the window.
+  $('pca-win-pc').value = String(component)
+  $('pca-win-low').value = String(Math.floor(from * 1e4) / 1e4)
+  $('pca-win-high').value = String(Math.ceil(to * 1e4) / 1e4)
+  $('pca-mode').value = 'window'
+  updatePcaMode()
+  applyPcaSelection()
+})
+
+// Write the picked frames as a trajectory (source_frame= kept in every comment line).
+$('pca-write').addEventListener('click', async () => {
+  if (!pca?.selected.length) return
+  const filename = extractedTrajPath()
+  if (!filename || filename !== pca.filename) return setStatus('The active trajectory changed after the PCA: compute it again.')
+  const frames = [...pca.selected]
+  const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+  const output = await window.monet.aseSelectOutput(`${stem}-pca-selected.extxyz`)
+  if (!output) return
+  const r = await runAse('mda', { action: 'subsample', filename, frames, output })
+  if (!r.ok) return setStatus('The selected configurations could not be written: ' + (r.message || r.error))
+  if (!pca) return
+  pca.written = { path: r.filePath || output, frames }
+  const link = $('pca-download')
+  if (r.downloadURL) {
+    link.href = r.downloadURL
+    link.download = r.output || `${stem}-pca-selected.extxyz`
+    link.classList.remove('hidden')
+  }
+  $('pca-activate').classList.remove('hidden')
+  setStatus(`✓ ${r.n_frames} selected configurations written (frames ${r.first}…${r.last} of ${r.source_frames}; each comment line keeps source_frame=).`)
+})
+
+$('pca-activate').addEventListener('click', async () => {
+  if (!pca?.written) return
+  const { path, frames } = pca.written
+  try {
+    await activateTrajectory(path, { label: `PCA selection · ${frames.length} configurations`, frames })
+    setStatus(`MONET now analyses and extracts the ${frames.length} selected configurations (↩ Full trajectory to go back).`)
+  } catch (error) { setStatus('The selected configurations were written but could not be loaded: ' + error.message) }
 })
 
 // =============================================================================

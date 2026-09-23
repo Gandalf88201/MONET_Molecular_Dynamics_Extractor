@@ -77,7 +77,9 @@
     }],
     ['Stride and the resulting number of configurations; g of the subsample', data => {
       const steps = done(data, s => s.action === 'subsample')
-      return steps.length ? steps.map(s => `stride ${number(s.result.stride)} from frame ${number(s.result.start)} → ${number(s.result.n_frames)} configurations (#${s.id})`).join('; ') : null
+      return steps.length ? steps.map(s => s.result.selected
+        ? `${number(s.result.n_frames)} configurations picked by frame (e.g. on PCA projections), frames ${number(s.result.first)}–${number(s.result.last)} (#${s.id})`
+        : `stride ${number(s.result.stride)} from frame ${number(s.result.start)} → ${number(s.result.n_frames)} configurations (#${s.id})`).join('; ') : null
     }],
     ['RMSD reference and atom subset; the alignment method', data => calls(done(data, s => s.action === 'rmsd' || s.action === 'rmsd_matrix'))],
     ['Clustering method and cutoff; cluster populations with errors', () => null],

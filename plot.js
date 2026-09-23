@@ -466,6 +466,29 @@
       return axis.labels[index]
     }
 
+    // Index into data.labels under a clientX position, bars included (e.g. click a histogram bin);
+    // `bar` is which of the side-by-side bar series of that bin was hit (null between them).
+    slotAt (clientX) {
+      const axis = this._axis
+      if (!axis || !this.data || this.data.type) return null
+      const rect = this.canvas.getBoundingClientRect()
+      const px = (clientX - rect.left) * ((this.canvas.clientWidth || rect.width) / (rect.width || 1))
+      const t = (px - axis.left) / axis.width
+      if (t < 0 || t > 1) return null
+      const position = t * axis.slots
+      const slot = Math.max(0, Math.min(axis.labels.length - 1, axis.bars ? Math.floor(position) : Math.round(position)))
+      let bar = null
+      if (axis.bars) {
+        const within = (position - slot - 0.05) / 0.9
+        if (within >= 0 && within < 1) bar = Math.floor(within * axis.barSeries)
+      }
+      return { index: axis.offset + slot, bar }
+    }
+
+    indexAt (clientX) {
+      return this.slotAt(clientX)?.index ?? null
+    }
+
     // Reserve enough space even for numerous atom groups; export is independent of tab visibility.
     exportSize () {
       if (this.data.type === 'polar') return this.data.range[1] - this.data.range[0] > 180 ? [1200, 1150] : [1200, 780]
@@ -587,6 +610,15 @@
           barIndex++
           return
         }
+        // Marked points only (e.g. the configurations selected on a PCA projection).
+        if (series.points) {
+          ctx.lineWidth = 1; ctx.strokeStyle = colors.label
+          series.data.forEach((value, i) => {
+            if (!Number.isFinite(value)) return
+            ctx.beginPath(); ctx.arc(x(i), y(value), 4, 0, Math.PI * 2); ctx.fill(); ctx.stroke()
+          })
+          return
+        }
         ctx.lineWidth = series.dash ? 1.6 : 1.8
         ctx.setLineDash(series.dash ? [7, 5] : [])
         ctx.beginPath()
@@ -635,7 +667,7 @@
       }
       // Frame cursor (trajectory player); only on the live canvas, never in exports.
       const onScreen = target === this.canvas
-      if (onScreen) this._axis = { left: pad.left, width: pw, slots, bars, labels, top: pad.top, height: ph, offset }
+      if (onScreen) this._axis = { left: pad.left, width: pw, slots, bars, labels, top: pad.top, height: ph, offset, barSeries }
       if (onScreen && this._drag && Math.abs(this._drag.x1 - this._drag.x0) > 4) {
         ctx.save()
         ctx.fillStyle = colors.series[0]; ctx.globalAlpha = .12
@@ -675,6 +707,8 @@
         if (item.series.dash) {
           ctx.setLineDash([5, 3]); ctx.lineWidth = 2
           ctx.beginPath(); ctx.moveTo(item.x, item.y - 4); ctx.lineTo(item.x + 18, item.y - 4); ctx.stroke(); ctx.setLineDash([])
+        } else if (item.series.points) {
+          ctx.beginPath(); ctx.arc(item.x + 9, item.y - 4, 3.2, 0, Math.PI * 2); ctx.fill()
         } else ctx.fillRect(item.x, item.y - 5, 18, 3)
         ctx.fillStyle = colors.label; ctx.font = '11px sans-serif'; ctx.textAlign = 'left'
         ctx.fillText(item.series.label, item.x + 23, item.y, item.width - 25)

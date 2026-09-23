@@ -989,3 +989,13 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .qm-species td, .qm-species th { padding: .15rem .4rem; }
 .qm-preview { max-height: 16rem; overflow: auto; font-size: .8em; }
 .qm-custom { font-size: .8em; opacity: .8; margin-left: .4rem; }
+
+/* PCA: component list, distribution and configuration selection (MDAnalysis tab) */
+.pca-block { margin-top: 14px; }
+.pca-block h4 { margin: 14px 0 4px; font-size: .85rem; }
+.pca-block .pick-row { display: flex; gap: 4px; align-items: flex-start; }
+.pca-block .pick-row .field-input { flex: 1; }
+.pca-block .ase-ctrl-row .field-input-sm { width: auto; min-width: 5.5rem; }
+.pca-components-table td:first-child, .pca-components-table th:first-child { width: 2.5rem; text-align: center; }
+.pca-components-table tr.pca-off td { color: var(--text-dim); }
+.pca-block .info-box .ase-plot-actions { margin-top: 6px; }

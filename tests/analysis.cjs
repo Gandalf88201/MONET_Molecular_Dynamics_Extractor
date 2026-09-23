@@ -207,6 +207,21 @@ for (const bad of [{ stride: 0 }, { stride: 1.5 }, { stride: 3 }, { stride: 1, s
   assert.equal(r.ok, false, JSON.stringify(bad))
 }
 assert.match(bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'bad.xyz'), stride: 3 }).message, /shorter than the decorrelation time/); checks++
+// Picked frames (e.g. on PCA projections): exactly those, in time order, duplicates dropped.
+r = bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'picked.xyz'), frames: [2, 0, 2] })
+assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.n_frames, 2); assert.equal(r.selected, true); assert.equal(r.first, 0); assert.equal(r.last, 2); assert.equal(r.stride, undefined); checks++
+const pickedLines = fs.readFileSync(path.join(temp, 'picked.xyz'), 'utf8').split('\n')
+assert.match(pickedLines[1], /source_frame=0$/); assert.match(pickedLines[21], /frame=2 source_frame=2$/); assert.equal(pickedLines[22], srcLines[42]); checks++
+for (const frames of [[], [3], [-1], [1.5], 'x']) {
+  r = bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'bad.xyz'), frames })
+  assert.equal(r.ok, false, JSON.stringify(frames))
+}
+assert.match(bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'bad.xyz'), frames: [5] }).message, /between 0 and 2/); checks++
+// Extracting the picked configurations keeps the original frame in the comment lines.
+r = bridge({ action: 'extract', filename: path.join(temp, 'picked.xyz'), output_dir: path.join(temp, 'picked-out'), selected: [1, 2, 3], frequency: 1 })
+assert.equal(r.ok, true, JSON.stringify(r))
+const extractedLines = fs.readFileSync(path.join(temp, 'picked-out/2-SAMPLED_CONFIGURATIONS/SAMPLED_CONFIGURATIONS.xyz'), 'utf8').split('\n')
+assert.equal(extractedLines[1], 'frame 0 source_frame=0'); assert.equal(extractedLines[6], 'frame 1 source_frame=2'); checks++
 
 // Wrapping into a triclinic cell: whole molecules keep their bonds, atoms end up inside the cell.
 const cellpar = [10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371]

@@ -1169,6 +1169,76 @@
         </div>
         <canvas class="chart-canvas" id="chart-mda"></canvas>
         <div class="chart-placeholder" id="chart-mda-ph">MDAnalysis results</div>
+        <div class="hidden pca-block" id="mda-pca-block">
+          <h4>Principal components</h4>
+          <p class="panel-desc">Tick the components to plot (up to 10). Click a projection plot to show that frame in the viewer; Shift-click adds it to the frame list below.</p>
+          <div class="result-tables" id="pca-components"></div>
+          <div class="ase-plot-actions dist-chart-actions">
+            <strong>Distribution</strong>
+            <button class="btn btn-sm" id="clear-mdadist" disabled>Clear</button>
+            <button class="btn btn-sm" id="download-mdadist" disabled>Download plot PNG</button>
+            <button class="btn btn-sm" id="csv-mdadist" disabled>Download data CSV</button>
+            <label class="plot-view">Bins <input class="field-input field-input-sm" id="mdadist-bins" type="number" min="2" max="500" value="60" /></label>
+          </div>
+          <canvas class="chart-canvas" id="chart-mdadist"></canvas>
+          <div class="chart-placeholder" id="chart-mdadist-ph">Probability distribution of the plotted projections. Click a bar to select that projection window; Shift-click widens it.</div>
+
+          <h4>Select configurations</h4>
+          <div class="ase-ctrl-row">
+            <label class="field-label" for="pca-mode">Select by</label>
+            <select class="field-input" id="pca-mode">
+              <option value="window">projection window (from the distribution)</option>
+              <option value="extremes">extremes of a component</option>
+              <option value="list">frame list (from the plot or typed)</option>
+            </select>
+          </div>
+          <div class="pca-mode-row" data-mode="window">
+            <div class="ase-ctrl-row">
+              <select class="field-input field-input-sm pca-pc" id="pca-win-pc" aria-label="Component of the first window"></select>
+              <label class="field-label" for="pca-win-low">from</label>
+              <input class="field-input field-input-sm" type="number" step="any" id="pca-win-low" />
+              <label class="field-label" for="pca-win-high">to</label>
+              <input class="field-input field-input-sm" type="number" step="any" id="pca-win-high" />
+              <span class="field-label">Å</span>
+            </div>
+            <div class="ase-ctrl-row">
+              <label class="field-label" for="pca-win2-pc">and</label>
+              <select class="field-input field-input-sm pca-pc" id="pca-win2-pc" aria-label="Component of the second window"></select>
+              <label class="field-label" for="pca-win2-low">from</label>
+              <input class="field-input field-input-sm" type="number" step="any" id="pca-win2-low" />
+              <label class="field-label" for="pca-win2-high">to</label>
+              <input class="field-input field-input-sm" type="number" step="any" id="pca-win2-high" />
+              <span class="field-label">Å</span>
+            </div>
+          </div>
+          <div class="ase-ctrl-row pca-mode-row hidden" data-mode="extremes">
+            <select class="field-input field-input-sm pca-pc" id="pca-ext-pc" aria-label="Component"></select>
+            <label class="field-label" for="pca-ext-n">configurations at each end</label>
+            <input class="field-input field-input-sm" type="number" min="1" id="pca-ext-n" value="5" />
+          </div>
+          <div class="pca-mode-row hidden" data-mode="list">
+            <label class="field-label" for="pca-frame-list">Frames of the active trajectory (e.g. 120 4500 9000-9500:50)</label>
+            <div class="pick-row">
+              <textarea class="field-input" id="pca-frame-list" rows="2" placeholder="Shift-click the projection plot, or type frame numbers"></textarea>
+              <button class="btn btn-sm" id="pca-add-shown" type="button" title="Add the frame shown in the viewer">+ shown frame</button>
+            </div>
+          </div>
+          <div class="ase-ctrl-row">
+            <label class="field-label" for="pca-spacing">Minimum spacing (frames)</label>
+            <input class="field-input field-input-sm" type="number" min="1" id="pca-spacing" value="1" title="Consecutive MD frames are near copies: set the decorrelation stride from the ACF to keep independent configurations" />
+            <button class="btn btn-sm btn-accent" id="pca-select" type="button">Select</button>
+            <button class="btn btn-sm" id="pca-clear" type="button" disabled>Clear selection</button>
+          </div>
+          <div class="info-box hidden" id="pca-selection" aria-live="polite">
+            <span id="pca-selection-text"></span>
+            <div class="ase-plot-actions">
+              <button class="btn btn-sm btn-accent" id="pca-write" type="button">Write the selected configurations</button>
+              <a class="btn btn-sm hidden" id="pca-download" download>Download selected configurations</a>
+              <button class="btn btn-sm hidden" id="pca-activate" type="button">Use them for the extraction</button>
+            </div>
+          </div>
+          <div class="result-tables" id="pca-selected-table"></div>
+        </div>
         <div class="hidden" id="mda-matrix-block">
         <div class="ase-ctrl-row matrix-style" id="mdamatrix-style">
           <label class="field-label" for="mdamatrix-colormap">Colour map</label>

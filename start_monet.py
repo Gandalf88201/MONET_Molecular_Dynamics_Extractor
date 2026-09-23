@@ -36,7 +36,7 @@ ALLOWED = {'indices', 'quantity', 'groups', 'center', 'atom_ids', 'stride', 'sta
            'index', 'selected', 'frequency', 'compute_average', 'generate_gaussian', 'atom_count', 'history', 'qm', 'source_name', 'cell_vectors',
            'align', 'unwrap', 'reference_index', 'max_frames', 'dt', 'fit_start', 'fit_end', 'remove_drift',
            'by_element', 'mass_weighted', 'smooth_cm', 'max_cm', 'quantity', 'groups', 'max_lag', 'mode', 'fit_until', 'tau_int_method',
-           'selection', 'donors', 'hydrogens', 'acceptors', 'd_a_cutoff', 'angle', 'radius', 'pattern', 'restrict'}
+           'selection', 'donors', 'hydrogens', 'acceptors', 'd_a_cutoff', 'angle', 'radius', 'pattern', 'restrict', 'frames'}
 MAX_JOBS = 3
 MAX_JSON = 16 * 1024 * 1024
 CHUNK = 1024 * 1024
@@ -365,7 +365,8 @@ class Session:
                 result['download_id'] = self.add_download(workdir / 'density.dx', 'density.dx')
             elif action == 'subsample':
                 stem = Path(safe_name(request.get('output') or 'trajectory')).stem
-                result['output'] = f'{stem}.extxyz' if stem.endswith('uncorrelated') else f'{stem}-uncorrelated.extxyz'
+                suffix = 'selected' if command.get('frames') is not None else 'uncorrelated'
+                result['output'] = f'{stem}.extxyz' if stem.endswith(suffix) else f'{stem}-{suffix}.extxyz'
                 result['download_id'] = self.add_download(workdir / 'uncorrelated.extxyz', result['output'])
                 result['file_id'] = self.add_file(workdir / 'uncorrelated.extxyz', result['output'])
             elif action == 'wrap':

@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- MDAnalysis PCA:
+  - up to 10 principal components come back from one calculation, and the component list (variance, explained and cumulated %, mean ± std) chooses which projections are plotted; *Components plotted at first* sets how many are ticked;
+  - a distribution chart shows the plotted projections on common bins;
+  - configurations can be picked in three ways:
+    - a projection window on one component, optionally combined with a second window on another component. Click a bar of the distribution to set it, or Shift-click to widen it;
+    - the N lowest and highest projections of a component;
+    - a frame list, typed or built by Shift-clicking the projection plot or with *+ shown frame*.
+
+    A minimum spacing in frames (e.g. the ACF stride) keeps them independent. Picked frames are marked on the plot and listed; clicking a row shows that frame in the viewer.
+  - *Write the selected configurations* saves them as extended XYZ, each comment line keeping `source_frame=`. *Use them for the extraction* makes them the active trajectory, and ↩ Full trajectory goes back.
+- `subsample` also accepts an explicit `frames` list. It is recorded in the analysis history, in replay and in the methods report.
+- A trajectory of picked, unevenly spaced frames has no time axis: MSD, VDOS and the autocorrelation ask for the full trajectory.
+- Extraction from a derived trajectory (uncorrelated, cropped, PCA selection) writes `frame N source_frame=M` in FULL_TRAJECTORY_EXTRACTED.xyz and SAMPLED_CONFIGURATIONS.xyz, so every configuration can be traced to its frame in the original run. The Python, desktop and browser engines all do this; files without `source_frame=` are unchanged.
+- Fix: a cell applied by hand or read from a cell file (e.g. a CIF) was dropped when a derived trajectory (uncorrelated, cropped, aligned, PCA selection) became active. It now follows the derived trajectory and comes back with ↩ Full trajectory, so plane-wave inputs (QE, VASP, CP2K, Qbox) keep it.
+
 ## 2.2.0 (2026-09-23)
 
 - Plane-wave cards: a Cell section shows the structure cell (applied cell, cell file, trajectory lattice) and accepts a custom cell per code; the cell and positions are written in each code's native units (Qbox bohr; QE angstrom, bohr or alat, crystal positions; CP2K ABC/ALPHA_BETA_GAMMA or vectors, SCALED; VASP Direct or Cartesian).
