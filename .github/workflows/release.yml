@@ -25,4 +25,7 @@ jobs:
       - name: Create the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" --title "MONET $VERSION ($GITHUB_REF_NAME)" --notes-file notes.md --verify-tag
+        run: |
+          # A release created by hand (which also pushes the tag) is left as it is.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then echo "Release $GITHUB_REF_NAME already exists."; exit 0; fi
+          gh release create "$GITHUB_REF_NAME" --title "MONET $VERSION ($GITHUB_REF_NAME)" --notes-file notes.md --verify-tag
