@@ -35,6 +35,12 @@ const atoms = [
   { index: 3, element: 'C', x: 0, y: 1, z: 0 },
   { index: 4, element: 'H', x: 0, y: 1, z: 1 }
 ]
+const MonetXYZ = require(path.join(root, 'xyz.js'))
+const periodicFrame = header => `4\n${header}\nC 1 0 0\nC 0 0 0\nC 0 1 0\nH 0 1 1\n`
+const periodicText = periodicFrame('Lattice="10 0 0 0 11 0 0 0 12" Properties=species:S:1:pos:R:3 pbc="T T T"') + periodicFrame('Lattice="10 0 0 0 11 0 0 0 12" Properties=species:S:1:pos:R:3 pbc="T T T"')
+// hexagonal.xyz: a lattice in the Materials Project setting (not the standard orientation).
+const hexagonalHeader = 'Lattice="1.6 -2.771281 0 1.6 2.771281 0 0 0 5.2" Properties=species:S:1:pos:R:3 pbc="T T T"'
+const trajectoryTexts = { 'periodic.xyz': periodicText, 'hexagonal.xyz': periodicFrame(hexagonalHeader) + periodicFrame(hexagonalHeader) }
 let lastProcessOptions, importCalls = []
 let activeAtoms = atoms, latestCommand, pendingResolve, defer = false, checks = 0, equilT0 = 1
 const listeners = new Set()
@@ -51,7 +57,12 @@ w.monet = {
   listFormats: async () => ({ ok: true, mdanalysis: '2.10.0', ase: [{ name: 'gromacs', description: 'Gromacs coordinates' }, { name: 'xyz', description: 'XYZ-file' }] }),
   analyzeFile: async () => ({ atomCount: 4, configCount: frameCount, format: 'XYZ' }),
   aseSelectOutput: async name => name,
-  readFrame: async () => ({ atoms }),
+  // periodic.xyz: an extended XYZ whose first frame carries a lattice, parsed like the real local reader (xyz.js).
+  readFrame: async (name, index) => {
+    if (!trajectoryTexts[name]) return { atoms }
+    for await (const frame of MonetXYZ.frames(trajectoryTexts[name].split('\n'))) if (frame.index === index) return { atoms: frame.atoms, lattice: frame.lattice }
+    return { error: 'Frame index is outside the trajectory.' }
+  },
   onProgress () {}, onAseProgress: callback => { listeners.add(callback); return () => listeners.delete(callback) },
   aseCheck: async () => ({ ok: true, ase_version: 'test', mdanalysis_version: '2.10.0' }),
   processTrajectory: async options => {
@@ -117,7 +128,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -266,6 +277,110 @@ async function fluctChecks () {
   el('fluct-scope').value = 'auto'; el('fluct-scope').dispatchEvent(new w.Event('change'))
 }
 const near = (a, b, tol) => assert.ok(Math.abs(a - b) <= tol, `${a} vs ${b}`)
+
+// Step 4 › Cell section of the plane-wave cards: structure cell detection, per-card custom cells, native units.
+async function qmCellChecks () {
+  const setCodes = wanted => {
+    for (const box of $$('[data-qm-code]')) if (box.checked !== wanted.includes(box.dataset.qmCode)) box.click()
+  }
+  const fire = (id, type) => el(id).dispatchEvent(new w.Event(type, { bubbles: true }))
+  const set = (id, value) => { el(id).value = value; fire(id, el(id).tagName === 'SELECT' ? 'change' : 'input') }
+  const sourceLabel = code => el(`qm-${code}-cellSource`).selectedOptions[0].textContent
+  const fields = code => ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].map(k => el(`qm-${code}-cell-${k}`).value)
+  // The lattice of the first frame comes with the loaded file: no launcher frame fetch is needed.
+  frameCount = 2; activeAtoms = atoms; nextFile = 'periodic.xyz'
+  await click('btn-browse'); await click('next-1'); await tick()
+  assert.equal(w.testMonet.player.cells.get(0), undefined, 'the mock launcher gives no lattice'); checks++
+  el('inp-atom-ids').value = '1 2 3 4'; await click('btn-apply-ids')
+  w.testMonet.state.outputDir = 'out'
+  setCodes(['qe'])
+  assert.equal(el('qm-qe-cellSource').value, 'structure'); assert.equal(sourceLabel('qe'), 'Lattice from the trajectory'); checks++
+  assert.deepEqual(fields('qe'), ['10', '11', '12', '90', '90', '90']); checks++
+  assert.match(el('qm-qe-cell').textContent, /Lattice from the trajectory/); assert.equal(el('next-4').disabled, false); checks++
+  assert.match(el('qm-qe-cell-vectors').textContent, /CELL_PARAMETERS angstrom\n10\.0000000000  0\.0000000000  0\.0000000000\n0\.0000000000  11\.0000000000/); checks++
+  assert.match(el('qm-qe-positions').textContent, /crystal/); checks++
+  // The isolated flag defines the cell itself: the Cell group is hidden while it is ticked.
+  el('qm-qe-isolated').click()
+  assert.equal(el('qm-qe-cellSource').closest('.qm-cell-group').hidden, true); checks++
+  el('qm-qe-isolated').click()
+  assert.equal(el('qm-qe-cellSource').closest('.qm-cell-group').hidden, false); checks++
+  // A cell read by Load cell file names its source.
+  nextFile = 'crystal.cif'; await click('cell-load-file')
+  assert.equal(sourceLabel('qe'), 'Cell from crystal.cif'); assert.equal(el('qm-qe-cell-a').value, '10.3528'); checks++
+  assert.match(el('qm-qe-cell').textContent, /Cell from crystal\.cif/); checks++
+  await click('cell-reset')
+  assert.equal(sourceLabel('qe'), 'Lattice from the trajectory'); assert.equal(el('qm-qe-cell-a').value, '10'); checks++
+  // Editing a field makes the cell custom for this code only.
+  set('qm-qe-cell-a', '9')
+  assert.equal(el('qm-qe-cellSource').value, 'custom'); assert.equal(sourceLabel('qe'), 'Custom cell for this code'); checks++
+  assert.match(el('qm-qe-preview').textContent, /CELL_PARAMETERS angstrom\n9\.0000000000/); checks++
+  assert.match(el('qm-qe-cell').textContent, /Custom cell 9×11×12 Å/); checks++
+  // Native units: QE in bohr.
+  set('qm-qe-cellUnits', 'bohr')
+  assert.match(el('qm-qe-cell-vectors').textContent, /CELL_PARAMETERS bohr\n17\.0075351216  0\.0000000000  0\.0000000000/); checks++
+  assert.match(el('qm-qe-preview').textContent, /CELL_PARAMETERS bohr\n17\.0075351216/); checks++
+  await click('next-4'); await tick(); await tick()
+  assert.equal(lastProcessOptions.qm.codes.qe.cell.rows[0][0], 9); assert.equal(lastProcessOptions.qm.codes.qe.format.cellUnits, 'bohr'); checks++
+  // Back to the structure cell: the fields are refilled.
+  set('qm-qe-cellUnits', 'angstrom'); set('qm-qe-cellSource', 'structure')
+  assert.deepEqual(fields('qe'), ['10', '11', '12', '90', '90', '90']); assert.match(el('qm-qe-preview').textContent, /CELL_PARAMETERS angstrom\n10\.0000000000/); checks++
+  // CP2K: ABC + angles by default, vectors on request.
+  setCodes(['cp2k'])
+  assert.match(el('qm-cp2k-preview').textContent, /ABC \[angstrom\] 10\.0000000000 11\.0000000000 12\.0000000000/); checks++
+  set('qm-cp2k-cellStyle', 'vectors')
+  assert.match(el('qm-cp2k-preview').textContent, /\bA \[angstrom\] 10\.0000000000 0\.0000000000 0\.0000000000/); checks++
+  assert.match(el('qm-cp2k-positions').textContent, /SCALED/); checks++
+  // Qbox: always bohr, with a note.
+  el('cell-system').value = 'cubic'; el('cell-a').value = '10'; el('cell-system').dispatchEvent(new w.Event('change'))
+  await click('cell-apply')
+  setCodes(['qbox', 'vasp'])
+  assert.equal(sourceLabel('qbox'), 'Crystal cell applied'); checks++
+  assert.match(el('qm-card-qbox').textContent, /Qbox uses bohr \(1 bohr = 0\.529177210903 Å\)\./); checks++
+  assert.match(el('qm-qbox-cell-vectors').textContent, /^set cell 18\.89726125 0\.00000000 0\.00000000 0\.00000000 18\.89726125/); checks++
+  assert.equal(el('qm-qbox-positions'), null); assert.match(el('qm-vasp-positions').textContent, /Direct/); checks++
+  await click('cell-reset')
+  // No cell anywhere: a custom cell releases VASP only.
+  nextFile = 'torsion.xyz'
+  await click('btn-browse'); await click('next-1'); await tick()
+  el('inp-atom-ids').value = '1 2 3 4'; await click('btn-apply-ids')
+  setCodes(['qe', 'vasp'])
+  assert.equal(sourceLabel('vasp'), 'No cell in the structure'); assert.deepEqual(fields('vasp'), ['', '', '', '', '', '']); checks++
+  assert.match(el('qm-vasp-cell').textContent, /✖ No cell/); checks++
+  ;['8', '8', '8', '90', '90', '90'].forEach((v, i) => set(`qm-vasp-cell-${['a', 'b', 'c', 'alpha', 'beta', 'gamma'][i]}`, v))
+  const ready = w.testMonet.qmReadiness()
+  assert.ok(ready.blocked.some(m => /^Quantum ESPRESSO \(pw\.x\): no cell/.test(m))); assert.ok(!ready.blocked.some(m => /^VASP/.test(m))); checks++
+  assert.match(el('qm-vasp-cell').textContent, /Custom cell 8×8×8 Å/); assert.match(el('qm-vasp-preview').textContent, /1\.0\n8\.0000000000  0\.0000000000  0\.0000000000/); checks++
+  assert.equal(el('next-4').disabled, true); checks++
+  // Loading another trajectory resets every plane-wave card to the structure cell (a custom cell belonged to the old file).
+  assert.equal(el('qm-vasp-cellSource').value, 'custom'); checks++
+  nextFile = 'hexagonal.xyz'
+  await click('btn-browse')
+  assert.equal(el('qm-vasp-cellSource').value, 'structure'); assert.equal(el('qm-qe-cellSource').value, 'structure'); checks++
+  await click('next-1'); await tick()
+  el('inp-atom-ids').value = '1 2 3 4'; await click('btn-apply-ids')
+  setCodes(['qe'])
+  assert.equal(sourceLabel('qe'), 'Lattice from the trajectory'); assert.equal(el('qm-qe-cellSource').value, 'structure'); checks++
+  // A custom cell keeps the orientation of a non-standard structure lattice (Materials Project hexagonal setting), with a note.
+  const orientation = el('qm-qe-cell-orientation')
+  assert.equal(orientation.hidden, true); checks++
+  set('qm-qe-cell-c', '10')
+  assert.equal(el('qm-qe-cellSource').value, 'custom'); assert.equal(orientation.hidden, false); checks++
+  assert.equal(orientation.textContent, 'The custom cell keeps the orientation of the structure lattice.'); checks++
+  const cellRows = text => {
+    const lines = text.split('\n')
+    const start = lines.indexOf('CELL_PARAMETERS angstrom')
+    return lines.slice(start + 1, start + 4).map(line => line.trim().split(/\s+/).map(Number))
+  }
+  const expected = [[1.6, -2.771281, 0], [1.6, 2.771281, 0], [0, 0, 10]]
+  for (const shown of [el('qm-qe-preview').textContent, el('qm-qe-cell-vectors').textContent]) {
+    cellRows(shown).flat().forEach((v, i) => near(v, expected.flat()[i], 1e-5)); checks++
+  }
+  // An invalid custom cell blocks the card and the preview does not fall back to the structure lattice.
+  set('qm-qe-cell-a', '0')
+  assert.match(el('qm-qe-cell').textContent, /✖ Invalid custom cell/); assert.doesNotMatch(el('qm-qe-preview').textContent, /CELL_PARAMETERS/); checks++
+  assert.equal(el('next-4').disabled, true); checks++
+  setCodes([])
+}
 
 async function run () {
   await tick()
@@ -947,6 +1062,7 @@ async function run () {
   await click('btn-file-clear')
   assert.equal(el('file-display').classList.contains('hidden'), true); assert.equal(el('next-1').disabled, true); checks++
   assert.equal(w.testMonet.state.source.original, null); assert.equal(el('stat-atoms').textContent, '—'); assert.ok(el('panel-1').classList.contains('active')); checks++
+  await qmCellChecks()
   console.log(`PASS: ${checks} DOM/plot checks (stable atom IDs, dihedrals, clear controls, PNG export, theme).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => w.close())

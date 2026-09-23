@@ -187,16 +187,40 @@ def action_scan(cmd):
     ok(**traj.info())
 
 
+def _frame_lattice(traj, comment):
+    """The frame's extended XYZ lattice as 3x3 rows (A), or None when absent, malformed or degenerate.
+
+    The lattice only feeds the viewer and the QM cards: a comment line that cannot be parsed never fails the frame.
+    """
+    try:
+        try:
+            lattice, _ = traj.cell(comment)
+        except ImportError:  # without ASE: read the nine numbers directly, as traj.cell does
+            import re
+            match = re.search(rb'\bLattice="([^"]+)"', comment)
+            values = match.group(1).split() if match else []
+            lattice = np.array(values, dtype=float).reshape(3, 3) if len(values) == 9 else None
+        if lattice is None:
+            return None
+        lattice = np.asarray(lattice, dtype=float).reshape(3, 3)
+        if not np.all(np.isfinite(lattice)) or abs(np.linalg.det(lattice)) < 1e-12:
+            return None
+        return lattice.tolist()
+    except Exception:
+        return None
+
+
 def action_frame(cmd):
-    """Atoms of one frame for the viewer: [{index, element, x, y, z}] with 1-based MONET IDs."""
+    """Atoms of one frame for the viewer: [{index, element, x, y, z}] with 1-based MONET IDs, and its lattice."""
     traj = _require_xyz(cmd['filename'])
     index = cmd.get('index', 0)
     if type(index) is not int or not 0 <= index < traj.nframes:
         raise ValueError('Frame index is outside the trajectory.')
-    positions = traj.positions([index])[0]
+    [(_, positions, comment)] = list(traj.iter_frames([index]))
     symbols = traj.symbols_list()
     ok(atoms=[{'index': i + 1, 'element': symbols[i], 'x': float(x), 'y': float(y), 'z': float(z)}
-              for i, (x, y, z) in enumerate(positions.tolist())])
+              for i, (x, y, z) in enumerate(positions.tolist())],
+       lattice=_frame_lattice(traj, comment))
 
 
 def action_extract(cmd):

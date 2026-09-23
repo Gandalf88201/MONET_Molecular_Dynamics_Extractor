@@ -44,6 +44,26 @@ cases.push([build(['cp2k', 'qe'], { cp2k: { functional: 'pbe0', isolated: true, 
 // 9: broken-symmetry singlet forces an unrestricted reference regardless of the configured reference;
 // higher multiplicities keep the configured reference (restricted open-shell here) as before.
 cases.push([build(['gaussian'], { gaussian: { reference: 'r', brokenSymmetry: true } }), conf, {}])
+// 10-20: native cell blocks and position modes (spec.codes.<code>.cell / .format set directly; Task 3 wires the cards).
+const box3 = [[10, 0, 0], [0, 11, 0], [0, 0, 12.5]]
+const withFormat = (codes, cards, format, extra = { cell: box3 }) => {
+  const spec = build(codes, cards, extra)
+  for (const code of codes) spec.codes[code].format = { ...format }
+  return spec
+}
+cases.push([withFormat(['qe'], {}, { cellUnits: 'bohr' }), conf, {}]) // 10
+cases.push([withFormat(['qe'], {}, { cellUnits: 'alat' }), conf, {}]) // 11
+cases.push([withFormat(['qe'], {}, { positions: 'fractional' }), conf, {}]) // 12
+cases.push([build(['cp2k'], {}, { cell: [[0, 10, 0], [-10, 0, 0], [0, 0, 10]] }), conf, {}]) // 13: rotated cell, abc requested
+cases.push([withFormat(['cp2k'], {}, { positions: 'fractional' }), conf, {}]) // 14
+cases.push([withFormat(['cp2k'], {}, { cellStyle: 'vectors' }), conf, {}]) // 15
+cases.push([withFormat(['vasp'], {}, { positions: 'fractional' }), conf, {}]) // 16
+cases.push([(() => { const spec = build(['qe', 'vasp'], {}, { cell: box3 }); spec.codes.qe.cell = { rows: [[8, 0, 0], [0, 8, 0], [0, 0, 8]] }; return spec })(), conf, {}]) // 17: custom cell wins over spec.cell
+cases.push([(() => { const spec = build(['qe'], { qe: { isolated: true } }, { cell: box3 }); spec.codes.qe.cell = { rows: [[8, 0, 0], [0, 8, 0], [0, 0, 8]] }; return spec })(), conf, {}]) // 18: isolated wins over custom
+cases.push([withFormat(['vasp', 'qe'], { vasp: { isolated: true }, qe: { isolated: true } }, { positions: 'fractional', cellUnits: 'bohr' }, {}), conf, {}]) // 19: fractional after centring
+cases.push([{ codes: { cp2k: { folder: 'cp2k', files: [{ name: '{tag}.inp', template: '{cell_note}\n{cp2k_cell}\n' }] } }, // 20: legacy CP2K cell text unchanged
+  params: { charge: 0, multiplicities: [1], nproc: 6, mem: '4gb', method: 'b3lyp', basis: 'sto-3g', padding: 10 }, masses: QM.MASSES, cell: null }, conf, {}])
+cases.push([withFormat(['qe', 'cp2k', 'vasp', 'qbox'], {}, { cellUnits: 'alat', positions: 'fractional' }, {}), { ...conf, lattice }, {}]) // 21: hexagonal lattice everywhere
 
 const js = cases.map(([spec, c, runtime]) => QM.render(QM.validate(spec), c, runtime).map(file => [file.path, file.text]))
 const py = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
@@ -74,7 +94,9 @@ assert.equal(text(1)['vasp/POTCAR.spec'], 'C\nO_s\nH_h\nN\n'); assert.match(text
 assert.match(text(1)['cp2k/sing.inp'], /CUTOFF_RADIUS 4.9000\n/); assert.match(text(1)['cp2k/sing.inp'], /BASIS_SET AUX_FIT cFIT3\n/); checks++
 assert.match(text(1)['qe/sing.inp'], /! MONET configuration 4 \(frame 90\), singlet. Cell: applied manual cell.\n/); checks++
 // Isolated: centred box. Extent x: -0.54..2.5 (3.04) + 10 = 13.04, centre shift 6.52 - 0.98 = 5.54
-assert.match(text(0)['cp2k/sing.inp'], /A 13.0400000000 0.0000000000 0.0000000000\n/); checks++
+// CP2K default: the vacuum box is in the standard orientation → ABC + ALPHA_BETA_GAMMA.
+assert.match(text(0)['cp2k/sing.inp'], /    &CELL\n      ABC \[angstrom\] 13.0400000000 [0-9.]+ [0-9.]+\n      ALPHA_BETA_GAMMA 90.000000 90.000000 90.000000\n/); checks++
+assert.doesNotMatch(text(0)['cp2k/sing.inp'], /not in the standard orientation/); checks++
 assert.match(text(0)['qe/sing.inp'], /ATOMIC_POSITIONS angstrom\nC  5.5400000  /); checks++
 assert.match(text(0)['qe/sing.inp'], /Cell: vacuum box = extent \+ 10 A, configuration centred \(isolated system\)./); checks++
 // Trajectory lattice per frame
@@ -87,11 +109,11 @@ assert.equal(text(4)['conf4_sing.gjf'], `4gb 666 b3lyp/sto-3g 6\n${raw}`); check
 assert.equal(text(4)['qe/sing.pwi'].split('\n')[0], 'Cell: orthorhombic box = extent + 10 A padding (no cell in the trajectory).'); checks++
 assert.match(text(4)['qe/sing.pwi'], /\n13.0400000000  0.0000000000  0.0000000000\n/); checks++
 // Degenerate lattice
-assert.match(text(6)['sing.dat'], /\n0 1\nC  0.0000000  0.0000000  0.0000000\n/); assert.match(text(6)['cp2k/sing.inp'], /A 13.0400000000 /); checks++
+assert.match(text(6)['sing.dat'], /\n0 1\nC  0.0000000  0.0000000  0.0000000\n/); assert.match(text(6)['cp2k/sing.inp'], /ABC \[angstrom\] 13.0400000000 /); checks++
 assert.match(text(7)['sing.dat'], /^\[\] Cell: from the trajectory.\n0.0000000000  0.0000000000  0.0000000000\n/); checks++
 // CP2K user AUX_FIT basis, padding 7.5
 assert.match(text(8)['cp2k/sing.inp'], /    &KIND C\n      BASIS_SET TZV2P-MOLOPT-GTH\n      BASIS_SET AUX_FIT cpFIT3\n      POTENTIAL GTH-PBE\n    &END KIND/); checks++
-assert.match(text(8)['cp2k/sing.inp'], /A 10.5400000000 0.0000000000 0.0000000000\n/); assert.match(text(8)['qe/sing.inp'], /Cell: vacuum box = extent \+ 7.5 A, configuration centred/); checks++
+assert.match(text(8)['cp2k/sing.inp'], /ABC \[angstrom\] 10.5400000000 /); assert.match(text(8)['qe/sing.inp'], /Cell: vacuum box = extent \+ 7.5 A, configuration centred/); checks++
 // POTCAR runtime and exact NELECT: 4 + 6 + 2·1 + 5 − 1 = 16
 assert.equal(text(5)['vasp/POTCAR'], 'PAW C\nPAW O\nPAW H\nPAW N\n'); assert.match(text(5)['vasp/INCAR_doub'], /\nNELECT = 16\n/); checks++
 // Case 9: broken-symmetry singlet (reference 'r') → unrestricted for the singlet, restricted open-shell for the triplet.
@@ -99,6 +121,48 @@ assert.match(text(9)['sing.dat'], /#p ub3lyp\/6-31\+g\(d,p\) maxdisk=300gb nosym
 assert.match(text(9)['trip.dat'], /#p rob3lyp\/6-31\+g\(d,p\) maxdisk=300gb nosymm scf=tight gfinput/); checks++
 assert.doesNotMatch(text(9)['trip.dat'], /guess=mix/); checks++
 assert.match(text(0)['vasp/INCAR_sing'], /\n# Net charge 0: set NELECT = \(sum of ZVAL in POTCAR\) - \(0\) for charged systems.\n/); checks++
+
+// Native cell blocks and position modes.
+// QE bohr: cell and Cartesian positions in bohr (10 Å = 18.8972612463 bohr).
+assert.ok(text(10)['qe/sing.inp'].includes('CELL_PARAMETERS bohr\n18.8972612463  0.0000000000  0.0000000000\n0.0000000000  20.7869873709  0.0000000000\n')); checks++
+assert.ok(text(10)['qe/sing.inp'].includes('ATOMIC_POSITIONS bohr\nC  0.00000000  0.00000000  0.00000000\nO  2.28448991  ')); checks++
+assert.ok(text(10)['qe/sing.inp'].includes('  ibrav = 0\n  nat = 5\n')); checks++
+// QE alat: celldm(1) = |a| in bohr, rows in units of |a|, positions in Å.
+assert.ok(text(11)['qe/sing.inp'].includes('  ibrav = 0\n  celldm(1) = 18.8972612463\n  nat = 5\n')); checks++
+assert.ok(text(11)['qe/sing.inp'].includes('CELL_PARAMETERS alat\n1.0000000000  0.0000000000  0.0000000000\n0.0000000000  1.1000000000  0.0000000000\n0.0000000000  0.0000000000  1.2500000000\nATOMIC_POSITIONS angstrom\nC  0.0000000  ')); checks++
+// QE crystal: fractional positions, cell still in Å.
+assert.ok(text(12)['qe/sing.inp'].includes('CELL_PARAMETERS angstrom\n10.0000000000  0.0000000000  0.0000000000\n')); checks++
+assert.ok(text(12)['qe/sing.inp'].includes('ATOMIC_POSITIONS crystal\nC  0.0000000000  0.0000000000  0.0000000000\nO  0.1208900000  -0.0000000091  0.0000000000\n')); checks++
+// CP2K hexagonal trajectory lattice (b = |(-4.55, 7.881, 0)| = 9.1001462076 Å, γ = 119.999469°).
+assert.ok(text(2)['cp2k/sing.inp'].includes('    &CELL\n      ABC [angstrom] 9.1000000000 9.1001462076 15.0000000000\n      ALPHA_BETA_GAMMA 90.000000 90.000000 119.999469\n')); checks++
+// CP2K rotated cell: ABC requested but the cell is not in the standard orientation → vectors and a note.
+assert.ok(text(13)['cp2k/sing.inp'].includes('      A [angstrom] 0.0000000000 10.0000000000 0.0000000000\n      B [angstrom] -10.0000000000 0.0000000000 0.0000000000\n      C [angstrom] 0.0000000000 0.0000000000 10.0000000000\n')); checks++
+assert.ok(text(13)['cp2k/sing.inp'].startsWith('! MONET configuration 4 (frame 90), singlet. Cell: applied manual cell. Cell written as vectors (not in the standard orientation).\n')); checks++
+// CP2K fractional positions: SCALED .TRUE.
+assert.ok(text(14)['cp2k/sing.inp'].includes('    &COORD\n      SCALED .TRUE.\nC  0.0000000000  0.0000000000  0.0000000000\nO  0.1208900000  -0.0000000091  0.0000000000\n')); checks++
+assert.ok(text(14)['cp2k/sing.inp'].includes('      ABC [angstrom] 10.0000000000 11.0000000000 12.5000000000\n      ALPHA_BETA_GAMMA 90.000000 90.000000 90.000000\n')); checks++
+// CP2K vectors requested: A/B/C with units, no note.
+assert.ok(text(15)['cp2k/sing.inp'].includes('    &CELL\n      A [angstrom] 10.0000000000 0.0000000000 0.0000000000\n      B [angstrom] 0.0000000000 11.0000000000 0.0000000000\n      C [angstrom] 0.0000000000 0.0000000000 12.5000000000\n')); checks++
+assert.doesNotMatch(text(15)['cp2k/sing.inp'], /not in the standard orientation/); checks++
+// VASP Direct: mode line of the POSCAR (index 7: comment, scale, 3 vectors, species, counts), fractional coordinates grouped by element.
+assert.equal(text(16)['vasp/POSCAR'].split('\n')[7], 'Direct'); checks++
+assert.equal(text(16)['vasp/POSCAR'].split('\n').slice(8, 10).join('\n'), '0.0000000000  0.0000000000  0.0000000000\n0.1208900000  -0.0000000091  0.0000000000'); checks++
+assert.equal(text(10)['qe/sing.inp'].includes('Direct'), false); assert.equal(text(2)['vasp/POSCAR'].split('\n')[7], 'Cartesian'); checks++
+// Custom per-code cell wins over the applied cell (for that code only); isolated wins over the custom cell.
+assert.ok(text(17)['qe/sing.inp'].startsWith('! MONET configuration 4 (frame 90), singlet. Cell: custom cell for this code.\n')); checks++
+assert.ok(text(17)['qe/sing.inp'].includes('CELL_PARAMETERS angstrom\n8.0000000000  0.0000000000  0.0000000000\n')); checks++
+assert.match(text(17)['vasp/INCAR_sing'], /# Cell: applied manual cell.\n/); assert.ok(text(17)['vasp/POSCAR'].includes('\n10.0000000000  0.0000000000  0.0000000000\n')); checks++
+assert.match(text(18)['qe/sing.inp'], /Cell: vacuum box = extent \+ 10 A, configuration centred/); assert.ok(text(18)['qe/sing.inp'].includes('CELL_PARAMETERS angstrom\n13.0400000000  ')); checks++
+// Fractional positions come from the positions written (centred in the vacuum box): C x = 5.54 / 13.04.
+assert.equal(text(19)['vasp/POSCAR'].split('\n')[8].split('  ')[0], '0.4248466258'); checks++
+assert.ok(text(19)['qe/sing.inp'].includes('CELL_PARAMETERS bohr\n24.6420286651  0.0000000000  0.0000000000\n')); assert.ok(text(19)['qe/sing.inp'].includes('ATOMIC_POSITIONS crystal\nC  0.4248466258  ')); checks++
+// Legacy specs keep the old CP2K cell text (A/B/C, no unit).
+assert.equal(text(20)['cp2k/sing.inp'], 'Cell: orthorhombic box = extent + 10 A padding (no cell in the trajectory).\n      A 13.0400000000 0.0000000000 0.0000000000\n      B 0.0000000000 12.0550000000 0.0000000000\n      C 0.0000000000 0.0000000000 13.0000005010\n'); checks++
+// Hexagonal lattice with alat + crystal; Qbox stays in bohr.
+assert.ok(text(21)['qe/sing.inp'].includes('CELL_PARAMETERS alat\n1.0000000000  0.0000000000  0.0000000000\n-0.5000000000  0.8660439560  0.0000000000\n')); checks++
+assert.ok(text(21)['qe/sing.inp'].includes('  celldm(1) = 17.1965077341\n')); checks++
+assert.equal(text(21)['vasp/POSCAR'].split('\n')[7], 'Direct'); assert.match(text(21)['cp2k/sing.inp'], /SCALED \.TRUE\./); checks++
+assert.ok(text(21)['qbox/sing.i'].includes(`set cell ${lattice.flat().map(v => (v / 0.529177210903).toFixed(8)).join(' ')}\n`)); checks++
 
 // Plane-wave code without any cell: both engines refuse.
 const bare = build(['qe'], {})
@@ -110,6 +174,22 @@ import monet_qm
 spec, conf = json.load(sys.stdin)
 monet_qm.render(monet_qm.validate(spec), conf)
 `, root], { input: JSON.stringify([bare, conf]), stdio: 'pipe' })); checks++
+
+// Degenerate cell only found lazily (e.g. a near-collinear trajectory lattice in CP2K ABC mode, where
+// isStandardOrientation is satisfied but the volume is not): both engines label the error with the code
+// and configuration, identically, rather than surfacing the bare units-module message.
+{
+  const nearCollinear = [[10, 0, 0], [10, 1e-15, 0], [0, 0, 10]]
+  const degenerate = build(['cp2k'], {}, { cell: nearCollinear })
+  assert.throws(() => QM.render(QM.validate(degenerate), conf), /^Error: CP2K: configuration 4: The cell is degenerate \(zero volume\)\.$/); checks++
+  assert.throws(() => execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+spec, conf = json.load(sys.stdin)
+monet_qm.render(monet_qm.validate(spec), conf)
+`, root], { input: JSON.stringify([degenerate, conf]), stdio: 'pipe' }), error => /ValueError: CP2K: configuration 4: The cell is degenerate \(zero volume\)\./.test(String(error.stderr))); checks++
+}
 
 // Missing ZVAL: both engines refuse with the same message.
 const noZval = [build(['vasp'], { vasp: { isolated: true } }), conf, { potcar: { text: 'PAW\n', zval: { C: 4, O: 6, H: 1 } } }]
@@ -152,9 +232,20 @@ const rejected = [
   Object.assign(QM.defaultSpec(), { cell: [[10, 0, 0], [0, 10, 0], [0, 0, null]] }),
   (() => { const spec = legacySpec(); spec.params.method = 'b3lyp/x'; return spec })(),
   (() => { const spec = legacySpec(); spec.params.basis = 'sto-3g\\x'; return spec })(),
-  (() => { const spec = legacySpec(); spec.params.mem = '4gb\n%x'; return spec })()
+  (() => { const spec = legacySpec(); spec.params.mem = '4gb\n%x'; return spec })(),
+  // Cell format and custom per-code cell
+  (() => { const spec = QM.defaultSpec(['qe']); spec.codes.qe.format = { cellUnits: 'nm' }; return spec })(),
+  (() => { const spec = QM.defaultSpec(['cp2k']); spec.codes.cp2k.format = { cellStyle: 'matrix' }; return spec })(),
+  (() => { const spec = QM.defaultSpec(['vasp']); spec.codes.vasp.format = { positions: 'direct' }; return spec })(),
+  (() => { const spec = QM.defaultSpec(['vasp']); spec.codes.vasp.format = 'fractional'; return spec })(),
+  (() => { const spec = QM.defaultSpec(['qe']); spec.codes.qe.cell = { rows: [[8, 0], [0, 8], [0, 0]] }; return spec })(),
+  (() => { const spec = QM.defaultSpec(['qe']); spec.codes.qe.cell = { rows: [[8, 0, 0], [0, 8, 0], [0, 0, '8']] }; return spec })(),
+  (() => { const spec = QM.defaultSpec(['qe']); spec.codes.qe.cell = { rows: [[8, 0, 0], [0, 8, 0], [0, 0, Infinity]] }; return spec })(),
+  (() => { const spec = QM.defaultSpec(['qe']); spec.codes.qe.cell = [[8, 0, 0], [0, 8, 0], [0, 0, 8]]; return spec })(),
+  (() => { const spec = QM.defaultSpec(['qe']); spec.codes.qe.cell = { rows: [[8, 0, 0], [16, 0, 0], [0, 0, 8]] }; return spec })()
 ]
-const accepted = [Object.assign(QM.defaultSpec(), { masses: { C: 12.011, O: '15.999' } }), legacySpec()]
+const accepted = [Object.assign(QM.defaultSpec(), { masses: { C: 12.011, O: '15.999' } }), legacySpec(),
+  (() => { const spec = QM.defaultSpec(['qe', 'cp2k']); spec.codes.qe.cell = { rows: [[8, 0, 0], [0, 8, 0], [0, 0, 8]] }; spec.codes.qe.format = { cellUnits: 'alat', positions: 'fractional' }; spec.codes.cp2k.format = { cellStyle: 'vectors', cellUnits: 'angstrom', positions: 'cartesian' }; return spec })()]
 const pyValid = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
 import json, sys
 sys.path.insert(0, sys.argv[1])
@@ -170,6 +261,69 @@ print(json.dumps(out))
 for (const spec of rejected) { assert.throws(() => QM.validate(structuredClone(spec))); checks++ }
 for (const spec of accepted) { QM.validate(structuredClone(spec)); checks++ }
 assert.deepEqual(pyValid, [...rejected.map(() => false), ...accepted.map(() => true)]); checks++
+// normalize fills the cell/format defaults (missing keys only) in both engines.
+{
+  const spec = QM.defaultSpec(['qe', 'vasp']); delete spec.codes.qe.cell; delete spec.codes.qe.format; spec.codes.vasp.format = { positions: 'fractional' }
+  const pyNorm = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+spec = monet_qm.normalize(json.load(sys.stdin))
+print(json.dumps({code: [entry['cell'], entry['format']] for code, entry in spec['codes'].items()}))
+`, root], { input: JSON.stringify(spec) }))
+  QM.normalize(spec)
+  assert.deepEqual([spec.codes.qe.cell, spec.codes.qe.format], [null, { cellUnits: 'angstrom', cellStyle: 'abc', positions: 'cartesian' }]); checks++
+  assert.deepEqual(spec.codes.vasp.format, { cellUnits: 'angstrom', cellStyle: 'abc', positions: 'fractional' }); checks++
+  assert.deepEqual(pyNorm, { qe: [spec.codes.qe.cell, spec.codes.qe.format], vasp: [spec.codes.vasp.cell, spec.codes.vasp.format] }); checks++
+}
+// Degenerate custom cell: same message in both engines.
+{
+  const spec = QM.defaultSpec(['qe']); spec.codes.qe.cell = { rows: [[8, 0, 0], [16, 0, 0], [0, 0, 8]] }
+  assert.throws(() => QM.validate(structuredClone(spec)), /^Error: Quantum ESPRESSO \(pw\.x\): The cell is degenerate \(zero volume\)\.$/); checks++
+  assert.throws(() => execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+monet_qm.validate(json.load(sys.stdin))
+`, root], { input: JSON.stringify(spec), stdio: 'pipe' }), error => /ValueError: Quantum ESPRESSO \(pw\.x\): The cell is degenerate \(zero volume\)\./.test(String(error.stderr))); checks++
+}
+// Cell values are bounded (|v| ≤ 10000 Å) and enum errors print lists like JavaScript's String(array): same messages in both engines.
+{
+  const custom = rows => { const spec = QM.defaultSpec(['qe']); spec.codes.qe.cell = { rows }; return spec }
+  const format = (code, value) => { const spec = QM.defaultSpec([code]); spec.codes[code].format = value; return spec }
+  const cases = [
+    custom([[10001, 0, 0], [0, 8, 0], [0, 0, 8]]),
+    custom([[8, 0, 0], [0, 8, 0], [0, -2e4, 8]]),
+    Object.assign(QM.defaultSpec(['gaussian']), { cell: [[2e4, 0, 0], [0, 10, 0], [0, 0, 10]] }),
+    custom([[1e4, 0, 0], [0, 8, 0], [0, 0, 8]]),
+    format('qe', { cellUnits: ['nm', 'pm'] }),
+    format('cp2k', { cellStyle: [[1, 2], [3]] }),
+    format('vasp', { positions: [null, 'x', true, 1.5] })
+  ]
+  const jsMessages = cases.map(spec => { try { QM.validate(structuredClone(spec)); return null } catch (error) { return error.message } })
+  assert.deepEqual(jsMessages, [
+    'Quantum ESPRESSO (pw.x): Cell values must be at most 10000 Å.',
+    'Quantum ESPRESSO (pw.x): Cell values must be at most 10000 Å.',
+    'Cell values must be at most 10000 Å.',
+    null,
+    'Quantum ESPRESSO (pw.x): Unknown cell units nm,pm.',
+    'CP2K: Unknown cell style 1,2,3.',
+    'VASP: Unknown position mode ,x,true,1.5.'
+  ]); checks++
+  const pyMessages = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+out = []
+for spec in json.load(sys.stdin):
+    try:
+        monet_qm.validate(spec); out.append(None)
+    except ValueError as error:
+        out.append(str(error))
+print(json.dumps(out))
+`, root], { input: JSON.stringify(cases) }))
+  assert.deepEqual(pyMessages, jsMessages); checks++
+}
 for (const bad of [{ multiplicities: [] }, { multiplicities: [1, 1] }, { charge: 0.5 }]) {
   const spec = QM.defaultSpec(); Object.assign(spec.common, bad)
   assert.throws(() => QM.validate(spec)); checks++

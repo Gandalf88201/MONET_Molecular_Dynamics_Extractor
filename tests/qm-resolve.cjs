@@ -2,6 +2,7 @@
 // Code-level keyword mapping of the quantum-chemistry cards (qm-resolve.js).
 const assert = require('node:assert/strict')
 const R = require('../qm-resolve.js')
+const U = require('../units.js')
 let checks = 0
 const one = (code, partial) => R.resolve(code, R.settingsFor(code, partial))
 const text = (code, partial, i = 0) => one(code, partial)[i].template
@@ -28,7 +29,7 @@ assert.throws(() => R.resolve('gaussian', R.settingsFor('gaussian', { calc: 'vcr
 
 // Quantum ESPRESSO
 assert.deepEqual(one('qe', {}).map(f => f.name), ['{tag}.inp']); checks++
-assert.equal(text('qe', {}), "! MONET configuration {index} (frame {frame}), {state}. {cell_note}\n&CONTROL\n  calculation = 'scf'\n  prefix = '{tag}_conf{index}'\n  pseudo_dir = './pseudo'\n  outdir = './tmp'\n/\n&SYSTEM\n  ibrav = 0\n  nat = {nat}\n  ntyp = {ntyp}\n  ecutwfc = 50\n  ecutrho = 200\n  tot_charge = {charge}\n  nspin = {nspin}\n{qe_magnetization}/\n&ELECTRONS\n  conv_thr = 1.0d-8\n/\nATOMIC_SPECIES\n{qe_species}\nCELL_PARAMETERS angstrom\n{cell_ang}\nATOMIC_POSITIONS angstrom\n{coords}K_POINTS gamma\n"); checks++
+assert.equal(text('qe', {}), "! MONET configuration {index} (frame {frame}), {state}. {cell_note}\n&CONTROL\n  calculation = 'scf'\n  prefix = '{tag}_conf{index}'\n  pseudo_dir = './pseudo'\n  outdir = './tmp'\n/\n&SYSTEM\n  ibrav = 0\n{qe_celldm}  nat = {nat}\n  ntyp = {ntyp}\n  ecutwfc = 50\n  ecutrho = 200\n  tot_charge = {charge}\n  nspin = {nspin}\n{qe_magnetization}/\n&ELECTRONS\n  conv_thr = 1.0d-8\n/\nATOMIC_SPECIES\n{qe_species}\n{qe_cell_block}\n{qe_positions_block}K_POINTS gamma\n"); checks++
 assert.deepEqual(one('qe', { calc: 'optfreq', phx: true }).map(f => f.name), ['{tag}.inp', 'ph_{tag}.inp']); checks++
 assert.match(text('qe', { calc: 'optfreq', phx: true }), /calculation = 'relax'[\s\S]*\/\n&IONS\n\/\nATOMIC_SPECIES/); checks++
 assert.equal(text('qe', { calc: 'freq', phx: true }, 1), "MONET configuration {index} (frame {frame}), {state}: Gamma-point phonons after pw.x (apply the acoustic sum rule with dynmat.x)\n&INPUTPH\n  prefix = '{tag}_conf{index}'\n  outdir = './tmp'\n  fildyn = '{tag}_conf{index}.dyn'\n  tr2_ph = 1.0d-14\n/\n0.0 0.0 0.0\n"); checks++
@@ -39,18 +40,18 @@ assert.match(text('qe', { calc: 'md' }), /calculation = 'md'\n  prefix = '\{tag\
 assert.match(text('qe', { calc: 'md' }), /&IONS\n  ion_temperature = 'svr'\n  tempw = 300\n  nraise = 200\n\/\n/); checks++
 assert.match(text('qe', { calc: 'md', md: { ensemble: 'nve' } }), /&IONS\n  ion_temperature = 'not_controlled'\n\/\n/); checks++
 assert.match(text('qe', { functional: 'pbe0', dispersion: 'd3bj', isolated: true, extra: 'nbnd = 40; occupations = "fixed"', ecutwfc: 60, ecutrhoFactor: 8, pseudoDir: '/pp' }), /pseudo_dir = '\/pp'[\s\S]*ecutwfc = 60\n  ecutrho = 480\n[\s\S]*\{qe_magnetization\}  input_dft = 'pbe0'\n  vdw_corr = 'dft-d3'\n  dftd3_version = 4\n  assume_isolated = 'mt'\n  nbnd = 40\n  occupations = "fixed"\n\/\n/); checks++
-assert.match(text('qe', { kpoints: 'grid', grid: [4, 4, 2] }), /\{coords\}K_POINTS automatic\n4 4 2 0 0 0\n$/); checks++
+assert.match(text('qe', { kpoints: 'grid', grid: [4, 4, 2] }), /\{qe_positions_block\}K_POINTS automatic\n4 4 2 0 0 0\n$/); checks++
 
 // ph.x refuses K_POINTS gamma: Γ + ph.x on a Freq/Opt+Freq calculation becomes a 1x1x1 automatic mesh.
-assert.match(text('qe', { calc: 'freq', phx: true }), /\{coords\}K_POINTS automatic\n1 1 1 0 0 0\n$/); checks++
-assert.match(text('qe', { calc: 'optfreq', phx: true }), /\{coords\}K_POINTS automatic\n1 1 1 0 0 0\n$/); checks++
-assert.match(text('qe', { calc: 'freq', phx: false }), /\{coords\}K_POINTS gamma\n$/); checks++
-assert.match(text('qe', { calc: 'sp', phx: true }), /\{coords\}K_POINTS gamma\n$/); checks++ // phx only forces the mesh for Freq/Opt+Freq
-assert.match(text('qe', { calc: 'freq', phx: true, kpoints: 'grid', grid: [2, 2, 2] }), /\{coords\}K_POINTS automatic\n2 2 2 0 0 0\n$/); checks++ // an explicit grid wins
+assert.match(text('qe', { calc: 'freq', phx: true }), /\{qe_positions_block\}K_POINTS automatic\n1 1 1 0 0 0\n$/); checks++
+assert.match(text('qe', { calc: 'optfreq', phx: true }), /\{qe_positions_block\}K_POINTS automatic\n1 1 1 0 0 0\n$/); checks++
+assert.match(text('qe', { calc: 'freq', phx: false }), /\{qe_positions_block\}K_POINTS gamma\n$/); checks++
+assert.match(text('qe', { calc: 'sp', phx: true }), /\{qe_positions_block\}K_POINTS gamma\n$/); checks++ // phx only forces the mesh for Freq/Opt+Freq
+assert.match(text('qe', { calc: 'freq', phx: true, kpoints: 'grid', grid: [2, 2, 2] }), /\{qe_positions_block\}K_POINTS automatic\n2 2 2 0 0 0\n$/); checks++ // an explicit grid wins
 
 // VASP
 assert.deepEqual(one('vasp', {}).map(f => f.name), ['POSCAR', 'INCAR_{tag}', 'KPOINTS', 'POTCAR.spec']); checks++
-assert.equal(text('vasp', {}, 0), 'MONET configuration {index} (frame {frame}); atoms grouped by element\n1.0\n{cell_ang}\n{vasp_species}\n{vasp_counts}\nCartesian\n{vasp_coords}\n'); checks++
+assert.equal(text('vasp', {}, 0), 'MONET configuration {index} (frame {frame}); atoms grouped by element\n1.0\n{cell_ang}\n{vasp_species}\n{vasp_counts}\n{vasp_coord_mode}\n{vasp_coords}\n'); checks++
 assert.equal(text('vasp', {}, 1), 'SYSTEM = MONET configuration {index} {state}\n# {cell_note}\n{vasp_nelect}\nENCUT = 500\nISPIN = {nspin}\nNUPDOWN = {unpaired}\nISMEAR = 0\nSIGMA = 0.01\nEDIFF = 1E-6\nNSW = 0\n'); checks++
 assert.equal(text('vasp', {}, 2), 'MONET k-points\n0\nGamma\n1 1 1\n0 0 0\n'); checks++
 assert.equal(text('vasp', { kpoints: 'grid', grid: [3, 3, 1] }, 2), 'MONET k-points\n0\nGamma\n3 3 1\n0 0 0\n'); checks++
@@ -71,7 +72,7 @@ assert.match(text('qe', { ecutwfc: 33.3, ecutrhoFactor: 6 }), /  ecutrho = 199.8
 
 // CP2K
 assert.deepEqual(one('cp2k', {}).map(f => f.name), ['{tag}.inp']); checks++
-assert.equal(text('cp2k', {}), '! MONET configuration {index} (frame {frame}), {state}. {cell_note}\n&GLOBAL\n  PROJECT {tag}_conf{index}\n  RUN_TYPE ENERGY\n&END GLOBAL\n&FORCE_EVAL\n  METHOD Quickstep\n  &DFT\n    BASIS_SET_FILE_NAME BASIS_MOLOPT\n    POTENTIAL_FILE_NAME GTH_POTENTIALS\n    CHARGE {charge}\n    MULTIPLICITY {mult}\n    UKS {uks}\n    &MGRID\n      CUTOFF 400\n      REL_CUTOFF 60\n    &END MGRID\n    &XC\n      &XC_FUNCTIONAL PBE\n      &END XC_FUNCTIONAL\n    &END XC\n  &END DFT\n  &SUBSYS\n    &CELL\n{cp2k_cell}\n      PERIODIC XYZ\n    &END CELL\n    &COORD\n{coords}    &END COORD\n{cp2k_kinds}\n  &END SUBSYS\n&END FORCE_EVAL\n'); checks++
+assert.equal(text('cp2k', {}), '! MONET configuration {index} (frame {frame}), {state}. {cell_note}\n&GLOBAL\n  PROJECT {tag}_conf{index}\n  RUN_TYPE ENERGY\n&END GLOBAL\n&FORCE_EVAL\n  METHOD Quickstep\n  &DFT\n    BASIS_SET_FILE_NAME BASIS_MOLOPT\n    POTENTIAL_FILE_NAME GTH_POTENTIALS\n    CHARGE {charge}\n    MULTIPLICITY {mult}\n    UKS {uks}\n    &MGRID\n      CUTOFF 400\n      REL_CUTOFF 60\n    &END MGRID\n    &XC\n      &XC_FUNCTIONAL PBE\n      &END XC_FUNCTIONAL\n    &END XC\n  &END DFT\n  &SUBSYS\n    &CELL\n{cp2k_cell}\n      PERIODIC XYZ\n    &END CELL\n    &COORD\n{cp2k_coords}    &END COORD\n{cp2k_kinds}\n  &END SUBSYS\n&END FORCE_EVAL\n'); checks++
 assert.deepEqual(one('cp2k', { calc: 'optfreq' }).map(f => f.name), ['{tag}_opt.inp', '{tag}_freq.inp']); checks++
 assert.match(text('cp2k', { calc: 'optfreq' }, 1), /RUN_TYPE VIBRATIONAL_ANALYSIS\n/); checks++
 assert.match(text('cp2k', { calc: 'vcrelax', pressure: 1 }), /RUN_TYPE CELL_OPT\n&END GLOBAL\n&MOTION\n  &CELL_OPT\n    EXTERNAL_PRESSURE 10000\n    TYPE DIRECT_CELL_OPT\n  &END CELL_OPT\n&END MOTION\n&FORCE_EVAL\n  METHOD Quickstep\n  STRESS_TENSOR ANALYTICAL\n  &DFT\n/); checks++
@@ -182,5 +183,127 @@ assert.deepEqual(ready(['qe'], { qe: { phx: true, calc: 'sp', isolated: true } }
 // CP2K: k-point grids with an isolated system or an ADMM hybrid (warnings).
 assert.deepEqual(ready(['cp2k'], { cp2k: { kpoints: 'grid', grid: [2, 2, 2], isolated: true } }, noCell).warnings, ['CP2K: k-point grids are not used for an isolated system (PERIODIC NONE).']); checks++
 assert.deepEqual(ready(['cp2k'], { cp2k: { kpoints: 'grid', grid: [2, 2, 2], functional: 'pbe0' } }, cubic).warnings, ['CP2K: hybrid functionals are expensive with plane waves.', 'CP2K: ADMM hybrids with k-points are expensive and not supported by every CP2K version.']); checks++
+
+// Per-card cell settings: DEFAULTS additions (structure/custom source, custom parameters, QE units, CP2K style, positions mode).
+for (const code of ['qe', 'vasp', 'cp2k', 'qbox']) {
+  assert.equal(R.DEFAULTS[code].cellSource, 'structure'); assert.equal(R.DEFAULTS[code].cellCustom, null); assert.equal(R.DEFAULTS[code].positions, 'cartesian'); checks++
+}
+assert.equal(R.DEFAULTS.qe.cellUnits, 'angstrom'); assert.equal(R.DEFAULTS.cp2k.cellStyle, 'abc'); checks++
+assert.equal(R.DEFAULTS.vasp.cellUnits, undefined); assert.equal(R.DEFAULTS.vasp.cellStyle, undefined); checks++
+assert.equal(R.DEFAULTS.qbox.cellUnits, undefined); assert.equal(R.DEFAULTS.qbox.cellStyle, undefined); checks++
+// The new keys do not change any existing default template output (RESOLVERS never read them).
+assert.equal(text('qe', {}), text('qe', { cellSource: 'structure' })); checks++
+
+// validCustomCell: 6 finite numbers, positive lengths, angles strictly between 0° and 180°, non-degenerate.
+assert.equal(R.validCustomCell([10, 11, 12.5, 90, 90, 90]), true); checks++
+assert.equal(R.validCustomCell(null), false); assert.equal(R.validCustomCell([10, 11, 12.5, 90, 90]), false); checks++
+assert.equal(R.validCustomCell([10, 11, 12.5, 90, 90, '90']), false); assert.equal(R.validCustomCell([10, 11, 12.5, 90, 90, NaN]), false); checks++
+assert.equal(R.validCustomCell([0, 11, 12.5, 90, 90, 90]), false); assert.equal(R.validCustomCell([10, -11, 12.5, 90, 90, 90]), false); checks++
+assert.equal(R.validCustomCell([10, 11, 12.5, 0, 90, 90]), false); assert.equal(R.validCustomCell([10, 11, 12.5, 180, 90, 90]), false); checks++
+assert.equal(R.validCustomCell([10, 11, 12.5, 10, 10, 170]), false); // in-range lengths/angles, geometrically degenerate
+
+// buildSpec: cell/format per plane-wave code; molecular codes get neither a cell nor a native format.
+{
+  const custom = [10, 11, 12.5, 90, 90, 90]
+  const spec = R.buildSpec({ codes: ['gaussian', 'qe', 'vasp', 'cp2k', 'qbox'], common: { charge: 0, multiplicities: [1] }, symbols: syms, cell: null,
+    cards: { qe: { cellSource: 'custom', cellCustom: custom, cellUnits: 'bohr' }, vasp: { positions: 'fractional' }, cp2k: { cellStyle: 'vectors' } } })
+  assert.equal(spec.codes.gaussian.cell, null); assert.equal(spec.codes.gaussian.format, undefined); checks++
+  assert.deepEqual(spec.codes.qe.cell, { rows: U.cellVectors(custom) }); assert.deepEqual(spec.codes.qe.format, { cellUnits: 'bohr', cellStyle: 'abc', positions: 'cartesian' }); checks++
+  assert.equal(spec.codes.vasp.cell, null); assert.deepEqual(spec.codes.vasp.format, { cellUnits: 'angstrom', cellStyle: 'abc', positions: 'fractional' }); checks++
+  assert.equal(spec.codes.cp2k.cell, null); assert.deepEqual(spec.codes.cp2k.format, { cellUnits: 'angstrom', cellStyle: 'vectors', positions: 'cartesian' }); checks++
+  assert.equal(spec.codes.qbox.cell, null); assert.deepEqual(spec.codes.qbox.format, { cellUnits: 'angstrom', cellStyle: 'abc', positions: 'cartesian' }); checks++
+  // custom[code] template edits still take effect and QM.validate() accepts the spec unmodified.
+  const QM = require('../qm-inputs.js')
+  QM.validate(spec); checks++
+}
+// cellSource 'structure' (default): no per-code cell, even with a stale cellCustom left over from a previous edit.
+{
+  const spec = R.buildSpec({ codes: ['qe'], common: { charge: 0, multiplicities: [1] }, symbols: syms, cell: null, cards: { qe: { cellSource: 'structure', cellCustom: [10, 11, 12.5, 90, 90, 90] } } })
+  assert.equal(spec.codes.qe.cell, null); checks++
+}
+
+// describe(): the optional 4th argument (effective cell rows) appends a cell summary for plane-wave codes.
+{
+  const common = { charge: 0, multiplicities: [1] }
+  const rows = [[10, 0, 0], [0, 11, 0], [0, 0, 12.5]]
+  assert.equal(R.describe('qe', R.settingsFor('qe'), common, rows), 'QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, single point, singlet, cell 10×11×12.5 Å (90/90/90°)'); checks++
+  // No 4th argument, or a falsy one: unchanged from before this argument existed (no cell text).
+  assert.equal(R.describe('qe', R.settingsFor('qe'), common), 'QE pw.x: functional from the pseudopotentials, ecutwfc 50 Ry, Γ point, single point, singlet'); checks++
+  assert.equal(R.describe('qe', R.settingsFor('qe'), common, null), R.describe('qe', R.settingsFor('qe'), common)); checks++
+  // Molecular codes never get the cell text, even when rows are given.
+  assert.doesNotMatch(R.describe('gaussian', R.settingsFor('gaussian'), common, rows), / cell /); checks++
+  // A degenerate cell (e.g. a near-collinear trajectory lattice) is silently omitted, not thrown.
+  const degenerate = [[10, 0, 0], [10, 1e-15, 0], [0, 0, 10]]
+  assert.doesNotThrow(() => R.describe('qe', R.settingsFor('qe'), common, degenerate)); checks++
+  assert.doesNotMatch(R.describe('qe', R.settingsFor('qe'), common, degenerate), / cell /); checks++
+}
+// buildSpec wires describe()'s effective cell: custom rows win over the applied cell; the applied cell shows when there is no custom cell.
+{
+  const common = { charge: 0, multiplicities: [1] }
+  const applied = [[9, 0, 0], [0, 9, 0], [0, 0, 9]]
+  const custom = [10, 11, 12.5, 90, 90, 90]
+  const withApplied = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: applied, cards: {} })
+  assert.match(withApplied.summary.qe, / cell 9×9×9 Å \(90\/90\/90°\)$/); checks++
+  const withCustom = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: applied, cards: { qe: { cellSource: 'custom', cellCustom: custom } } })
+  assert.match(withCustom.summary.qe, / cell 10×11×12.5 Å \(90\/90\/90°\)$/); checks++
+  const withNeither = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: null, cards: { qe: { isolated: true } } })
+  assert.doesNotMatch(withNeither.summary.qe, / cell /); checks++
+  // The isolated vacuum box wins over the custom and the applied cell, as in the engines.
+  const isolatedCustom = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: applied, cards: { qe: { isolated: true, cellSource: 'custom', cellCustom: custom } } })
+  assert.equal(isolatedCustom.codes.qe.cell, null); assert.doesNotMatch(isolatedCustom.summary.qe, /cell/); checks++
+  const isolatedApplied = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: applied, cards: { qe: { isolated: true } } })
+  assert.doesNotMatch(isolatedApplied.summary.qe, /cell/); checks++
+  // An invalid custom cell never reaches the engines (readiness blocks it).
+  const invalidCustom = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: applied, cards: { qe: { cellSource: 'custom', cellCustom: [0, 11, 12.5, 90, 90, 90] } } })
+  assert.equal(invalidCustom.codes.qe.cell, null); checks++
+}
+// A custom cell keeps the orientation of the structure lattice (buildSpec's structureRows), never rotating it relative to the atoms.
+{
+  const common = { charge: 0, multiplicities: [1] }
+  const mp = [[1.6, -2.771281, 0], [1.6, 2.771281, 0], [0, 0, 5.2]]
+  const longer = U.cellParameters(mp); longer[2] = 10
+  const spec = R.buildSpec({ codes: ['qe', 'vasp'], common, symbols: syms, cell: null, structureRows: mp, cards: { qe: { cellSource: 'custom', cellCustom: longer }, vasp: { cellSource: 'custom', cellCustom: U.cellParameters(mp) } } })
+  const near = (rows, expected) => rows.flat().forEach((v, i) => assert.ok(Math.abs(v - expected.flat()[i]) <= 1e-9, `${v} vs ${expected.flat()[i]}`))
+  near(spec.codes.qe.cell.rows, [mp[0], mp[1], [0, 0, 10]]); checks++
+  near(spec.codes.vasp.cell.rows, mp); checks++
+  assert.match(spec.summary.qe, /, cell 3\.2×3\.2×10 Å \(90\/90\/120°\)$/); checks++
+  // A structure cell in the standard orientation (e.g. an applied crystal cell) leaves the custom rows as they are.
+  const standard = R.buildSpec({ codes: ['qe'], common, symbols: syms, cell: null, structureRows: [[9, 0, 0], [0, 9, 0], [0, 0, 9]], cards: { qe: { cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } } })
+  assert.deepEqual(standard.codes.qe.cell.rows, U.cellVectors([10, 11, 12.5, 90, 90, 90])); checks++
+}
+
+// readiness: cellSource 'custom' skips the "no cell" block even without an applied/trajectory cell.
+assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } }, noCell).blocked, []); checks++
+// Invalid custom cell parameters block with the exact message, whether or not a cell would otherwise be known.
+assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: [0, 11, 12.5, 90, 90, 90] } }, noCell).blocked,
+  ['Quantum ESPRESSO (pw.x): enter a valid custom cell (positive lengths, angles between 0° and 180°).']); checks++
+assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: null } }, cubic).blocked,
+  ['Quantum ESPRESSO (pw.x): enter a valid custom cell (positive lengths, angles between 0° and 180°).']); checks++
+// A valid custom cell over a trajectory lattice warns that it replaces the per-configuration lattice.
+const trajectory = { cell: { source: 'trajectory', rows: [[10, 0, 0], [0, 10, 0], [0, 0, 10]] }, extent: [3, 2, 1], symbols: syms, potcarAvailable: true }
+assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } }, trajectory).warnings,
+  ['Quantum ESPRESSO (pw.x): the custom cell replaces the trajectory lattice for every configuration.']); checks++
+// A valid custom cell over an applied (non-trajectory) cell does not warn.
+assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } }, cubic).warnings, []); checks++
+// A valid custom cell with no known cell at all (noCell) does not warn either (nothing is being replaced).
+assert.deepEqual(ready(['qe'], { qe: { cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } }, noCell).warnings, []); checks++
+// Isolated wins over the custom cell: no custom-cell block, no "replaces the trajectory lattice" warning.
+assert.deepEqual(ready(['qe'], { qe: { isolated: true, cellSource: 'custom', cellCustom: null } }, noCell).blocked, []); checks++
+assert.ok(!ready(['qe'], { qe: { isolated: true, cellSource: 'custom', cellCustom: [10, 11, 12.5, 90, 90, 90] } }, trajectory).warnings.some(w => /replaces the trajectory lattice/.test(w))); checks++
+
+// CP2K hybrid truncation radius uses the effective cell: a valid custom cell overrides ctx.cell for the radius warning.
+{
+  const small = [7, 7, 7, 90, 90, 90] // matches ctx.cell rows of 7 Å in the existing radius warning test (3.4 Å, below 4 Å)
+  const big = [20, 20, 20, 90, 90, 90]
+  const smallCtx = { ...cubic, cell: { source: 'applied', rows: [[7, 0, 0], [0, 7, 0], [0, 0, 7]] } }
+  assert.deepEqual(ready(['cp2k'], { cp2k: { functional: 'pbe0', cellSource: 'custom', cellCustom: small } }, cubic).warnings,
+    ['CP2K: hybrid functionals are expensive with plane waves.', 'CP2K: truncation radius 3.4 Å is below 4 Å; the cell is too small for the truncated Coulomb operator.']); checks++
+  // A large custom cell overrides a small ctx.cell: no radius warning.
+  assert.deepEqual(ready(['cp2k'], { cp2k: { functional: 'pbe0', cellSource: 'custom', cellCustom: big } }, smallCtx).warnings,
+    ['CP2K: hybrid functionals are expensive with plane waves.']); checks++
+  // Invalid custom cell: falls back to ctx.cell for the radius warning (the "no cell" block above covers the invalid entry itself).
+  assert.deepEqual(ready(['cp2k'], { cp2k: { functional: 'pbe0', cellSource: 'custom', cellCustom: [0, 0, 0, 90, 90, 90] } }, smallCtx).warnings,
+    ['CP2K: hybrid functionals are expensive with plane waves.', 'CP2K: truncation radius 3.4 Å is below 4 Å; the cell is too small for the truncated Coulomb operator.']); checks++
+}
 
 console.log(`PASS: ${checks} QM resolve checks (keywords per code, defaults).`)

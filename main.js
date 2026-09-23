@@ -98,7 +98,7 @@ async function analyzeTrajectoryFile (filePath) {
 async function readTrajectoryFrame (filePath, frameIndex) {
   if (!Number.isInteger(frameIndex) || frameIndex < 0) throw new Error('Invalid frame index.')
   for await (const frame of XYZ.frames(trajectoryLines(filePath))) {
-    if (frame.index === frameIndex) return { atoms: frame.atoms }
+    if (frame.index === frameIndex) return { atoms: frame.atoms, lattice: frame.lattice || null }
   }
   throw new Error('Frame index is outside the trajectory.')
 }
