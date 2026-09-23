@@ -188,17 +188,26 @@ def action_scan(cmd):
 
 
 def _frame_lattice(traj, comment):
-    """The frame's extended XYZ lattice as 3x3 rows (A), or None when absent or degenerate."""
+    """The frame's extended XYZ lattice as 3x3 rows (A), or None when absent, malformed or degenerate.
+
+    The lattice only feeds the viewer and the QM cards: a comment line that cannot be parsed never fails the frame.
+    """
     try:
-        lattice, _ = traj.cell(comment)
-    except ImportError:  # without ASE: read the nine numbers directly, as traj.cell does
-        import re
-        match = re.search(rb'\bLattice="([^"]+)"', comment)
-        values = match.group(1).split() if match else []
-        lattice = np.array(values, dtype=float).reshape(3, 3) if len(values) == 9 else None
-    if lattice is None or not np.all(np.isfinite(lattice)) or abs(np.linalg.det(lattice)) < 1e-12:
+        try:
+            lattice, _ = traj.cell(comment)
+        except ImportError:  # without ASE: read the nine numbers directly, as traj.cell does
+            import re
+            match = re.search(rb'\bLattice="([^"]+)"', comment)
+            values = match.group(1).split() if match else []
+            lattice = np.array(values, dtype=float).reshape(3, 3) if len(values) == 9 else None
+        if lattice is None:
+            return None
+        lattice = np.asarray(lattice, dtype=float).reshape(3, 3)
+        if not np.all(np.isfinite(lattice)) or abs(np.linalg.det(lattice)) < 1e-12:
+            return None
+        return lattice.tolist()
+    except Exception:
         return None
-    return lattice.tolist()
 
 
 def action_frame(cmd):

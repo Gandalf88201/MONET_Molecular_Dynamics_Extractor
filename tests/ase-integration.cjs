@@ -90,6 +90,28 @@ async function main () {
     assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame(periodicWater, 0)).lattice)), [[10, 0, 0], [0, 10, 0], [0, 0, 10]]); checks++
     file = saved
   }
+  // A malformed frame lattice (wrong count, non-numeric, broken quoting) is reported as no lattice, never as a failed frame.
+  {
+    const temp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'monet-lattice-'))
+    const frame = header => `1\n${header}\nO 0 0 0\n`
+    const xyz = path.join(temp, 'lattices.xyz')
+    fs.writeFileSync(xyz, [
+      'Lattice="10 0 0 0 10 0 0 0 10" Properties=species:S:1:pos:R:3',
+      'Lattice="10 0 0 0 10" Properties=species:S:1:pos:R:3',
+      'Lattice="a b c d e f g h i" Properties=species:S:1:pos:R:3',
+      'Lattice="10 0 0 0 10 0 0 0 10 Properties=species:S:1:pos:R:3',
+      'Lattice="10 0 0 0 10 0 0 0 nan" Properties=species:S:1:pos:R:3'
+    ].map(frame).join(''))
+    const out = require('node:child_process').execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import ase_bridge, monet_io
+traj = monet_io.XYZTrajectory(sys.argv[2], use_cache=False)
+print(json.dumps([ase_bridge._frame_lattice(traj, comment) for _, _, comment in traj.iter_frames(list(range(traj.nframes)))]))
+`, root, xyz]).toString()
+    assert.deepEqual(JSON.parse(out.trim().split('\n').pop()), [[[10, 0, 0], [0, 10, 0], [0, 0, 10]], null, null, null, null]); checks++
+    fs.rmSync(temp, { recursive: true, force: true })
+  }
   const events = []
   api.onProgress(event => events.push(event))
   const processed = await api.processTrajectory({ filePath: name, atomCount: 3, selectedAtoms: [1, 3], frequency: 1, computeAverage: true, generateGaussian: true })
