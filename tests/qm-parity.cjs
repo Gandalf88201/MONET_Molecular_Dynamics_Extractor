@@ -287,6 +287,43 @@ import monet_qm
 monet_qm.validate(json.load(sys.stdin))
 `, root], { input: JSON.stringify(spec), stdio: 'pipe' }), error => /ValueError: Quantum ESPRESSO \(pw\.x\): The cell is degenerate \(zero volume\)\./.test(String(error.stderr))); checks++
 }
+// Cell values are bounded (|v| ≤ 10000 Å) and enum errors print lists like JavaScript's String(array): same messages in both engines.
+{
+  const custom = rows => { const spec = QM.defaultSpec(['qe']); spec.codes.qe.cell = { rows }; return spec }
+  const format = (code, value) => { const spec = QM.defaultSpec([code]); spec.codes[code].format = value; return spec }
+  const cases = [
+    custom([[10001, 0, 0], [0, 8, 0], [0, 0, 8]]),
+    custom([[8, 0, 0], [0, 8, 0], [0, -2e4, 8]]),
+    Object.assign(QM.defaultSpec(['gaussian']), { cell: [[2e4, 0, 0], [0, 10, 0], [0, 0, 10]] }),
+    custom([[1e4, 0, 0], [0, 8, 0], [0, 0, 8]]),
+    format('qe', { cellUnits: ['nm', 'pm'] }),
+    format('cp2k', { cellStyle: [[1, 2], [3]] }),
+    format('vasp', { positions: [null, 'x', true, 1.5] })
+  ]
+  const jsMessages = cases.map(spec => { try { QM.validate(structuredClone(spec)); return null } catch (error) { return error.message } })
+  assert.deepEqual(jsMessages, [
+    'Quantum ESPRESSO (pw.x): Cell values must be at most 10000 Å.',
+    'Quantum ESPRESSO (pw.x): Cell values must be at most 10000 Å.',
+    'Cell values must be at most 10000 Å.',
+    null,
+    'Quantum ESPRESSO (pw.x): Unknown cell units nm,pm.',
+    'CP2K: Unknown cell style 1,2,3.',
+    'VASP: Unknown position mode ,x,true,1.5.'
+  ]); checks++
+  const pyMessages = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
+import json, sys
+sys.path.insert(0, sys.argv[1])
+import monet_qm
+out = []
+for spec in json.load(sys.stdin):
+    try:
+        monet_qm.validate(spec); out.append(None)
+    except ValueError as error:
+        out.append(str(error))
+print(json.dumps(out))
+`, root], { input: JSON.stringify(cases) }))
+  assert.deepEqual(pyMessages, jsMessages); checks++
+}
 for (const bad of [{ multiplicities: [] }, { multiplicities: [1, 1] }, { charge: 0.5 }]) {
   const spec = QM.defaultSpec(); Object.assign(spec.common, bad)
   assert.throws(() => QM.validate(spec)); checks++

@@ -37,6 +37,10 @@
   const FORMAT = { cellUnits: 'angstrom', cellStyle: 'abc', positions: 'cartesian' }
   const FORMAT_VALUES = { cellUnits: ['angstrom', 'bohr', 'alat'], cellStyle: ['abc', 'vectors'], positions: ['cartesian', 'fractional'] }
   const isMatrix = m => Array.isArray(m) && m.length === 3 && m.every(row => Array.isArray(row) && row.length === 3 && row.every(v => typeof v === 'number' && Number.isFinite(v)))
+  // Custom and applied cells: every vector component within ±MAX_CELL Å.
+  const MAX_CELL = 1e4
+  const CELL_BOUND = 'Cell values must be at most 10000 Å.'
+  const bounded = m => m.every(row => row.every(v => Math.abs(v) <= MAX_CELL))
 
   // Default spec: default cards, plane-wave codes isolated so they always render.
   function defaultSpec (codes = ['gaussian']) {
@@ -111,6 +115,7 @@
       if (!FORMAT_VALUES.positions.includes(entry.format.positions)) throw new Error(`${label}Unknown position mode ${entry.format.positions}.`)
       if (entry.cell != null) {
         if (!isObject(entry.cell) || !isMatrix(entry.cell.rows)) throw new Error(`${label}Custom cell must be a 3x3 matrix.`)
+        if (!bounded(entry.cell.rows)) throw new Error(`${label}${CELL_BOUND}`)
         try { U.cellParameters(entry.cell.rows) } catch (error) { throw new Error(`${label}${error.message}`) }
       }
       if (entry.potcar && !(isObject(entry.potcar) && typeof entry.potcar.library === 'string' && entry.potcar.library)) throw new Error(`${label}Choose the POTCAR library folder.`)
@@ -120,6 +125,7 @@
     }
     const cell = spec.cell
     if (cell != null && !isMatrix(cell)) throw new Error('Cell must be a 3x3 matrix.')
+    if (cell != null && !bounded(cell)) throw new Error(CELL_BOUND)
     if (spec.summary != null && !(isObject(spec.summary) && Object.values(spec.summary).every(text => typeof text === 'string'))) throw new Error('Invalid quantum-chemistry input summary.')
     return spec
   }

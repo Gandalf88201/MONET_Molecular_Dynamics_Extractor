@@ -44,7 +44,26 @@
 
   const isStandardOrientation = (rows, tol = 1e-6) => Math.abs(rows[0][1]) <= tol && Math.abs(rows[0][2]) <= tol && Math.abs(rows[1][2]) <= tol && rows[0][0] > 0 && rows[1][1] > 0 && rows[2][2] > 0
 
-  const api = { BOHR_ANGSTROM, HARTREE_EV, RY_EV, AU_TIME_FS, RY_TIME_FS, angstromToBohr, bohrToAngstrom, cellVectors, cellParameters, fractional, isStandardOrientation }
+  // Row-vector matrix product and inverse (3×3).
+  const matMul = (A, B) => A.map(row => [0, 1, 2].map(j => row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j]))
+  function inverse (M) {
+    const [a, b, c] = M
+    const det = dot(a, cross(b, c))
+    const cols = [cross(b, c), cross(c, a), cross(a, b)] // columns of the inverse, times det
+    return [0, 1, 2].map(i => cols.map(col => col[i] / det))
+  }
+  // A custom cell (rows built in the standard orientation) turned into the orientation of the reference lattice:
+  // Q = inverse(standard(reference)) · reference is the rotation from the standard setting to the reference one, and
+  // customRows · Q keeps the cell fixed relative to the atoms. No reference, a reference already in the standard
+  // orientation or a degenerate one: customRows unchanged.
+  function orientLike (customRows, referenceRows) {
+    if (!referenceRows || isStandardOrientation(referenceRows)) return customRows
+    let standard
+    try { standard = cellVectors(cellParameters(referenceRows)) } catch (error) { return customRows }
+    return matMul(customRows, matMul(inverse(standard), referenceRows))
+  }
+
+  const api = { BOHR_ANGSTROM, HARTREE_EV, RY_EV, AU_TIME_FS, RY_TIME_FS, angstromToBohr, bohrToAngstrom, cellVectors, cellParameters, fractional, isStandardOrientation, orientLike }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.MonetUnits = api
 })(globalThis)

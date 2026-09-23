@@ -29,6 +29,9 @@ _DEFAULTS = (('override', None), ('isolated', None), ('species', {}), ('referenc
 FORMAT = {'cellUnits': 'angstrom', 'cellStyle': 'abc', 'positions': 'cartesian'}
 FORMAT_VALUES = {'cellUnits': ('angstrom', 'bohr', 'alat'), 'cellStyle': ('abc', 'vectors'), 'positions': ('cartesian', 'fractional')}
 _VARIANT = re.compile(r'^[A-Za-z0-9_.-]+$')
+# Custom and applied cells: every vector component within +-MAX_CELL A.
+MAX_CELL = 1e4
+_CELL_BOUND = 'Cell values must be at most 10000 Å.'
 _ZVAL = re.compile(r'ZVAL\s*=\s*([-+0-9.Ee]+)')
 
 
@@ -118,13 +121,22 @@ def _finite(value):
 
 
 def _js_string(value):
-    """String(value) of JavaScript for the scalars checked here."""
+    """String(value) of JavaScript for the values checked here (arrays join like String(array))."""
     if value is None:
         return 'null'
     if isinstance(value, bool):
         return 'true' if value else 'false'
     if type(value) in (int, float):
-        return _num(value) if math.isfinite(value) else 'NaN'
+        if math.isnan(value):
+            return 'NaN'
+        if math.isinf(value):
+            return 'Infinity' if value > 0 else '-Infinity'
+        return _num(value)
+    if isinstance(value, list):
+        # null/undefined elements print as empty strings; nested arrays flatten.
+        return ','.join('' if item is None else _js_string(item) for item in value)
+    if isinstance(value, dict):
+        return '[object Object]'
     return str(value)
 
 
@@ -136,6 +148,10 @@ def _mass_ok(value):
 
 def _is_matrix(m):
     return isinstance(m, list) and len(m) == 3 and all(isinstance(row, list) and len(row) == 3 and all(_finite(v) for v in row) for row in m)
+
+
+def _bounded(m):
+    return all(abs(v) <= MAX_CELL for row in m for v in row)
 
 
 def _one_of(value, allowed):
@@ -199,6 +215,8 @@ def validate(spec):
         if custom is not None:
             if not isinstance(custom, dict) or not _is_matrix(custom.get('rows')):
                 raise ValueError(f'{label}Custom cell must be a 3x3 matrix.')
+            if not _bounded(custom['rows']):
+                raise ValueError(f'{label}{_CELL_BOUND}')
             try:
                 units.cell_parameters(custom['rows'])
             except ValueError as error:
@@ -213,6 +231,8 @@ def validate(spec):
     cell = spec.get('cell')
     if cell is not None and not _is_matrix(cell):
         raise ValueError('Cell must be a 3x3 matrix.')
+    if cell is not None and not _bounded(cell):
+        raise ValueError(_CELL_BOUND)
     summary = spec.get('summary')
     if summary is not None and not (isinstance(summary, dict) and all(isinstance(text, str) for text in summary.values())):
         raise ValueError('Invalid quantum-chemistry input summary.')

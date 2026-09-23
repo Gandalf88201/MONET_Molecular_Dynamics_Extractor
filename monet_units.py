@@ -65,3 +65,29 @@ def fractional(rows, positions):
 def is_standard_orientation(rows, tol=1e-6):
     return (abs(rows[0][1]) <= tol and abs(rows[0][2]) <= tol and abs(rows[1][2]) <= tol
             and rows[0][0] > 0 and rows[1][1] > 0 and rows[2][2] > 0)
+
+
+def _mat_mul(A, B):
+    return [[row[0] * B[0][j] + row[1] * B[1][j] + row[2] * B[2][j] for j in range(3)] for row in A]
+
+
+def _inverse(M):
+    a, b, c = M
+    det = _dot(a, _cross(b, c))
+    cols = [_cross(b, c), _cross(c, a), _cross(a, b)]  # columns of the inverse, times det
+    return [[col[i] / det for col in cols] for i in range(3)]
+
+
+def orient_like(custom_rows, reference_rows):
+    """A custom cell (rows in the standard orientation) turned into the orientation of the reference lattice.
+
+    Q = inverse(standard(reference)) . reference; custom_rows . Q keeps the cell fixed relative to the atoms.
+    No reference, a reference already in the standard orientation or a degenerate one: custom_rows unchanged.
+    """
+    if not reference_rows or is_standard_orientation(reference_rows):
+        return custom_rows
+    try:
+        standard = cell_vectors(cell_parameters(reference_rows))
+    except ValueError:
+        return custom_rows
+    return _mat_mul(custom_rows, _mat_mul(_inverse(standard), reference_rows))

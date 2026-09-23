@@ -23,18 +23,31 @@ assert.equal(U.isStandardOrientation(U.cellVectors(tri)), true); assert.equal(U.
 const frac = U.fractional(hex, [[0, 0, 0], [1.5, 3 * Math.sqrt(3) / 2 / 2, 2.5]])
 close(frac[1][0], 0.75, 1e-12); close(frac[1][1], 0.5, 1e-12); close(frac[1][2], 0.5, 1e-12); checks++
 assert.throws(() => U.cellParameters([[1, 0, 0], [2, 0, 0], [0, 0, 1]]), /degenerate/); checks++
+// orientLike: a custom cell keeps the orientation of the structure lattice (Materials Project hexagonal setting).
+const mp = [[1.6, -2.771281, 0], [1.6, 2.771281, 0], [0, 0, 5.2]]
+assert.equal(U.isStandardOrientation(mp), false); checks++
+U.orientLike(U.cellVectors(U.cellParameters(mp)), mp).flat().forEach((v, i) => close(v, mp.flat()[i], 1e-9)); checks++
+const mpLong = U.cellParameters(mp); mpLong[2] = 10
+const oriented = U.orientLike(U.cellVectors(mpLong), mp)
+oriented[0].forEach((v, i) => close(v, mp[0][i], 1e-9)); oriented[1].forEach((v, i) => close(v, mp[1][i], 1e-9)); checks++
+oriented[2].forEach((v, i) => close(v, [0, 0, 10][i], 1e-9)); checks++
+// No reference, or a reference already in the standard orientation: the custom rows are returned unchanged.
+const customRows = U.cellVectors([8, 9, 10, 90, 90, 90])
+assert.deepEqual(U.orientLike(customRows, null), customRows); assert.deepEqual(U.orientLike(customRows, U.cellVectors(tri)), customRows); checks++
 // JS/Python parity.
-const cases = { cellpar: tri, rows: U.cellVectors(tri), positions: [[1, 2, 3], [-0.5, 4.25, 7]] }
-const js = { bohr: U.angstromToBohr(2.5), vectors: U.cellVectors(tri), params: U.cellParameters(cases.rows), frac: U.fractional(cases.rows, cases.positions), std: U.isStandardOrientation(cases.rows) }
+const cases = { cellpar: tri, rows: U.cellVectors(tri), positions: [[1, 2, 3], [-0.5, 4.25, 7]], mp, mpLong, custom: customRows }
+const js = { bohr: U.angstromToBohr(2.5), vectors: U.cellVectors(tri), params: U.cellParameters(cases.rows), frac: U.fractional(cases.rows, cases.positions), std: U.isStandardOrientation(cases.rows), oriented, same: U.orientLike(customRows, null) }
 const py = JSON.parse(execFileSync(process.env.PYTHON || 'python3', ['-c', `
 import json, sys
 sys.path.insert(0, sys.argv[1])
 import monet_units as u
 c = json.load(sys.stdin)
-print(json.dumps({'bohr': u.angstrom_to_bohr(2.5), 'vectors': u.cell_vectors(c['cellpar']), 'params': u.cell_parameters(c['rows']), 'frac': u.fractional(c['rows'], c['positions']), 'std': u.is_standard_orientation(c['rows'])}))
+print(json.dumps({'bohr': u.angstrom_to_bohr(2.5), 'vectors': u.cell_vectors(c['cellpar']), 'params': u.cell_parameters(c['rows']), 'frac': u.fractional(c['rows'], c['positions']), 'std': u.is_standard_orientation(c['rows']),
+                  'oriented': u.orient_like(u.cell_vectors(c['mpLong']), c['mp']), 'same': u.orient_like(c['custom'], None)}))
 `, root], { input: JSON.stringify(cases) }))
 close(py.bohr, js.bohr, 1e-15); checks++
 py.vectors.flat().forEach((v, i) => close(v, js.vectors.flat()[i], 1e-12)); checks++
 py.params.forEach((v, i) => close(v, js.params[i], 1e-10)); checks++
 py.frac.flat().forEach((v, i) => close(v, js.frac.flat()[i], 1e-12)); assert.equal(py.std, js.std); checks++
-console.log(`PASS: ${checks} units checks (bohr, time, cell parameters and vectors, fractional coordinates, JS/Python).`)
+py.oriented.flat().forEach((v, i) => close(v, js.oriented.flat()[i], 1e-12)); assert.deepEqual(py.same, js.same); checks++
+console.log(`PASS: ${checks} units checks (bohr, time, cell parameters and vectors, fractional coordinates, orientation, JS/Python).`)
