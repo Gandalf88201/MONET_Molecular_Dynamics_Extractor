@@ -233,6 +233,8 @@ function clearTrajectory () {
   state.firstLattice = null
   state.selectedAtoms.clear()
   state.lastResult = null
+  // A custom cell of the QM cards belongs to the trajectory it was typed for.
+  qmPanel.resetCells()
   updateAnalysisSource()
   if (typeof charts !== 'undefined') Object.values(charts).forEach(chart => chart.clear())
   $('next-2').disabled = true
@@ -648,7 +650,9 @@ function qmCommon () {
 function buildQmSpec () {
   const codes = qmCodes()
   if (!codes.length) return null
-  const spec = { ...MonetQMResolve.buildSpec({ codes, common: qmCommon(), cards: qmPanel.read(), symbols: qmSymbols(), cell: aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, custom: qmCustom }), masses: MonetQM.MASSES }
+  // structureRows: a custom cell keeps the orientation of the structure lattice the cards show.
+  const structure = qmCellInfo()
+  const spec = { ...MonetQMResolve.buildSpec({ codes, common: qmCommon(), cards: qmPanel.read(), symbols: qmSymbols(), cell: aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, custom: qmCustom, structureRows: structure ? structure.rows : null }), masses: MonetQM.MASSES }
   return MonetQM.validate(spec)
 }
 function qmReadiness () {
@@ -688,7 +692,10 @@ function updateQmUI () {
     summary.textContent = MonetQMResolve.LABELS[code] + (edited.length ? ` · custom template (${edited.join(', ')})` : '')
     qmPanel.setCustomNote(code, edited.length > 0)
     let preview = ''
-    if (spec && atoms.length) {
+    const card = cards[code]
+    // An invalid custom cell blocks the code: never preview it with the structure cell instead.
+    if (card && MonetQMResolve.PLANE_WAVE.includes(code) && !card.isolated && card.cellSource === 'custom' && !card.cellCustom) preview = 'Enter a valid custom cell to preview this code.'
+    else if (spec && atoms.length) {
       try {
         const conf = { index: 1, frame: 0, symbols: atoms.map(a => a.element), positions: atoms.map(a => [a.x, a.y, a.z]), lattice: cell && cell.source === 'trajectory' ? cell.rows : undefined }
         const files = MonetQM.render({ ...spec, codes: { [code]: spec.codes[code] } }, conf)

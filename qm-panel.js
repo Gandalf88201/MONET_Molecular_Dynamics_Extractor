@@ -100,6 +100,7 @@
   }
   const FRACTIONAL_LABELS = { qe: 'Fractional (crystal)', vasp: 'Fractional (Direct)', cp2k: 'Fractional (SCALED)' }
   const QBOX_NOTE = 'Qbox uses bohr (1 bohr = 0.529177210903 Å).'
+  const ORIENTATION_NOTE = 'The custom cell keeps the orientation of the structure lattice.'
   const cellParams = rows => { try { return U.cellParameters(rows) } catch (error) { return null } }
   const f10 = v => (v + 0).toFixed(10)
   const matrixText = rows => rows.map(row => row.map(f10).join('  ')).join('\n')
@@ -236,6 +237,10 @@
         }
         if (formats.childElementCount) group.appendChild(formats)
         if (code === 'qbox') group.appendChild(make('p', { className: 'panel-desc qm-note', id: id('cell-note'), text: QBOX_NOTE }))
+        // Shown for a custom cell over a structure lattice that is not in the standard orientation (a along x, b in xy).
+        const orientation = make('p', { className: 'panel-desc qm-note', id: id('cell-orientation'), text: ORIENTATION_NOTE })
+        orientation.hidden = true
+        group.appendChild(orientation)
         const vectors = make('pre', { className: 'qm-cell-vectors', id: id('cell-vectors') })
         group.appendChild(vectors)
         const values = () => inputs.map(input => (input.value.trim() === '' ? NaN : Number(input.value)))
@@ -256,12 +261,17 @@
         }
         function updateVectors () {
           const custom = source.value === 'custom' ? values() : null
-          const rows = custom ? (R.validCustomCell(custom) ? U.cellVectors(custom) : null) : structureCell && structureCell.rows
+          const structureRows = structureCell && structureCell.rows
+          orientation.hidden = !(custom && structureRows && !U.isStandardOrientation(structureRows))
+          // A custom cell is written in the orientation of the structure lattice (qm-resolve.js buildSpec).
+          const rows = custom ? (R.validCustomCell(custom) ? U.orientLike(U.cellVectors(custom), structureRows) : null) : structureRows
           vectors.textContent = rows ? vectorsText(code, rows, s)
             : custom ? 'Enter positive lengths and angles between 0° and 180°.' : 'No cell.'
         }
+        // Back to the structure cell (a new trajectory was loaded): the custom values belonged to the old file.
+        function reset () { source.value = 'structure'; fill() }
         setStructure()
-        return { group, source, fill, setStructure, updateVectors }
+        return { group, source, fill, setStructure, updateVectors, reset }
       }
       for (const f of FIELDS[code]) {
         let wrapper
@@ -401,6 +411,7 @@
           return out
         },
         setStructure () { if (cellParts) { cellParts.setStructure(); sync() } },
+        resetCell () { if (cellParts) { cellParts.reset(); sync() } },
         setCell (text, blocked) { if (cell) { cell.textContent = text; cell.classList.toggle('blocked', Boolean(blocked)) } },
         setPreview (text) { preview.textContent = text },
         setCustomNote (has) { customNote.hidden = !has }
@@ -435,6 +446,8 @@
         structureCell = info ? { label: info.label, rows: info.rows.map(row => [...row]) } : null
         for (const card of Object.values(cards)) card.setStructure()
       },
+      // Every plane-wave card back to the structure cell (called when another trajectory is loaded).
+      resetCells () { for (const card of Object.values(cards)) card.resetCell() },
       setCellStatus (code, text, blocked) { if (cards[code]) cards[code].setCell(text, blocked) },
       setPreview (code, text) { if (cards[code]) cards[code].setPreview(text) },
       setCustomNote (code, has) { if (cards[code]) cards[code].setCustomNote(has) },

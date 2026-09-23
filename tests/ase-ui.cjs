@@ -38,6 +38,9 @@ const atoms = [
 const MonetXYZ = require(path.join(root, 'xyz.js'))
 const periodicFrame = header => `4\n${header}\nC 1 0 0\nC 0 0 0\nC 0 1 0\nH 0 1 1\n`
 const periodicText = periodicFrame('Lattice="10 0 0 0 11 0 0 0 12" Properties=species:S:1:pos:R:3 pbc="T T T"') + periodicFrame('Lattice="10 0 0 0 11 0 0 0 12" Properties=species:S:1:pos:R:3 pbc="T T T"')
+// hexagonal.xyz: a lattice in the Materials Project setting (not the standard orientation).
+const hexagonalHeader = 'Lattice="1.6 -2.771281 0 1.6 2.771281 0 0 0 5.2" Properties=species:S:1:pos:R:3 pbc="T T T"'
+const trajectoryTexts = { 'periodic.xyz': periodicText, 'hexagonal.xyz': periodicFrame(hexagonalHeader) + periodicFrame(hexagonalHeader) }
 let lastProcessOptions, importCalls = []
 let activeAtoms = atoms, latestCommand, pendingResolve, defer = false, checks = 0, equilT0 = 1
 const listeners = new Set()
@@ -56,8 +59,8 @@ w.monet = {
   aseSelectOutput: async name => name,
   // periodic.xyz: an extended XYZ whose first frame carries a lattice, parsed like the real local reader (xyz.js).
   readFrame: async (name, index) => {
-    if (name !== 'periodic.xyz') return { atoms }
-    for await (const frame of MonetXYZ.frames(periodicText.split('\n'))) if (frame.index === index) return { atoms: frame.atoms, lattice: frame.lattice }
+    if (!trajectoryTexts[name]) return { atoms }
+    for await (const frame of MonetXYZ.frames(trajectoryTexts[name].split('\n'))) if (frame.index === index) return { atoms: frame.atoms, lattice: frame.lattice }
     return { error: 'Frame index is outside the trajectory.' }
   },
   onProgress () {}, onAseProgress: callback => { listeners.add(callback); return () => listeners.delete(callback) },
@@ -347,6 +350,34 @@ async function qmCellChecks () {
   const ready = w.testMonet.qmReadiness()
   assert.ok(ready.blocked.some(m => /^Quantum ESPRESSO \(pw\.x\): no cell/.test(m))); assert.ok(!ready.blocked.some(m => /^VASP/.test(m))); checks++
   assert.match(el('qm-vasp-cell').textContent, /Custom cell 8×8×8 Å/); assert.match(el('qm-vasp-preview').textContent, /1\.0\n8\.0000000000  0\.0000000000  0\.0000000000/); checks++
+  assert.equal(el('next-4').disabled, true); checks++
+  // Loading another trajectory resets every plane-wave card to the structure cell (a custom cell belonged to the old file).
+  assert.equal(el('qm-vasp-cellSource').value, 'custom'); checks++
+  nextFile = 'hexagonal.xyz'
+  await click('btn-browse')
+  assert.equal(el('qm-vasp-cellSource').value, 'structure'); assert.equal(el('qm-qe-cellSource').value, 'structure'); checks++
+  await click('next-1'); await tick()
+  el('inp-atom-ids').value = '1 2 3 4'; await click('btn-apply-ids')
+  setCodes(['qe'])
+  assert.equal(sourceLabel('qe'), 'Lattice from the trajectory'); assert.equal(el('qm-qe-cellSource').value, 'structure'); checks++
+  // A custom cell keeps the orientation of a non-standard structure lattice (Materials Project hexagonal setting), with a note.
+  const orientation = el('qm-qe-cell-orientation')
+  assert.equal(orientation.hidden, true); checks++
+  set('qm-qe-cell-c', '10')
+  assert.equal(el('qm-qe-cellSource').value, 'custom'); assert.equal(orientation.hidden, false); checks++
+  assert.equal(orientation.textContent, 'The custom cell keeps the orientation of the structure lattice.'); checks++
+  const cellRows = text => {
+    const lines = text.split('\n')
+    const start = lines.indexOf('CELL_PARAMETERS angstrom')
+    return lines.slice(start + 1, start + 4).map(line => line.trim().split(/\s+/).map(Number))
+  }
+  const expected = [[1.6, -2.771281, 0], [1.6, 2.771281, 0], [0, 0, 10]]
+  for (const shown of [el('qm-qe-preview').textContent, el('qm-qe-cell-vectors').textContent]) {
+    cellRows(shown).flat().forEach((v, i) => near(v, expected.flat()[i], 1e-5)); checks++
+  }
+  // An invalid custom cell blocks the card and the preview does not fall back to the structure lattice.
+  set('qm-qe-cell-a', '0')
+  assert.match(el('qm-qe-cell').textContent, /✖ Invalid custom cell/); assert.doesNotMatch(el('qm-qe-preview').textContent, /CELL_PARAMETERS/); checks++
   assert.equal(el('next-4').disabled, true); checks++
   setCodes([])
 }
