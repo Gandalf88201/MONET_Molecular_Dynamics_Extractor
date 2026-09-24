@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.1 (2026-09-24)
 
 - 3D view without a trajectory: only the *Load a trajectory file to begin* message is shown. The viewer title, style menu and hints appear with the first frame, and the message no longer covers the header half-transparently.
 - Fix: after switching from an analysis module back to the 3D view, the viewer could keep the resolution of the narrower layout and draw stretched atoms. Canvases and plots are now redrawn whenever the viewer area changes size.

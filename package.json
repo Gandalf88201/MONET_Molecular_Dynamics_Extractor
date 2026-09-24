@@ -1,6 +1,6 @@
 {
   "name": "monet-electron",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "MONET Molecular Dynamics Extractor — desktop window (Electron); extraction and analyses run on the same Python engine as the launcher",
   "main": "main.js",
   "scripts": {
