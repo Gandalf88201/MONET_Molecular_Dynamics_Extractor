@@ -63,7 +63,6 @@ def _report_exception():
     elif isinstance(error, OSError) or type(error).__name__ == 'UnknownFileTypeError':
         err(f'Could not read the file: {error}')
     else:
-        import traceback
         err(traceback.format_exc())
 
 

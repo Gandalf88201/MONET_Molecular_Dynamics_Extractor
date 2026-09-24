@@ -40,6 +40,7 @@
   - the aligned trajectory (MDAnalysis › Align) no longer breaks its extended-XYZ comment line when the selection contains double quotes.
   - *RMSD Matrix* no longer reports "truncated" when the trajectory has exactly the maximum number of frames.
   - module tabs and sub-tabs are announced as tabs to screen readers, with the selected one marked (`aria-selected`).
+  - CI runs ruff (`ruff.toml`) and ESLint (`eslint.config.js`) with correctness rules only; the unused variables and imports they found are removed.
   - a test checks that the version is the same in `CITATION.cff`, `package.json`, the title bar and the changelog.
 - Fix: *Remove drift* in MSD / Diffusion subtracted the centre of the selected atoms, so a single atom, ion or molecule lost the diffusion the MSD measures (MSD and D close to zero). It now subtracts the centre-of-mass motion of the whole system, with minimum-image steps across periodic boundaries. MSD and D computed earlier for small selections with this option on should be recomputed.
 

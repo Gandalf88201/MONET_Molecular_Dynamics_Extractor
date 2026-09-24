@@ -4,7 +4,7 @@ const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const path = require('node:path')
 const { JSDOM } = require('jsdom')
-const { createCanvas, loadImage } = require('@napi-rs/canvas')
+const { createCanvas } = require('@napi-rs/canvas')
 const root = path.resolve(__dirname, '..')
 const dom = new JSDOM(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), { runScripts: 'outside-only', url: 'http://localhost/' })
 const w = dom.window
@@ -35,7 +35,7 @@ const atoms = [
   { index: 3, element: 'C', x: 0, y: 1, z: 0 },
   { index: 4, element: 'H', x: 0, y: 1, z: 1 }
 ]
-let lastProcessOptions, importCalls = []
+let importCalls = []
 let activeAtoms = atoms, latestCommand, pendingResolve, defer = false, checks = 0
 const listeners = new Set()
 let nextFile = 'torsion.xyz'
@@ -58,7 +58,6 @@ w.monet = {
   onProgress () {}, onAseProgress: callback => { listeners.add(callback); return () => listeners.delete(callback) },
   aseCheck: async () => ({ ok: true, ase_version: 'test', mdanalysis_version: '2.10.0' }),
   processTrajectory: async options => {
-    lastProcessOptions = options
     activeAtoms = atoms.filter(atom => options.selectedAtoms.includes(atom.index))
     return { success: true, totalFrames: 2, sampledFrames: 2, outputDir: 'MONET-results' }
   },

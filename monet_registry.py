@@ -19,7 +19,7 @@ Where analyses come from (see docs/plugins.md):
   - installed packages that declare the entry point group "monet.analyses".
 A plugin that fails to import is reported in the interface; it never stops MONET.
 """
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import hashlib
 import importlib
 import importlib.util

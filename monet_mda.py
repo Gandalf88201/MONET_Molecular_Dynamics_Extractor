@@ -12,8 +12,6 @@ quantity. MDAnalysis positions and cell lengths are in Å, like ASE.
 """
 import warnings
 
-import math
-
 import numpy as np
 
 # Deprecation/guessing notices go to stderr and are not actionable for MONET users.

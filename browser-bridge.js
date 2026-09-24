@@ -16,7 +16,6 @@
   const server = Boolean(token)
   const limit = 100 * 1024 * 1024
   const fullName = 'MONET-results/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz'
-  let convertedURL = null
   let resultURL = null
   let localCancel = false
   const desktopOnly = 'To enable ASE in your browser, run python3 start_monet.py and open the address it prints. Python and ASE must be installed.'

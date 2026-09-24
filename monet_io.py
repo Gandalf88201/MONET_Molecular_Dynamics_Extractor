@@ -208,12 +208,10 @@ class XYZTrajectory:
         count = str(self.natoms).encode()
         ends = []
         line_no = 0          # lines completed so far (relative to self.first)
-        last_start = 0       # start offset of the current line, relative to buffer
         with open(self.path, 'rb') as fh:
             fh.seek(self.first)
             base = self.first
             carry = b''
-            header_start = self.first
             while True:
                 chunk = fh.read(CHUNK)
                 buf = carry + chunk

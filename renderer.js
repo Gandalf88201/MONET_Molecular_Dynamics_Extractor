@@ -5,7 +5,6 @@
 // =============================================================================
 
 const { MolecularViewer, STYLES: VIEW_STYLES } = MonetViewer
-function themeColor (name, fallback) { return globalThis.MonetTheme ? MonetTheme.color(name, fallback) : fallback }
 
 // =============================================================================
 // ── App State ────────────────────────────────────────────────────────────────
@@ -3121,7 +3120,7 @@ for (const target of Object.keys(viewerSelections)) {
 // Bonded chains by element (bonds, angles, dihedrals) from the ASE neighbour list, written into analysis inputs.
 const PATTERN_MODES = { 2: 'bonds', 3: 'angles', 4: 'dihedrals' }
 $('sel-pattern-find').addEventListener('click', async () => {
-  const pattern = $('sel-pattern').value.trim().split(/[\s,\-]+/).filter(Boolean)
+  const pattern = $('sel-pattern').value.trim().split(/[\s,-]+/).filter(Boolean)
     .map(p => p === '*' ? p : p[0].toUpperCase() + p.slice(1).toLowerCase())
   const mode = PATTERN_MODES[pattern.length]
   const status = message => { $('sel-pattern-status').textContent = message; setStatus(message) }
