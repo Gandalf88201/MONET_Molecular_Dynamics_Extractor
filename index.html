@@ -583,7 +583,7 @@
           <label class="field-label" for="fluct-groups" id="fluct-groups-label">Groups of MONET IDs</label>
           <input class="field-input" id="fluct-groups" placeholder="e.g. 1 2  1 3" />
         </div>
-        <p class="panel-desc" id="fluct-description">Bonds, angles and dihedrals are found from the first-frame connectivity (bond cutoff of the viewer), restricted to the atoms entered. For each item: mean, SD (circular for dihedrals), extremes, 5–95 % range, linear trend with its error and R², drift between the two halves, the dominant oscillation frequency and a trend test on five block averages. Click a row to see its time series and highlight it in the viewer.</p>
+        <p class="panel-desc" id="fluct-description">Bonds, angles and dihedrals are found from the first-frame connectivity (bond cutoff of the viewer), restricted to the atoms entered. For each item: mean, SD (circular for dihedrals), extremes, 5–95 % range, linear trend with its error and R², drift between the two halves, the dominant oscillation frequency and a trend test on five block averages. Atoms: the displacement tensor of each atom is drawn as a translucent ellipsoid (first-frame axes, chosen probability, optional magnification) on the structure. Click a row to see its time series and highlight it in the viewer.</p>
         <div class="ase-prog-row hidden" id="fluct-prog-row">
           <div class="progress-bar"><div class="progress-fill" id="fluct-prog-fill"></div></div>
           <span id="fluct-prog-label">—</span>
@@ -604,6 +604,15 @@
             <option value="magma">magma</option><option value="coolwarm">coolwarm</option>
           </select>
           <label><input type="checkbox" id="fluct-map" checked /> colour the molecule</label>
+        </div>
+        <div class="ase-ctrl-row" id="fluct-ellipsoid-row">
+          <label><input type="checkbox" id="fluct-ellipsoids" checked /> anisotropic displacement ellipsoids</label>
+          <label class="field-label" for="fluct-ellipsoid-prob">Probability</label>
+          <select class="field-input field-input-sm" id="fluct-ellipsoid-prob">
+            <option value="50" selected>50 %</option><option value="90">90 %</option><option value="99">99 %</option>
+          </select>
+          <label class="field-label" for="fluct-ellipsoid-scale">Magnify ×</label>
+          <input class="field-input field-input-sm" type="number" id="fluct-ellipsoid-scale" value="1" min="1" max="50" step="1" />
         </div>
         <div class="ase-plot-actions">
           <button class="btn btn-sm" id="clear-fluct" disabled>Clear analysis</button>

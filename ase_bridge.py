@@ -1040,8 +1040,11 @@ def action_fluctuations(cmd):
         series, rmsf, deviation = monet_analysis.atomic_fluctuations(
             positions[:, index], cells if periodic else None, pbc, bool(cmd.get('align', True)) and len(index) >= 3)
         stats = monet_analysis.series_statistics(series, unit_dt)
+        tensors = monet_analysis.displacement_tensors(deviation)
         for k, entry in enumerate(stats):
             entry['rmsf'] = float(rmsf[k])
+            # Anisotropic displacement U11 U22 U33 U12 U13 U23 (Å², first-frame axes) for the ellipsoids.
+            entry['u'] = [float(tensors[k][i, j]) for i, j in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))]
             if rmsf[k] > 1e-9:
                 entry['frequency'], entry['frequency_share'] = monet_analysis.dominant_frequency(deviation[:, k, :], unit_dt)
             else:

@@ -332,6 +332,27 @@ r = bridge({ action: 'fluctuations', filename: chain, quantity: 'atoms', indices
 assert.ok(Math.max(...r.statistics.map(st => st.rmsf)) < 1e-6); checks++
 r = bridge({ action: 'fluctuations', filename: chain, quantity: 'atoms', indices: [0, 1, 2, 3], mic: true, align: false })
 assert.ok(r.statistics[3].rmsf > r.statistics[1].rmsf); assert.ok(r.statistics[3].rmsf < 2, 'unwrapped across the boundary'); checks++
+// Displacement tensors of the ellipsoids: six components per atom, trace = RMSF².
+for (const st of r.statistics) { assert.equal(st.u.length, 6); near(st.u[0] + st.u[1] + st.u[2], st.rmsf ** 2, 1e-8, 'trace of U') }
+checks++
+// A rotating molecule with one atom vibrating along a fixed molecular direction: after alignment the
+// major axis of its tensor is that direction in the axes of the first frame.
+const ellipsoid = py(`
+base = np.array([[0, 0, 0], [1.5, 0, 0], [1.5, 1.5, 0], [0, 1.5, 0.4], [0.7, 0.7, 1.2]])
+axis = np.array([1.0, 1.0, 0.0]) / math.sqrt(2)
+def rot(t):
+    a = 0.02 * t
+    tilt = np.array([[1, 0, 0], [0, math.cos(0.3), -math.sin(0.3)], [0, math.sin(0.3), math.cos(0.3)]])
+    return np.array([[math.cos(a), -math.sin(a), 0], [math.sin(a), math.cos(a), 0], [0, 0, 1]]) @ tilt
+frames = []
+for t in range(400):
+    p = base.copy(); p[4] += 0.2 * math.sin(0.7 * t) * axis
+    frames.append(p @ rot(t).T + [0.01 * t, 0, 0])
+_, rmsf, deviation = ma.atomic_fluctuations(np.array(frames))
+w, v = np.linalg.eigh(ma.displacement_tensors(deviation)[4])
+print(json.dumps({'cos': abs(float(v[:, -1] @ (rot(0) @ axis))), 'ratio': float(w[1] / w[2])}))
+`)
+assert.ok(ellipsoid.cos > 0.999, `major axis in first-frame axes (|cos| ${ellipsoid.cos})`); assert.ok(ellipsoid.ratio < 0.01, 'anisotropic'); checks++
 
 // τ_int of an exact exponential ACF (τ = 40 lags): Sokal window (c = 5), Geyer sequence, first zero.
 const tauInt = py(`

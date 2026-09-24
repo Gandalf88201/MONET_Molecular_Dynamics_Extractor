@@ -358,6 +358,8 @@
         }
       }
 
+      if (overlay?.ellipsoids?.length) this._drawEllipsoids(overlay, x, y, z)
+
       // Selected atoms on top, highlighted in every style.
       const selectedOrder = [...this.selected]
       for (const [order, id] of selectedOrder.entries()) {
@@ -379,6 +381,11 @@
       }
 
       if (overlay?.legend) this._drawLegend(overlay.legend)
+      else if (overlay?.caption) {
+        ctx.save(); ctx.fillStyle = themeColor('--plot-label', '#c0c0d8'); ctx.font = '11px sans-serif'
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText(overlay.caption, 12, canvas.height - 12, canvas.width - 24)
+        ctx.restore()
+      }
 
       // Labels: atom IDs for small systems (or when requested) and always for selections.
       if (!light) {
@@ -396,6 +403,47 @@
           ctx.fillText(atoms[i].index, x[i], y[i])
         }
       }
+    }
+
+    // Displacement ellipsoids { id, u: [U11 U22 U33 U12 U13 U23] (Å²), color } scaled by overlay.ellipsoidScale.
+    // In this orthographic view the outline of an ellipsoid is the ellipse of its screen-plane 2×2 block.
+    _drawEllipsoids ({ ellipsoids, ellipsoidScale = 1 }, x, y, z) {
+      const { ctx } = this
+      const cyR = Math.cos(this.rotY), syR = Math.sin(this.rotY), cxR = Math.cos(this.rotX), sxR = Math.sin(this.rotX)
+      // Screen axes in model coordinates (screen y points down).
+      const ex = [cyR, 0, syR]
+      const ey = [-syR * sxR, -cxR, cyR * sxR]
+      const fallback = themeColor('--blue', '#4d9de0')
+      const contrast = themeColor('--text', '#e0e0f0')
+      const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+      const shown = ellipsoids.map(e => ({ ...e, i: this._index?.get(e.id) })).filter(e => e.i !== undefined)
+      shown.sort((a, b) => z[a.i] - z[b.i])
+      ctx.save()
+      for (const { i, u, color } of shown) {
+        const [u11, u22, u33, u12, u13, u23] = u
+        const Ue = v => [u11 * v[0] + u12 * v[1] + u13 * v[2], u12 * v[0] + u22 * v[1] + u23 * v[2], u13 * v[0] + u23 * v[1] + u33 * v[2]]
+        const ux = Ue(ex)
+        const a = dot(ex, ux), b = dot(ey, ux), c = dot(ey, Ue(ey))
+        // Eigenvalues of [[a, b], [b, c]].
+        const mean = (a + c) / 2, root = Math.hypot((a - c) / 2, b)
+        const major = Math.sqrt(Math.max(mean + root, 0)), minor = Math.sqrt(Math.max(mean - root, 0))
+        const k = ellipsoidScale * this.zoom
+        if (!(major * k > 0.5)) continue
+        const angle = 0.5 * Math.atan2(2 * b, a - c)
+        const stroke = color || fallback
+        ctx.beginPath()
+        ctx.ellipse(x[i], y[i], major * k, Math.max(minor * k, 0.5), angle, 0, Math.PI * 2)
+        ctx.globalAlpha = 0.28; ctx.fillStyle = stroke; ctx.fill()
+        ctx.globalAlpha = 0.95; ctx.lineWidth = 2.2; ctx.strokeStyle = stroke; ctx.stroke()
+        // A thin contrasting line keeps the outline visible over an atom of the same colour.
+        ctx.globalAlpha = 0.7; ctx.lineWidth = 0.9; ctx.strokeStyle = contrast; ctx.stroke()
+        // Major axis of the outline, to read the direction of the largest motion.
+        ctx.beginPath()
+        ctx.moveTo(x[i] - Math.cos(angle) * major * k, y[i] - Math.sin(angle) * major * k)
+        ctx.lineTo(x[i] + Math.cos(angle) * major * k, y[i] + Math.sin(angle) * major * k)
+        ctx.stroke()
+      }
+      ctx.restore()
     }
 
     // Colour bar of the overlay (bottom-left corner).

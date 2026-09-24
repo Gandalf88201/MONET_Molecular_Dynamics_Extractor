@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Fluctuations & trends:
+  - Fix: the statistics table collapsed to zero height, so no row could be clicked and the time-series panel below (*Click a row of the table …*) stayed empty. The table is now shown (up to 320 px, scrollable) and clicking a row plots the time series with mean, ±SD and trend line.
+  - Atoms: anisotropic displacement ellipsoids on the structure. The mean-square displacement tensor of each atom, in the axes of the first frame, is drawn as a translucent ellipsoid (50, 90 or 99 % probability, optional magnification), coloured like the map, with or without the atom colour map. U11 … U23 are added to the statistics CSV.
+  - A failed calculation is reported next to the plot as well as in the status bar.
+
 ## 2.3.1 (2026-09-24)
 
 - 3D view without a trajectory: only the *Load a trajectory file to begin* message is shown. The viewer title, style menu and hints appear with the first frame, and the message no longer covers the header half-transparently.
