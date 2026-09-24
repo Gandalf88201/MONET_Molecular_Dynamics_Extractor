@@ -12,8 +12,6 @@ quantity. MDAnalysis positions and cell lengths are in Å, like ASE.
 """
 import warnings
 
-import math
-
 import numpy as np
 
 # Deprecation/guessing notices go to stderr and are not actionable for MONET users.
@@ -63,6 +61,26 @@ def _clean(value, fallback):
     return text or fallback
 
 
+# Residues whose atom names follow the PDB convention: the element is the first letter of the name
+# (CA is the alpha carbon, HG a hydrogen, NE a nitrogen), never a two-letter element.
+_STANDARD_RESIDUES = {
+    'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR',
+    'TRP', 'TYR', 'VAL', 'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX', 'ASH', 'GLH', 'LYN', 'ACE', 'NME', 'NMA',
+    'A', 'C', 'G', 'T', 'U', 'DA', 'DC', 'DG', 'DT', 'RA', 'RC', 'RG', 'RU', 'HOH', 'WAT', 'SOL', 'TIP3', 'TIP4', 'SPC',
+}
+
+
+def element_from_name(name, resname, valid):
+    """Element guessed from an atom name when the topology has none."""
+    letters = ''.join(ch for ch in str(name) if ch.isalpha())
+    if not letters:
+        return ''
+    if str(resname).strip().upper() in _STANDARD_RESIDUES and letters[0].upper() in 'CHNOSP':
+        return letters[0].upper()
+    two = letters[:2].capitalize()
+    return two if two in valid else letters[:1].upper()
+
+
 def _elements(universe):
     """Element symbols from the topology, guessing them from names/types when absent."""
     from ase.data import chemical_symbols
@@ -82,8 +100,7 @@ def _elements(universe):
     for i, element in enumerate(elements or [''] * len(atoms)):
         symbol = element.strip().capitalize()
         if symbol not in valid:
-            name = ''.join(ch for ch in str(atoms[i].name) if ch.isalpha())
-            symbol = name[:2].capitalize() if name[:2].capitalize() in valid else name[:1].upper()
+            symbol = element_from_name(atoms[i].name, getattr(atoms[i], 'resname', ''), valid)
         if symbol not in valid:
             raise ValueError(f'Cannot determine the element of atom {i + 1} ({atoms[i].name}); use a topology with element information.')
         out.append(symbol)
@@ -301,9 +318,7 @@ def hydrogen_bonds(universe, donors, hydrogens, acceptors, d_a_cutoff=3.0, angle
     return counts, pairs
 
 
-# ── generic analysis dispatcher ─────────────────────────────────────────────
-# Every analysis returns a dict for the renderer:
-#   kind 'series' | 'profile'; x, xLabel, yLabel, series [{label, data}], notes, optional table {columns, rows}.
+# ── helpers of the MDAnalysis analyses (monet_analyses/mdanalysis.py) ─────────
 
 def _group(universe, text, label, minimum=1):
     group = select(universe, text or 'all')
@@ -316,234 +331,6 @@ def _need_cell(universe, what):
     dims = universe.trajectory.ts.dimensions
     if dims is None or not np.all(np.asarray(dims[:3]) > 0):
         raise ValueError(f'{what} needs a periodic cell: apply or load one in "Crystal cell".')
-
-
-def _frames_series(frames, xlabel='Frame'):
-    return {'x': list(frames), 'xLabel': xlabel}
-
-
-def run_analysis(universe, name, params, frames, dt=None, output=None):
-    """Run one MDAnalysis analysis on the in-memory Universe; `frames` are the MONET frame indices."""
-    p = params or {}
-    sel = p.get('selection') or 'all'
-    if name == 'rmsd':
-        from MDAnalysis.analysis import rms
-        group = _group(universe, sel, 'fit', 3)
-        extra = [g for g in (p.get('groups') or []) if g.strip()]
-        for g in extra:
-            _group(universe, g, 'RMSD group')
-        result = rms.RMSD(universe, universe, select=sel, groupselections=extra or None, ref_frame=0).run()
-        data = result.results.rmsd
-        series = [{'label': f'RMSD of "{sel}" (fit on it)', 'data': data[:, 2].tolist()}]
-        series += [{'label': f'RMSD of "{g}" after fitting "{sel}"', 'data': data[:, 3 + k].tolist()} for k, g in enumerate(extra)]
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'RMSD (Å)', 'series': series,
-                'notes': [f'{len(group)} atoms, reference = first analysed frame (MDAnalysis rms.RMSD, optimal superposition).']}
-    if name == 'rmsd_matrix':
-        from functools import partial
-        from MDAnalysis.analysis import diffusionmap, rms
-        group = _group(universe, sel, 'pairwise RMSD')
-        total = universe.trajectory.n_frames
-        limit = int(p.get('max_frames') or 500)
-        if not 2 <= limit <= 3000:
-            raise ValueError('The maximum number of frames must be between 2 and 3000.')
-        stride = max(1, math.ceil(total / limit))
-        superpose = bool(p.get('superposition', True)) and len(group) >= 3
-        metric = partial(rms.rmsd, center=superpose, superposition=superpose)
-        analysis = diffusionmap.DistanceMatrix(universe, select=sel, metric=metric).run(step=stride)
-        matrix = np.asarray(analysis.results.dist_matrix, dtype=float)
-        picked = list(frames)[::stride]
-        upper = matrix[np.triu_indices(len(matrix), 1)]
-        notes = [f'{len(group)} atoms of "{sel}", {len(picked)} frames' + (f' (every {stride}th analysed frame)' if stride > 1 else '') +
-                 (', optimal superposition of every pair (MDAnalysis DistanceMatrix + rms.rmsd)' if superpose else ', no superposition')]
-        if len(upper):
-            notes.append(f'Off-diagonal RMSD: mean {upper.mean():.4f} ± {upper.std():.4f} Å, max {upper.max():.4f} Å')
-        return {'kind': 'matrix', 'matrix': np.round(matrix, 5).tolist(), 'labels': picked, 'xLabel': 'Frame', 'yLabel': 'Frame',
-                'colorLabel': 'RMSD (Å)', 'stride': stride, 'notes': notes,
-                'table': {'columns': ['Quantity', 'Value (Å)'], 'rows': [['Mean off-diagonal RMSD', round(float(upper.mean()), 5)],
-                          ['SD', round(float(upper.std()), 5)], ['Maximum', round(float(upper.max()), 5)]]} if len(upper) else None}
-    if name == 'rmsf':
-        indices, values = rmsf(universe, sel, bool(p.get('align', True)))
-        return {'kind': 'profile', 'x': [int(universe.atoms[i].id) for i in indices], 'xLabel': 'MONET atom ID', 'yLabel': 'RMSF (Å)',
-                'series': [{'label': f'RMSF of "{sel}"', 'data': values}], 'atoms': indices, 'bars': True,
-                'notes': ['Aligned on the selection (first frame) before RMSF.' if p.get('align', True) else 'No alignment.']}
-    if name == 'rgyr':
-        values = radius_of_gyration(universe, sel)
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Radius of gyration (Å)',
-                'series': [{'label': f'Rg of "{sel}" (mass-weighted)', 'data': values}]}
-    if name == 'hbonds':
-        counts, pairs = hydrogen_bonds(universe, p.get('donors') or 'element O N F', p.get('hydrogens') or 'element H',
-                                       p.get('acceptors') or 'element O N F', p.get('d_a_cutoff', 3.0), p.get('angle', 150.0))
-        rows = [[pair['donor'], pair['hydrogen'], pair['acceptor'], round(100 * pair['fraction'], 1)] for pair in pairs]
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Hydrogen bonds',
-                'series': [{'label': 'H-bond count', 'data': counts}], 'pairs': pairs,
-                'table': {'columns': ['Donor', 'Hydrogen', 'Acceptor', 'Occupancy (%)'], 'rows': rows, 'atom_columns': [0, 1, 2]}}
-    if name == 'contacts':
-        from MDAnalysis.analysis import contacts
-        a = _group(universe, p.get('group_a') or sel, 'first contact group')
-        b = _group(universe, p.get('group_b') or 'all', 'second contact group')
-        universe.trajectory[0]
-        method = p.get('method') or 'hard_cut'
-        radius = float(p.get('radius', 4.5))
-        analysis = contacts.Contacts(universe, select=(p.get('group_a') or sel, p.get('group_b') or 'all'),
-                                     refgroup=(a, b), method=method, radius=radius).run()
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Fraction of native contacts Q',
-                'series': [{'label': f'Q ({method}, r = {radius} Å)', 'data': analysis.results.timeseries[:, 1].tolist()}],
-                'notes': [f'Native contacts = pairs closer than {radius} Å in the first analysed frame.']}
-    if name == 'interrdf':
-        from MDAnalysis.analysis import rdf
-        _need_cell(universe, 'The radial distribution function')
-        a = _group(universe, p.get('group_a') or sel, 'first RDF group')
-        b = _group(universe, p.get('group_b') or sel, 'second RDF group')
-        rmax = float(p.get('rmax', 10.0))
-        block = p.get('exclude_same')
-        kwargs = {'exclusion_block': (1, 1)} if block == 'atom' else {}
-        if block == 'residue':
-            sizes_a = {len(r.atoms) for r in a.residues}
-            sizes_b = {len(r.atoms) for r in b.residues}
-            if len(sizes_a) == 1 and len(sizes_b) == 1:
-                kwargs = {'exclusion_block': (sizes_a.pop(), sizes_b.pop())}
-        analysis = rdf.InterRDF(a, b, nbins=int(p.get('nbins', 150)), range=(0.0, rmax), **kwargs).run()
-        return {'kind': 'profile', 'x': analysis.results.bins.tolist(), 'xLabel': 'r (Å)', 'yLabel': 'g(r)',
-                'series': [{'label': f'g(r) {p.get("group_a") or sel} – {p.get("group_b") or sel}', 'data': analysis.results.rdf.tolist()}],
-                'notes': [f'MDAnalysis InterRDF, minimum image, {len(a)} × {len(b)} atoms' + (f', exclusion block {kwargs["exclusion_block"]}' if kwargs else '')]}
-    if name == 'msd':
-        from MDAnalysis.analysis import msd
-        _group(universe, sel, 'MSD')
-        analysis = msd.EinsteinMSD(universe, select=sel, msd_type=p.get('msd_type') or 'xyz', fft=False).run()
-        series = analysis.results.timeseries.tolist()
-        step = dt if dt else 1.0
-        return {'kind': 'profile', 'x': [k * step for k in range(len(series))], 'xLabel': 'Lag time (fs)' if dt else 'Lag (analysed frames)',
-                'yLabel': 'MSD (Å²)', 'series': [{'label': f'MSD {p.get("msd_type") or "xyz"} of "{sel}"', 'data': series}],
-                'notes': ['MDAnalysis EinsteinMSD (windowed, no FFT). Use an unwrapped trajectory for periodic runs.']}
-    if name == 'lineardensity':
-        from MDAnalysis.analysis import lineardensity
-        _need_cell(universe, 'Linear density')
-        group = _group(universe, sel, 'density')
-        analysis = lineardensity.LinearDensity(group, grouping=p.get('grouping') or 'atoms', binsize=float(p.get('binsize', 0.25))).run()
-        out = analysis.results
-        series, x = [], None
-        for axis in (p.get('axes') or 'xyz'):
-            dim = out[axis]
-            edges = np.asarray(dim['hist_bin_edges'])
-            centres = ((edges[:-1] + edges[1:]) / 2).tolist()
-            x = x or centres
-            series.append({'label': f'mass density along {axis}', 'data': np.asarray(dim['mass_density']).tolist()[:len(x)]})
-        return {'kind': 'profile', 'x': x, 'xLabel': 'Position along the axis (Å)', 'yLabel': 'Mass density (g cm⁻³)',
-                'series': series, 'notes': ['MDAnalysis LinearDensity averaged over the analysed frames; charge density is not shown (XYZ files carry no charges).']}
-    if name == 'pca':
-        from MDAnalysis.analysis import pca
-        group = _group(universe, sel, 'PCA', 2)
-        analysis = pca.PCA(universe, select=sel, align=bool(p.get('align', True))).run()
-        # Eigen-decomposition may return a zero imaginary part.
-        variance = np.real(np.asarray(analysis.results.variance))
-        cumulated = np.real(np.asarray(analysis.results.cumulated_variance)).tolist()
-        count = min(3, len(cumulated))
-        projection = np.real(analysis.transform(group, n_components=count))
-        take = int(np.searchsorted(np.asarray(cumulated), 0.9)) + 1
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Projection (Å)',
-                'series': [{'label': f'PC{k + 1} ({100 * variance[k] / variance.sum():.1f} %)', 'data': projection[:, k].tolist()} for k in range(count)],
-                'notes': [f'{take} components explain 90 % of the variance; cumulated variance of PC1–PC{min(10, len(cumulated))}: ' +
-                          ', '.join(f'{100 * v:.1f} %' for v in cumulated[:10])],
-                'table': {'columns': ['Component', 'Variance (Å²)', 'Cumulated (%)'],
-                          'rows': [[k + 1, round(float(variance[k]), 5), round(100 * cumulated[k], 2)] for k in range(min(10, len(cumulated)))]}}
-    if name in ('com_distance', 'min_distance'):
-        from MDAnalysis.lib.distances import distance_array, minimize_vectors
-        a = _group(universe, p.get('group_a') or sel, 'first group')
-        b = _group(universe, p.get('group_b') or 'all', 'second group')
-        values = []
-        for ts in universe.trajectory:
-            box = ts.dimensions if ts.dimensions is not None and np.all(ts.dimensions[:3] > 0) else None
-            if name == 'com_distance':
-                vector = b.center_of_mass() - a.center_of_mass()
-                if box is not None:
-                    vector = minimize_vectors(vector[None, :], box)[0]
-                values.append(float(np.linalg.norm(vector)))
-            else:
-                values.append(float(distance_array(a.positions, b.positions, box=box).min()))
-        label = 'centre-of-mass distance' if name == 'com_distance' else 'minimum distance'
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Distance (Å)',
-                'series': [{'label': f'{label}: "{p.get("group_a") or sel}" – "{p.get("group_b") or "all"}"', 'data': values}]}
-    if name == 'atomic_distances':
-        from MDAnalysis.analysis import atomicdistances
-        a = _group(universe, p.get('group_a') or sel, 'first group')
-        b = _group(universe, p.get('group_b') or 'all', 'second group')
-        if len(a) != len(b):
-            raise ValueError(f'Both groups need the same number of atoms (they have {len(a)} and {len(b)}); atom k of the first is paired with atom k of the second.')
-        box = universe.trajectory.ts.dimensions
-        analysis = atomicdistances.AtomicDistances(a, b, pbc=box is not None and bool(np.all(box[:3] > 0))).run()
-        data = analysis.results
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Distance (Å)',
-                'series': [{'label': f'{int(a[k].id)}–{int(b[k].id)}', 'data': data[:, k].tolist()} for k in range(min(12, len(a)))],
-                'notes': [f'{len(a)} atom pairs' + (' (first 12 shown)' if len(a) > 12 else '')]}
-    if name == 'dihedral_mda':
-        from MDAnalysis.analysis.dihedrals import Dihedral
-        quads = p.get('quads') or []
-        if not quads:
-            raise ValueError('Enter at least one group of four MONET IDs.')
-        if any(int(i) >= len(universe.atoms) for quad in quads for i in quad):
-            raise ValueError(f'Atom IDs must be between 1 and {len(universe.atoms)}.')
-        groups = [universe.atoms[[int(i) for i in quad]] for quad in quads]
-        analysis = Dihedral(groups).run()
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Dihedral (°, −180 to 180)',
-                'series': [{'label': '-'.join(str(int(universe.atoms[int(i)].id)) for i in quad), 'data': analysis.results.angles[:, k].tolist()} for k, quad in enumerate(quads)],
-                'notes': ['MDAnalysis Dihedral (IUPAC sign convention, −180…180°).']}
-    if name == 'ramachandran':
-        from MDAnalysis.analysis.dihedrals import Ramachandran
-        group = _group(universe, sel if sel != 'all' else 'protein', 'protein')
-        try:
-            analysis = Ramachandran(group.residues.atoms).run()
-        except Exception as error:
-            raise ValueError(f'Ramachandran needs protein backbone atoms (N, CA, C with standard names): {error}') from None
-        angles = analysis.results.angles
-        residues = [r for r in group.residues][1:-1][:angles.shape[1]]
-        series = []
-        for k in range(min(4, angles.shape[1])):
-            label = f'{residues[k].resname}{residues[k].resid}' if k < len(residues) else f'residue {k + 1}'
-            series += [{'label': f'φ {label}', 'data': angles[:, k, 0].tolist()}, {'label': f'ψ {label}', 'data': angles[:, k, 1].tolist()}]
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Angle (°)', 'series': series,
-                'notes': [f'{angles.shape[1]} residues; the first 4 are plotted.']}
-    if name == 'dssp':
-        from MDAnalysis.analysis.dssp import DSSP
-        try:
-            analysis = DSSP(universe).run()
-        except Exception as error:
-            raise ValueError(f'DSSP needs a protein with backbone atoms N, CA, C, O: {error}') from None
-        codes = np.asarray(analysis.results.dssp)
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Fraction of residues',
-                'series': [{'label': label, 'data': (codes == code).mean(axis=1).tolist()} for code, label in (('H', 'helix'), ('E', 'strand'), ('-', 'loop'))],
-                'notes': [f'{codes.shape[1]} residues (MDAnalysis DSSP).']}
-    if name == 'gnm':
-        from MDAnalysis.analysis import gnm
-        _group(universe, sel, 'GNM', 3)
-        analysis = gnm.GNMAnalysis(universe, select=sel, cutoff=float(p.get('cutoff', 7.0))).run()
-        return {'kind': 'series', **_frames_series(frames), 'yLabel': 'Lowest non-zero eigenvalue',
-                'series': [{'label': f'GNM of "{sel}"', 'data': np.asarray(analysis.results.eigenvalues, dtype=float).tolist()}],
-                'notes': ['Gaussian network model (Kirchhoff matrix, cutoff %.1f Å).' % float(p.get('cutoff', 7.0))]}
-    if name == 'diffusionmap':
-        from MDAnalysis.analysis import diffusionmap, rms
-        _group(universe, sel, 'diffusion map', 3)
-        if universe.trajectory.n_frames > 1500:
-            raise ValueError('The diffusion map compares all frame pairs: use a frame step so that at most 1500 frames are analysed.')
-        analysis = diffusionmap.DiffusionMap(universe, select=sel, epsilon=float(p.get('epsilon', 1.0)))
-        analysis.run()
-        values = np.asarray(analysis.eigenvalues, dtype=float)[:20]
-        return {'kind': 'profile', 'x': list(range(1, len(values) + 1)), 'xLabel': 'Eigenvector', 'yLabel': 'Eigenvalue',
-                'series': [{'label': f'diffusion map of "{sel}" (ε = {p.get("epsilon", 1.0)})', 'data': values.tolist()}], 'bars': True}
-    if name == 'density':
-        from MDAnalysis.analysis import density
-        group = _group(universe, sel, 'density')
-        if not output:
-            raise ValueError('No output file for the density grid.')
-        analysis = density.DensityAnalysis(group, delta=float(p.get('delta', 1.0))).run()
-        grid = analysis.results.density
-        grid.export(output, type='double')
-        values = np.asarray(grid.grid)
-        return {'kind': 'table', 'download': True,
-                'table': {'columns': ['Quantity', 'Value'],
-                          'rows': [['Grid points', ' × '.join(map(str, values.shape))], ['Spacing (Å)', p.get('delta', 1.0)],
-                                   ['Maximum density (Å⁻³)', round(float(values.max()), 6)], ['Mean density (Å⁻³)', round(float(values.mean()), 6)]]},
-                'notes': ['OpenDX grid (VMD, PyMOL, Chimera); the selection is averaged over the analysed frames.']}
-    raise ValueError(f'Unknown MDAnalysis analysis: {name}')
 
 
 def aligned_positions(universe, selection):

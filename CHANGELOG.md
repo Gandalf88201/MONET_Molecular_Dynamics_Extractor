@@ -1,5 +1,50 @@
 # Changelog
 
+## Unreleased
+
+- Interface:
+  - *MONET processing* is renamed *MONET Custom Functionalities* and holds the former *Custom analyses* tab. Its first sub-tab, *3D viewer & extraction*, is the 3D view; the other sub-tabs are the custom analyses.
+  - The interface uses the system sans-serif font. Code, logs, consoles and QM input files use a monospace font, and numbers keep aligned digits.
+  - The selected module tab and sub-tab are filled, bold and underlined, so the active one is clear.
+- MDAnalysis PCA:
+  - up to 10 principal components come back from one calculation, and the component list (variance, explained and cumulated %, mean ± std) chooses which projections are plotted; *Components plotted at first* sets how many are ticked;
+  - a distribution chart shows the plotted projections on common bins;
+  - configurations can be picked in three ways:
+    - a projection window on one component, optionally combined with a second window on another component. Click a bar of the distribution to set it, or Shift-click to widen it;
+    - the N lowest and highest projections of a component;
+    - a frame list, typed or built by Shift-clicking the projection plot or with *+ shown frame*.
+
+    A minimum spacing in frames (e.g. the ACF stride) keeps them independent. Picked frames are marked on the plot and listed; clicking a row shows that frame in the viewer.
+  - *Write the selected configurations* saves them as extended XYZ, each comment line keeping `source_frame=`. *Use them for the extraction* makes them the active trajectory, and ↩ Full trajectory goes back.
+- `subsample` also accepts an explicit `frames` list. It is recorded in the analysis history, in replay and in the methods report.
+- A trajectory of picked, unevenly spaced frames has no time axis: MSD, VDOS and the autocorrelation ask for the full trajectory.
+- Extraction from a derived trajectory (uncorrelated, cropped, PCA selection) writes `frame N source_frame=M` in FULL_TRAJECTORY_EXTRACTED.xyz and SAMPLED_CONFIGURATIONS.xyz, so every configuration can be traced to its frame in the original run. The Python, desktop and browser engines all do this; files without `source_frame=` are unchanged.
+- Fix: a cell applied by hand or read from a cell file (e.g. a CIF) was dropped when a derived trajectory (uncorrelated, cropped, aligned, PCA selection) became active. It now follows the derived trajectory and comes back with ↩ Full trajectory, so plane-wave inputs (QE, VASP, CP2K, Qbox) keep it.
+
+- Analysis registry and plugins (`monet_registry.py`, guide in `docs/plugins.md`):
+  - an analysis is a Python function decorated with `@analysis`; MONET builds its form from the declared parameters, checks the values (ranges, choices, atoms inside the trajectory, unknown names), runs it on the active trajectory, plots the result (series, profile, matrix or table, with PNG/CSV export), logs it in the history and replays it with `replay.py`. No JavaScript or launcher change is needed.
+  - plugins are loaded from `plugins/`, `~/.monet/plugins/`, the folders in `MONET_PLUGINS` and installed packages with the `monet.analyses` entry point; a plugin that fails to load is reported in the interface without stopping MONET.
+  - ASE and MONET Custom Functionalities get a *More analyses* sub-tab when plugins are installed; two examples ship in `plugins/`: cell volume, mass density and lattice lengths per frame (ASE), and radius of gyration (Custom).
+  - the MDAnalysis analyses moved into the registry (`monet_analyses/mdanalysis.py`); their form, menu and checks now come from Python, and MDAnalysis plugins join the same menu. Saved sessions and replay scripts using `mda_run` keep working.
+  - new bridge actions `list_analyses` and `run_analysis`; the console accepts `run_analysis(analysis="custom.radius_of_gyration", params={...})` with MONET IDs.
+  - analyses may write a file (e.g. the density grid) or a trajectory; the launcher offers it for download and, for trajectories, as the next active trajectory.
+- Launcher:
+  - calculations run on persistent Python workers (`ase_bridge.py --serve`): libraries and trajectory indexes stay loaded, so after the first request a frame read takes about 1 ms instead of about 0.5 s. A worker starts in the background when the launcher starts; a cancelled calculation stops its worker.
+  - session files are deleted as soon as nothing uses them: released trajectories, derived copies (unwrapped, aligned, uncorrelated) once their download is gone, and job folders that produced nothing. Only the 40 newest downloads are kept.
+  - the job limit is checked before a calculation starts, so a refused request no longer starts Python.
+  - download links no longer contain the session token; the random download ID is the permission for that file.
+- Desktop app (Electron): extraction now runs on the Python engine of the launcher (`monet_io.extract`) instead of a separate JavaScript copy, and ASE/MDAnalysis calls use the same persistent workers (`bridge-worker.js`). Gaussian inputs written by the desktop app use `%chk=s0.chk` like the other engines (they had an absolute local path). Electron is updated from 28 to 44. The desktop app needs Python 3 with numpy on PATH for extraction.
+- Fixes and hardening:
+  - the trajectory index cache moved from the shared temp folder to a per-user folder (`~/.cache/monet/index`, or `$MONET_CACHE_DIR`); cache files with unexpected content are ignored, and index files unused for 30 days are deleted.
+  - element guessing for topologies without elements: atom names of standard residues (amino acids, nucleotides, water) use their first letter, so `CA` is a carbon, not calcium (`HG`, `NE`, `CD` likewise).
+  - the aligned trajectory (MDAnalysis › Align) no longer breaks its extended-XYZ comment line when the selection contains double quotes.
+  - *RMSD Matrix* no longer reports "truncated" when the trajectory has exactly the maximum number of frames.
+  - module tabs and sub-tabs are announced as tabs to screen readers, with the selected one marked (`aria-selected`).
+  - `renderer.js` (4,500 lines) is split into eight page scripts loaded in order (`app-core.js`, `app-workflow.js`, `app-analysis.js`, `app-geometry.js`, `app-mdanalysis.js`, `app-structure.js`, `app-history.js`, `app-start.js`); the code is moved unchanged. `tests/app-load.cjs` loads them as separate scripts, as a browser does, in browser and desktop modes. The README lists the source layout.
+  - CI runs ruff (`ruff.toml`) and ESLint (`eslint.config.js`) with correctness rules only; the unused variables and imports they found are removed.
+  - a test checks that the version is the same in `CITATION.cff`, `package.json`, the title bar and the changelog.
+- Fix: *Remove drift* in MSD / Diffusion subtracted the centre of the selected atoms, so a single atom, ion or molecule lost the diffusion the MSD measures (MSD and D close to zero). It now subtracts the centre-of-mass motion of the whole system, with minimum-image steps across periodic boundaries. MSD and D computed earlier for small selections with this option on should be recomputed.
+
 ## 2.2.0 (2026-09-23)
 
 - Plane-wave cards: a Cell section shows the structure cell (applied cell, cell file, trajectory lattice) and accepts a custom cell per code; the cell and positions are written in each code's native units (Qbox bohr; QE angstrom, bohr or alat, crystal positions; CP2K ABC/ALPHA_BETA_GAMMA or vectors, SCALED; VASP Direct or Cartesian).

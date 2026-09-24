@@ -4,9 +4,8 @@ const path    = require('path')
 const fs      = require('fs')
 const readline = require('readline')
 const XYZ = require('./xyz.js')
-const QM = require('./qm-inputs.js')
-const { finished } = require('stream/promises')
-const { spawn, execFile } = require('child_process')
+const { createPool } = require('./bridge-worker.js')
+const { execFile } = require('child_process')
 
 let mainWindow
 
@@ -104,189 +103,29 @@ async function readTrajectoryFrame (filePath, frameIndex) {
 }
 
 // ---------------------------------------------------------------------------
-// processTrajectory — single streaming pass (validation, extraction, average)
+// processTrajectory — the Python engine (monet_io.extract), as in the launcher
 // ---------------------------------------------------------------------------
-let cancelExtraction = false
-
-async function writeText (stream, text) {
-  if (!stream.write(text)) await new Promise((resolve, reject) => {
-    const fail = error => { stream.off('drain', done); reject(error) }
-    const done = () => { stream.off('error', fail); resolve() }
-    stream.once('drain', done)
-    stream.once('error', fail)
-  })
-}
-
-const atomRows = atoms => {
-  let text = ''
-  for (const a of atoms) text += `${a.element}  ${a.x.toFixed(7)}  ${a.y.toFixed(7)}  ${a.z.toFixed(7)}\n`
-  return text
-}
-
 async function processTrajectory (event, options) {
-  const {
-    filePath,
-    outputDir,
-    atomCount,
-    selectedAtoms,    // 1-indexed numbers
-    frequency,
-    computeAverage,
-    generateGaussian,
-    configCount,
-    qm
-  } = options
-  if (qm) QM.validate(qm)
-
+  const { filePath, outputDir, atomCount, selectedAtoms, frequency, computeAverage, generateGaussian, qm } = options
   if (!Number.isInteger(frequency) || frequency < 1) throw new Error('Sampling frequency must be a positive integer.')
   if (!selectedAtoms.length || selectedAtoms.some(id => !Number.isInteger(id) || id < 1 || id > atomCount)) {
     throw new Error('Select valid atom IDs from the loaded trajectory.')
   }
-  const send     = msg => event.sender.send('progress', msg)
-  const selected = [...new Set(selectedAtoms.map(Number))].sort((a, b) => a - b).map(id => id - 1)
-  cancelExtraction = false
-
-  // Create directory tree
-  const dirs = {
-    history:  path.join(outputDir, '0-HISTORY'),
-    fullTraj: path.join(outputDir, '1-FULL_TRAJECTORY_EXTRACTED'),
-    sampled:  path.join(outputDir, '2-SAMPLED_CONFIGURATIONS'),
-    average:  path.join(outputDir, '3-AVERAGE_STRUCTURE')
-  }
-  for (const d of Object.values(dirs)) fs.mkdirSync(d, { recursive: true })
-
-  // Save processing options to history
-  const histLog = {
-    date: new Date().toISOString(),
-    filePath, frequency, selectedAtoms, computeAverage, generateGaussian
-  }
-  fs.writeFileSync(path.join(dirs.history, 'run.json'), JSON.stringify(histLog, null, 2))
-
-  const fullTrajPath = path.join(dirs.fullTraj, 'FULL_TRAJECTORY_EXTRACTED.xyz')
-  const sampledPath  = path.join(dirs.sampled,  'SAMPLED_CONFIGURATIONS.xyz')
-  const ftStream     = fs.createWriteStream(fullTrajPath, { highWaterMark: 4 << 20 })
-  const smStream     = fs.createWriteStream(sampledPath)
-  const sums = computeAverage ? new Float64Array(atomCount * 3) : null
-  let elements = null
-  let frameIndex = 0
-  let sampledCount = 0
-  let qmRuntime = null
-  const potcarCache = new Map()
-
-  // POTCAR text and NELECT for a set of species, read once from the local library and cached.
-  function runtimeFor (symbols) {
-    const vasp = qm.codes.vasp
-    if (!vasp || !vasp.potcar) return null
-    const species = [...new Set(symbols)]
-    const key = species.join(',')
-    if (!potcarCache.has(key)) {
-      const table = vasp.species || {}
-      const { text, zval } = QM.loadPotcar(vasp.potcar.library, species.map(s => table[s] || s), {
-        read: f => fs.readFileSync(f, 'utf8'), join: path.join, real: f => fs.realpathSync(f), sep: path.sep
-      })
-      potcarCache.set(key, { potcar: { text, zval: Object.fromEntries(species.map((s, i) => [s, zval[i]])) } })
-    }
-    return potcarCache.get(key)
-  }
-
+  if (!outputDir) throw new Error('Choose an output folder.')
+  const bridge = await pythonBridge()
+  if (!bridge) throw new Error('Extraction needs Python 3 with numpy (python3 on PATH).')
+  const send = msg => event.sender.send('progress', msg)
   send({ step: 'extraction', status: 'started', message: 'Reading trajectory …' })
-
-  try {
-    for await (const frame of XYZ.frames(trajectoryLines(filePath))) {
-      const atoms = frame.atoms
-      if (atoms.length !== atomCount) throw new Error('Atom count changed. Load the trajectory again.')
-      if (!elements) {
-        elements = atoms.map(a => a.element)
-        // Load the POTCARs of the selected atoms once so a missing variant fails before any output is written.
-        if (qm) qmRuntime = runtimeFor(selected.map(i => elements[i]))
-      }
-      if (sums) {
-        for (let i = 0; i < atomCount; i++) {
-          sums[3 * i] += atoms[i].x; sums[3 * i + 1] += atoms[i].y; sums[3 * i + 2] += atoms[i].z
-        }
-      }
-      const rows = atomRows(selected.map(i => atoms[i]))
-      const text = `${selected.length}\nframe ${frameIndex}\n${rows}`
-      await writeText(ftStream, text)
-
-      // Write to sampled every `frequency` frames (include frame 0)
-      if (frameIndex % frequency === 0) {
-        await writeText(smStream, text)
-        const confDir = path.join(dirs.sampled, `conf${++sampledCount}`)
-        fs.mkdirSync(confDir, { recursive: true })
-        fs.writeFileSync(path.join(confDir, `pos${sampledCount}.txt`), rows)
-        if (generateGaussian) writeGaussianInputs(confDir, rows)
-        if (qm) {
-          const atomsSel = selected.map(i => atoms[i])
-          const conf = { index: sampledCount, frame: frameIndex, symbols: atomsSel.map(a => a.element), positions: atomsSel.map(a => [a.x, a.y, a.z]), lattice: frame.lattice }
-          for (const file of QM.render(qm, conf, qmRuntime)) {
-            const target = path.join(confDir, ...file.path.split('/'))
-            fs.mkdirSync(path.dirname(target), { recursive: true })
-            fs.writeFileSync(target, file.text)
-          }
-        }
-      }
-
-      frameIndex++
-      if (frameIndex % 500 === 0) {
-        if (cancelExtraction) throw new Error('Extraction cancelled.')
-        send({
-          step: 'extraction', status: 'progress', frameIndex,
-          message: `Processed ${frameIndex.toLocaleString()}${configCount ? ` / ${configCount.toLocaleString()}` : ''} frames …`,
-          percent: configCount ? 100 * frameIndex / configCount : undefined
-        })
-      }
-    }
-    ftStream.end()
-    smStream.end()
-    await Promise.all([finished(ftStream), finished(smStream)])
-  } catch (error) {
-    ftStream.destroy()
-    smStream.destroy()
-    throw error
-  }
-
-  send({
-    step: 'extraction', status: 'done',
-    message: `Extracted ${frameIndex} frames · ${sampledCount} sampled configurations`
-  })
-
-  // -------------------------------------------------------------------
-  // Average structure (all atoms, full trajectory)
-  // -------------------------------------------------------------------
-  if (sums && frameIndex > 0) {
-    send({ step: 'average', status: 'started', message: 'Computing average structure …' })
-    const average = elements.map((element, i) => ({
-      element, x: sums[3 * i] / frameIndex, y: sums[3 * i + 1] / frameIndex, z: sums[3 * i + 2] / frameIndex
-    }))
-    fs.writeFileSync(path.join(dirs.average, 'GEO-AVERAGE.xyz'), `${atomCount}\nAVERAGE (${frameIndex} frames)\n${atomRows(average)}`)
-    send({ step: 'average', status: 'done', message: 'GEO-AVERAGE.xyz written' })
-  }
-
-  return {
-    success:       true,
-    totalFrames:   frameIndex,
-    sampledFrames: sampledCount,
-    outputDir
-  }
-}
-
-// ---------------------------------------------------------------------------
-// writeGaussianInputs
-// ---------------------------------------------------------------------------
-function writeGaussianInputs (confDir, posContent) {
-  const header = (mult, tag, chkName) =>
-`%nproc=6
-%chk=${confDir}/${chkName}
-%mem=4gb
-#p ub3lyp/6-31+g(d,p) maxdisk=300gb nosymm scf=tight gfinput gfoldprint pop=full
-
-${tag}
-
-0 ${mult}
-${posContent}
-`
-  fs.writeFileSync(path.join(confDir, 'sing.dat'), header(1, 'scf_singlet', 's0.chk'))
-  fs.writeFileSync(path.join(confDir, 'trip.dat'), header(3, 'scf_triplet', 't0.chk'))
+  const result = await bridge.run({
+    action: 'extract', filename: filePath, output_dir: outputDir, selected: [...new Set(selectedAtoms)], frequency,
+    atom_count: atomCount, compute_average: Boolean(computeAverage), generate_gaussian: Boolean(generateGaussian),
+    ...(qm ? { qm } : {}),
+    history: { date: new Date().toISOString(), filePath, frequency, selectedAtoms, computeAverage, generateGaussian }
+  }, msg => send({ step: 'extraction', status: 'progress', message: msg.message, percent: msg.percent }), 'extraction')
+  if (!result.ok) throw new Error(result.cancelled ? 'Extraction cancelled.' : result.message || result.error)
+  send({ step: 'extraction', status: 'done', message: `Extracted ${result.totalFrames} frames · ${result.sampledFrames} sampled configurations` })
+  if (computeAverage) send({ step: 'average', status: 'done', message: 'GEO-AVERAGE.xyz written' })
+  return { success: true, totalFrames: result.totalFrames, sampledFrames: result.sampledFrames, outputDir }
 }
 
 // ===========================================================================
@@ -312,22 +151,30 @@ function detectPython () {
   })
 }
 
-let _pythonBin = null   // cached after first detection
-const aseChildren = new Set()
+// Persistent bridge workers (bridge-worker.js), created once Python is found.
+let pool = null
+async function pythonBridge () {
+  if (!pool) {
+    const python = await detectPython()
+    if (!python || pool) return pool
+    pool = createPool({ python, script: ASE_BRIDGE })
+  }
+  return pool
+}
+app.on('will-quit', () => { if (pool) pool.close() })
 
 ipcMain.handle('cancel', async (_, scope) => {
-  if (scope === 'extraction') cancelExtraction = true
-  if (scope === 'ase') for (const child of aseChildren) child.kill()
+  if (pool && (scope === 'extraction' || scope === 'ase')) pool.cancel(scope)
   return true
 })
 
 ipcMain.handle('ase-check', async () => {
   try {
-    const bin = await detectPython()
-    if (!bin) return { ok: false, error: 'Python not found on PATH' }
-    _pythonBin = bin
-
-    return await runAseBridge({ action: 'check' }, () => {})
+    const bridge = await pythonBridge()
+    if (!bridge) return { ok: false, error: 'Python not found on PATH' }
+    const result = await bridge.run({ action: 'check' })
+    bridge.warm()
+    return result
   } catch (e) {
     return { ok: false, error: e.message }
   }
@@ -335,9 +182,9 @@ ipcMain.handle('ase-check', async () => {
 
 ipcMain.handle('ase-run', async (event, command) => {
   try {
-    if (!_pythonBin) _pythonBin = await detectPython()
-    if (!_pythonBin) return { ok: false, error: 'Python not found on PATH' }
-    return await runAseBridge(command, msg => event.sender.send('ase-progress', msg))
+    const bridge = await pythonBridge()
+    if (!bridge) return { ok: false, error: 'Python not found on PATH' }
+    return await bridge.run(command, msg => event.sender.send('ase-progress', msg))
   } catch (e) {
     return { ok: false, error: e.message }
   }
@@ -345,11 +192,11 @@ ipcMain.handle('ase-run', async (event, command) => {
 
 ipcMain.handle('ase-import', async (event, name, options = {}) => {
   try {
-    if (!_pythonBin) _pythonBin = await detectPython()
-    if (!_pythonBin) return { error: 'Python with ASE is required to import this format.' }
+    const bridge = await pythonBridge()
+    if (!bridge) return { error: 'Python with ASE is required to import this format.' }
     const folder = fs.mkdtempSync(path.join(require('os').tmpdir(), 'monet-import-'))
     const output = path.join(folder, path.basename(name).replace(/\.[^.]*$/, '') + '.extxyz')
-    const result = await runAseBridge({
+    const result = await bridge.run({
       action: 'import', filename: name, output, format: options.format || 'auto', source_name: path.basename(name),
       reference: options.reference || undefined, cell_file: options.cellFile || undefined, cell_vectors: options.cellVectors || 'rows'
     }, msg => event.sender.send('ase-progress', msg))
@@ -374,46 +221,3 @@ ipcMain.handle('ase-select-output', async (_, defaultName) => {
   })
   return r.canceled ? null : r.filePath
 })
-
-function runAseBridge (command, onProgress) {
-  return new Promise((resolve, reject) => {
-    const py = spawn(_pythonBin, [ASE_BRIDGE])
-    let buf = ''
-    let killed = false
-    aseChildren.add(py)
-    const kill = py.kill.bind(py)
-    py.kill = signal => { killed = true; return kill(signal) }
-
-    py.stdout.on('data', chunk => {
-      buf += chunk.toString()
-      const lines = buf.split('\n')
-      buf = lines.pop()                        // keep partial last line
-      for (const line of lines) {
-        if (!line.trim()) continue
-        let msg
-        try { msg = JSON.parse(line) } catch { continue }
-        if (msg.type === 'progress') onProgress(msg)
-        else if (msg.type === 'result') resolve(msg)
-        else if (msg.type === 'error')  resolve(msg)
-      }
-    })
-
-    py.stderr.on('data', d => console.error('[ASE stderr]', d.toString().trim()))
-    py.on('error', e  => resolve({ ok: false, error: e.message }))
-    py.on('close', code => {
-      aseChildren.delete(py)
-      if (killed) { resolve({ ok: false, cancelled: true, error: 'Calculation cancelled.' }); return }
-      // flush any remaining buffer
-      if (buf.trim()) {
-        try {
-          const msg = JSON.parse(buf)
-          if (msg.type === 'result' || msg.type === 'error') { resolve(msg); return }
-        } catch {}
-      }
-      resolve({ ok: false, error: code !== 0 ? `Python exited with code ${code}` : 'Python returned no result.' })
-    })
-
-    py.stdin.write(JSON.stringify(command) + '\n')
-    py.stdin.end()
-  })
-}

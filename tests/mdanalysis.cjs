@@ -165,6 +165,15 @@ r = run('lineardensity', { selection: 'all', binsize: 1, axes: 'x' })
 assert.equal(r.series.length, 1); assert.ok(r.series[0].data.some(v => v > 0)); checks++
 r = run('pca', { selection: 'name OW' })
 assert.equal(r.ok, true, JSON.stringify(r)); assert.ok(r.series.length >= 1); assert.ok(r.table.rows.length >= 1); checks++
+// Up to 10 projections come back (the list chooses which are plotted); 3 are plotted at first.
+assert.equal(r.series.length, r.pca.components); assert.equal(r.table.rows.length, r.pca.components); assert.ok(r.pca.components <= 10); assert.equal(r.pca.shown, Math.min(3, r.pca.components)); checks++
+assert.equal(r.series[0].data.length, 10); assert.ok(r.pca.variance_ratio.every((v, k) => k === 0 || v <= r.pca.variance_ratio[k - 1] + 1e-12)); checks++
+// PCA.run(align=True) aligns the in-memory frames that transform() projects: every projection averages to zero.
+for (const series of r.series) near(series.data.reduce((a, b) => a + b, 0) / series.data.length, 0, 1e-6, `${series.label} mean`)
+checks++
+r = run('pca', { selection: 'all', n_components: 10 })
+assert.equal(r.pca.components, 10); assert.equal(r.series.length, 10); assert.equal(r.pca.shown, 10); assert.match(r.series[9].label, /^PC10 \(/); checks++
+assert.equal(run('pca', { selection: 'all', n_components: 1 }).pca.shown, 1); checks++
 r = run('contacts', { group_a: 'name OW', group_b: 'name OW', radius: 3.5 })
 assert.ok(r.series[0].data.every(v => v >= 0 && v <= 1)); checks++
 r = run('gnm', { selection: 'name OW', cutoff: 7 })
@@ -204,4 +213,13 @@ r = bridge({ action: 'ase_coordination', filename: xtc, indices: [0, 1], frame_s
 assert.deepEqual(r.frame_indices, [0, 5]); assert.deepEqual(r.series['O (mean of 1)'], [2, 2]); assert.deepEqual(r.series.H2, [1, 1]); checks++
 
 fs.rmSync(temp, { recursive: true, force: true })
+// Element fallback: PDB atom names of standard residues use their first letter (CA = carbon), others two letters.
+execFileSync(python, ['-c', `
+import sys; sys.path.insert(0, sys.argv[1])
+from ase.data import chemical_symbols
+from monet_mda import element_from_name
+valid = set(chemical_symbols[1:])
+got = [element_from_name(n, r, valid) for n, r in [('CA', 'ALA'), ('HG1', 'SER'), ('NE2', 'HIS'), ('CD', 'PRO'), ('OW', 'SOL'), ('CA', 'CA'), ('CL', 'CL'), ('NA', 'NA'), ('1HB', 'LYS')]]
+assert got == ['C', 'H', 'N', 'C', 'O', 'Ca', 'Cl', 'Na', 'H'], got
+`, root]); checks++
 console.log(`PASS: ${checks} MDAnalysis checks (XTC/TRR/DCD + topology, ASE formats, selections, generic analyses, atom identity, ASE structure).`)

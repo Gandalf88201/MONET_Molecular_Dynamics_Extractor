@@ -1,22 +1,27 @@
 #!/usr/bin/env python3
 """
 MONET ASE Bridge
-Receives one JSON command on stdin, streams JSON progress lines,
+Receives JSON commands on stdin, streams JSON progress lines,
 then writes a final JSON result line to stdout.
 
 Protocol
 --------
-  stdin  : one JSON object (the command)
+  single command (default): stdin holds one JSON object (the command).
+  worker (--serve): stdin holds one JSON command per line; the process stays alive
+           and ends the output of every command with {"type":"end"}.
+
   stdout : zero-or-more  {"type":"progress","message":"...","percent":0-100}
            followed by exactly one {"type":"result",...}
            or           {"type":"error","message":"..."}
 """
 import sys, os, json, traceback, math, platform
+from collections import OrderedDict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import monet_io
 import monet_analysis
 import monet_mda
+import monet_registry
 
 try:
     import numpy as np
@@ -58,7 +63,6 @@ def _report_exception():
     elif isinstance(error, OSError) or type(error).__name__ == 'UnknownFileTypeError':
         err(f'Could not read the file: {error}')
     else:
-        import traceback
         err(traceback.format_exc())
 
 
@@ -80,15 +84,23 @@ def _apply_geometry(atoms, cmd):
     return atoms
 
 
-_TRAJECTORIES = {}
+# Open trajectories, kept between the commands of a worker (--serve). The key includes size and
+# modification time, so a file changed on disk is indexed again.
+_TRAJECTORIES = OrderedDict()
+_MAX_TRAJECTORIES = 8
 
 
 def _trajectory(filename):
     """Indexed XYZ/extXYZ access, or None for other formats (read through ASE)."""
-    if filename not in _TRAJECTORIES:
-        _TRAJECTORIES[filename] = (monet_io.XYZTrajectory(filename, progress=lambda m, p: prog(m, p * .1))
-                                   if monet_io.is_xyz(filename) else None)
-    return _TRAJECTORIES[filename]
+    stat = os.stat(filename)
+    key = (os.path.abspath(filename), stat.st_size, stat.st_mtime_ns)
+    if key not in _TRAJECTORIES:
+        _TRAJECTORIES[key] = (monet_io.XYZTrajectory(filename, progress=lambda m, p: prog(m, p * .1))
+                              if monet_io.is_xyz(filename) else None)
+        while len(_TRAJECTORIES) > _MAX_TRAJECTORIES:
+            _TRAJECTORIES.popitem(last=False)
+    _TRAJECTORIES.move_to_end(key)
+    return _TRAJECTORIES[key]
 
 
 def _first_atoms(filename, cmd):
@@ -331,43 +343,55 @@ def action_mda_select(cmd):
     ok(indices=group.indices.tolist(), n_atoms=len(group), residues=residues[:50], n_residues=len(residues))
 
 
-MDA_ANALYSES = {'rmsd', 'rmsd_matrix', 'rmsf', 'rgyr', 'hbonds', 'contacts', 'interrdf', 'msd', 'lineardensity', 'pca',
-                'com_distance', 'min_distance', 'atomic_distances', 'dihedral_mda', 'ramachandran', 'dssp',
-                'gnm', 'diffusionmap', 'density'}
+# ── registered analyses (monet_registry: built-in MDAnalysis collection and plugins) ──
+
+class _Loader:
+    """What monet_registry.Context reads through the bridge (same cell, PBC and ID handling as every action)."""
+
+    @staticmethod
+    def frame_data(cmd, indices, need_cell=False):
+        return _frame_data(cmd, indices, need_cell=need_cell)
+
+    @staticmethod
+    def first_atoms(filename, cmd):
+        return _first_atoms(filename, cmd)
+
+    @staticmethod
+    def universe(cmd):
+        return _universe(cmd)
+
+    @staticmethod
+    def atom_properties(filename):
+        traj = _trajectory(filename)
+        return traj.atom_properties() if traj else {}
+
+
+def action_list_analyses(_):
+    """Registered analyses with their parameters, for the forms of the interface."""
+    ok(**monet_registry.specs())
+
+
+def action_run_analysis(cmd):
+    """Run one registered analysis (`analysis` = "<engine>.<name>") on the active trajectory."""
+    entry = monet_registry.get(cmd['analysis'])
+    prog(f'Running {entry.label} …', 5)
+    ctx = monet_registry.Context(cmd, _Loader, prog)
+    result = monet_registry.run(entry.id, ctx, cmd.get('params'))
+    prog('Done', 100)
+    ok(analysis=entry.id, **result)
 
 
 def action_mda_run(cmd):
-    """Any analysis of monet_mda.run_analysis on the active trajectory (same atom order as MONET)."""
-    frames, universe = _universe(cmd)
-    name = cmd['analysis']
-    prog(f'Running MDAnalysis {name} …', 55)
-    dt = cmd.get('dt')
-    result = monet_mda.run_analysis(universe, name, cmd.get('params') or {}, frames,
-                                    dt=dt * cmd.get('frame_step', 1) if dt else None, output=cmd.get('output'))
-    prog('Done', 100)
-    ok(analysis=name, frame_indices=frames, n_frames=len(frames), **result)
+    """The MDAnalysis tab: `analysis` names a built-in MDAnalysis analysis (kept for saved sessions)."""
+    action_run_analysis({**cmd, 'analysis': f"mdanalysis.{cmd['analysis']}"})
 
 
 def action_mda_align(cmd):
     """Write the trajectory after optimal superposition of a selection on the first frame."""
-    frames, universe = _universe(cmd)
-    selection = (cmd.get('params') or {}).get('selection') or 'all'
-    prog('Aligning …', 50)
-    positions = monet_mda.aligned_positions(universe, selection)
-    symbols = [str(e) for e in universe.atoms.elements]
-    # Topology columns of the source (atom names, residues) are kept so selections still work.
-    traj = _trajectory(cmd['filename'])
-    properties = traj.atom_properties() if traj else {}
-    extra = [(name, kind) for name, kind in (('resname', 'S'), ('resid', 'I'), ('atomname', 'S')) if name in properties]
-    columns = 'species:S:1:pos:R:3' + ''.join(f':{name}:{kind}:1' for name, kind in extra)
-    row = ''.join(f'{s} %.8f %.8f %.8f' + ''.join(f' {properties[name][i]}' for name, _ in extra) + '\n'
-                  for i, s in enumerate(symbols))
-    with open(cmd['output'], 'w') as fh:
-        for k, frame in enumerate(frames):
-            fh.write(f'{len(symbols)}\nProperties={columns} frame={frame} source_frame={frame} aligned_on="{selection}"\n')
-            fh.write(row % tuple((positions[k] + 0.0).ravel()))
+    ctx = monet_registry.Context(cmd, _Loader, prog)
+    result = monet_registry.run('mdanalysis.align', ctx, cmd.get('params'))
     prog('Done', 100)
-    ok(n_frames=len(frames), selection=selection)
+    ok(n_frames=result['n_frames'], selection=result['selection'])
 
 
 def action_topology(cmd):
@@ -540,12 +564,16 @@ def action_rmsd_matrix(cmd):
     if not _require_ase(): return
     max_frames = cmd.get('max_frames', 1000)
     prog("Loading frames …", 0)
-    frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'), max_frames=max_frames)
+    # One frame more than the limit tells whether the trajectory really had more frames.
+    frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'), max_frames=max_frames + 1)
+    truncated = len(frames) > max_frames
+    frames, positions = frames[:max_frames], positions[:max_frames]
+    cells = cells[:max_frames] if cells is not None else None
     positions, warning = _maybe_unwrap(cmd, positions, cells, pbc)
     matrix = monet_analysis.rmsd_matrix(positions, bool(cmd.get('align', True)), progress=prog)
     prog("Done", 100)
     ok(matrix=np.round(matrix, 6).tolist(), frame_indices=frames, aligned=bool(cmd.get('align', True)),
-       truncated=len(frames) >= max_frames, warning=warning)
+       truncated=truncated, warning=warning)
 
 
 def _element_group(symbols, indices, element):
@@ -576,6 +604,28 @@ def action_rdf(cmd):
        n_a=len(group_a), n_b=len(group_b), label=f"{first or 'all'}–{second or 'all'}")
 
 
+def _com_drift(cmd):
+    """Centre-of-mass displacement of the whole system (F, 3) from the first analysed frame.
+
+    Steps between analysed frames use the minimum image, so atoms crossing a periodic
+    boundary do not move the centre. Atoms without a mass (element X) count equally.
+    """
+    drift, previous, weights = [], None, None
+    for _, atoms in _load_images(cmd['filename'], cmd.get('frame_step', 1), cmd=cmd, label='Centre of mass, frame'):
+        positions = atoms.get_positions()
+        if weights is None:
+            masses = atoms.get_masses()
+            weights = masses / masses.sum() if masses.sum() > 0 else np.full(len(atoms), 1 / len(atoms))
+            drift.append(np.zeros(3))
+        else:
+            step = positions - previous
+            if atoms.cell.rank == 3 and atoms.pbc.any():
+                step = monet_analysis.minimum_image(step, atoms.cell.array, atoms.pbc)
+            drift.append(drift[-1] + weights @ step)
+        previous = positions
+    return np.array(drift)
+
+
 def action_msd(cmd):
     """Mean-square displacement (unwrapped, time-origin averaged) and diffusion coefficient."""
     if not _require_ase(): return
@@ -584,7 +634,9 @@ def action_msd(cmd):
     frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'))
     positions, warning = _maybe_unwrap({**cmd, 'unwrap': True}, positions, cells, pbc)
     if cmd.get('remove_drift', True):
-        positions = positions - (positions.mean(axis=1, keepdims=True) - positions[:1].mean(axis=1, keepdims=True))
+        # The drift is the motion of the whole system, never of the selection: the centre of a
+        # single atom or molecule is exactly the displacement that its MSD has to measure.
+        positions = positions - _com_drift(cmd)[:, None, :]
     if len(frames) < 4:
         raise ValueError('MSD needs at least four analysed frames.')
     prog("Computing MSD …", 90)
@@ -627,8 +679,20 @@ def action_vdos(cmd):
 
 
 def action_subsample(cmd):
-    """Write every `stride`-th frame (from `start`) as a new trajectory: the uncorrelated configurations."""
+    """Write every `stride`-th frame (from `start`) as a new trajectory: the uncorrelated configurations.
+    With `frames` (indices of this file, e.g. picked on a PCA projection) exactly those frames are written."""
     traj = _require_xyz(cmd['filename'])
+    frames = cmd.get('frames')
+    if frames is not None:
+        if (not isinstance(frames, list) or not frames
+                or any(type(i) is not int or not 0 <= i < traj.nframes for i in frames)):
+            raise ValueError(f'Frame numbers must be between 0 and {traj.nframes - 1}.')
+        indices = sorted(set(frames))
+        prog(f'Writing {len(indices):,} selected configurations …', 10)
+        count = traj.write_frames(indices, cmd['output'])
+        prog('Done', 100)
+        ok(n_frames=count, source_frames=traj.nframes, selected=True, first=indices[0], last=indices[-1])
+        return
     stride = cmd.get('stride')
     start = cmd.get('start', 0)
     if type(stride) is not int or stride < 1:
@@ -1250,28 +1314,10 @@ def validate_command(cmd):
         if type(value) not in kind or not math.isfinite(value) or value <= 0 or (maximum and value > maximum):
             raise ValueError(f'{name} must be a positive {"integer" if integer else "number"}' + (f' up to {maximum}.' if maximum else '.'))
     action = cmd.get('action')
-    if action == 'mda_run':
-        if cmd.get('analysis') not in MDA_ANALYSES:
-            raise ValueError('Unknown MDAnalysis analysis.')
-        params = cmd.get('params') or {}
-        if not isinstance(params, dict) or len(params) > 20:
-            raise ValueError('Analysis parameters must be a small object.')
-        for key, value in params.items():
-            if isinstance(value, str):
-                if len(value) > 2000:
-                    raise ValueError(f'{key} is too long.')
-            elif isinstance(value, bool) or value is None:
-                continue
-            elif isinstance(value, (int, float)):
-                if not math.isfinite(value) or value < 0:
-                    raise ValueError(f'{key} must be a non-negative number.')
-            elif isinstance(value, list):
-                if key == 'quads':
-                    _validate_groups(value, 4, 10 ** 9)
-                elif not all(isinstance(v, str) and len(v) <= 2000 for v in value) or len(value) > 20:
-                    raise ValueError(f'{key} must be a list of selections.')
-            else:
-                raise ValueError(f'Unsupported value for {key}.')
+    if action in ('mda_run', 'run_analysis'):
+        # Parameters are checked against the declared ones by monet_registry.run.
+        if not isinstance(cmd.get('analysis'), str) or not isinstance(cmd.get('params') or {}, dict):
+            raise ValueError('Name the analysis and give its parameters as an object.')
     if action == 'select_atoms':
         mode = cmd.get('mode')
         if mode not in SELECT_MODES:
@@ -1294,11 +1340,11 @@ def validate_command(cmd):
             if (not isinstance(pattern, list) or len(pattern) != PATTERN_WIDTH[mode]
                     or any(not isinstance(p, str) or not p or len(p) > 3 for p in pattern)):
                 raise ValueError(f'Enter {PATTERN_WIDTH[mode]} element symbols (or *) for {mode}.')
-    if action in ('ase_structure', 'ase_coordination', 'topology', 'mda_run', 'mda_align', 'molecule', 'fluctuations', 'select_atoms'):
+    if action in ('ase_structure', 'ase_coordination', 'topology', 'mda_run', 'mda_align', 'run_analysis', 'molecule', 'fluctuations', 'select_atoms'):
         scale = cmd.get('bond_scale', 1.2)
         if type(scale) not in (int, float) or not 0.5 <= scale <= 2.0:
             raise ValueError('The bond cutoff scale must be between 0.5 and 2.')
-    if action and action.startswith('mda_'):
+    if action and (action.startswith('mda_') or action == 'run_analysis'):
         for name in ('selection', 'donors', 'hydrogens', 'acceptors'):
             if name in cmd and cmd[name] is not None and (not isinstance(cmd[name], str) or len(cmd[name]) > 2000):
                 raise ValueError(f'{name} must be an MDAnalysis selection string.')
@@ -1422,6 +1468,8 @@ ACTIONS = {
     "wrap":      action_wrap,
     "frames":    action_frames,
     "mda_run":   action_mda_run,
+    "run_analysis": action_run_analysis,
+    "list_analyses": action_list_analyses,
     "mda_align": action_mda_align,
     "topology":  action_topology,
     "ase_structure": action_ase_structure,
@@ -1449,14 +1497,16 @@ ACTIONS = {
     "average":   action_average,
 }
 
-def main():
-    raw = sys.stdin.read().strip()
-    if not raw:
+def run_command(raw):
+    """Parse, validate and run one command given as JSON text."""
+    if not raw.strip():
         err("Empty command"); return
     try:
         cmd = json.loads(raw)
     except json.JSONDecodeError as e:
         err(f"JSON parse error: {e}"); return
+    if not isinstance(cmd, dict):
+        err("The command must be a JSON object."); return
 
     action = cmd.get("action")
     handler = ACTIONS.get(action)
@@ -1469,6 +1519,25 @@ def main():
         handler(cmd)
     except Exception:
         _report_exception()
+
+
+def serve():
+    """Worker mode: run one command per input line until stdin closes.
+
+    Libraries stay imported and trajectory indexes stay open between commands, so only the
+    first command pays the start-up time. {"type": "end"} tells the caller the worker is free.
+    """
+    for line in sys.stdin:
+        if line.strip():
+            run_command(line)
+            _emit({"type": "end"})
+
+
+def main():
+    if '--serve' in sys.argv[1:]:
+        serve()
+    else:
+        run_command(sys.stdin.read())
 
 if __name__ == "__main__":
     main()

@@ -56,14 +56,17 @@ With the launcher, a trajectory is uploaded **once** (no size limit other than `
 
 ## Analysis modules
 
-After loading, the files are shared by four tabs, in the order of a typical study:
+After loading, the files are shared by three tabs, in the order of a typical study:
 
 1. **ASE** — Structure (formula, masses, centre of mass, inertia, cell, volume, density, shortest distance, overlapping atoms, molecules, bonds per element pair, coordination numbers, space group with `spglib` if installed), bond lengths, bond angles, dihedrals, pair distances, coordination numbers along the trajectory, conversion to other formats and wrapping.
-2. **MDAnalysis** — *Topology & consistency* (atom-identity check, below) and *Analyses*: `rms.RMSD` (with extra groups), pairwise RMSD matrix (`diffusionmap.DistanceMatrix` with `rms.rmsd`, optimal superposition of every pair), `rms.RMSF`, radius of gyration, `pca.PCA`, `msd.EinsteinMSD`, `gnm.GNMAnalysis`, `diffusionmap.DiffusionMap`, `align.AlignTraj` (aligned trajectory to download or to analyse in MONET), `HydrogenBondAnalysis` (occupancy table with MONET IDs), `contacts.Contacts`, `rdf.InterRDF`, centre-of-mass and minimum distances between groups, `atomicdistances`, `dihedrals.Dihedral` (−180…180°), `lineardensity`, `density.DensityAnalysis` (OpenDX file), `dihedrals.Ramachandran` and `dssp.DSSP` (proteins). Each analysis shows its own fields; **← picked** inserts the atoms selected in the viewer as `id …`.
-3. **Custom analyses** — MONET's autocorrelation (decorrelation time and uncorrelated trajectory), fluctuations and trends, Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion and VDOS.
-4. **MONET processing** — 3D view, sampling, extraction and QM inputs.
+2. **MDAnalysis** — *Topology & consistency* (atom-identity check, below) and *Analyses*: `rms.RMSD` (with extra groups), pairwise RMSD matrix (`diffusionmap.DistanceMatrix` with `rms.rmsd`, optimal superposition of every pair), `rms.RMSF`, radius of gyration, `pca.PCA` (up to 10 components picked from a list, their distribution, and configurations picked by projection window, extremes or frame list, written as a trajectory for the extraction), `msd.EinsteinMSD`, `gnm.GNMAnalysis`, `diffusionmap.DiffusionMap`, `align.AlignTraj` (aligned trajectory to download or to analyse in MONET), `HydrogenBondAnalysis` (occupancy table with MONET IDs), `contacts.Contacts`, `rdf.InterRDF`, centre-of-mass and minimum distances between groups, `atomicdistances`, `dihedrals.Dihedral` (−180…180°), `lineardensity`, `density.DensityAnalysis` (OpenDX file), `dihedrals.Ramachandran` and `dssp.DSSP` (proteins). Each analysis shows its own fields; **← picked** inserts the atoms selected in the viewer as `id …`.
+3. **MONET Custom Functionalities** — *3D viewer & extraction* (3D view, sampling, extraction and QM inputs), then MONET's own analyses: autocorrelation (decorrelation time and uncorrelated trajectory), fluctuations and trends, Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion and VDOS.
 
-The viewer, atom table, cell and time axis are common to the three analysis tabs.
+The viewer, atom table, cell and time axis are common to all analysis sub-tabs.
+
+### Adding analyses (plugins)
+
+Every module can be extended with Python-only plugins: a function decorated with `@analysis` declares its parameters, and MONET builds its form, checks the values, runs it in the Python worker, plots the result and logs it in the history and in `replay.py`. ASE and MONET Custom plugins appear in a **More analyses** sub-tab; MDAnalysis plugins join the menu of *MDAnalysis › Analyses*, whose built-in analyses use the same mechanism (`monet_analyses/mdanalysis.py`). Plugins are read from `plugins/` (two examples: cell volume/density, radius of gyration), `~/.monet/plugins/`, the folders in `MONET_PLUGINS` and installed packages with the `monet.analyses` entry point. See [docs/plugins.md](docs/plugins.md).
 
 Not included, because they need data an MD trajectory in XYZ form does not carry or tools that are not installed: ASE calculators, optimisers, MD engines and NEB (energies/forces); MDAnalysis modules that need charges, external programs, membranes or are deprecated (dielectric, HOLE2, leaflet finder, water dynamics, ENCORE/PSA, BAT, persistence length, helix and nucleic-acid analyses). Symmetry needs `spglib` (`python -m pip install spglib`).
 
@@ -197,11 +200,11 @@ Set the **Time axis** row at the top of the ASE panel: the MD time step of your 
 
 ### Pairwise RMSD matrices
 
-*Custom analyses › RMSD Matrix* (Kabsch, NumPy) and *MDAnalysis › Pairwise RMSD matrix* (`DistanceMatrix`) plot the RMSD between every pair of analysed frames. Under each matrix choose the colour map (plasma, viridis, inferno, magma, coolwarm or the app theme), whether frame 0 is in the upper-left corner (as `matplotlib.imshow`) or the lower-left one, and a plot title, e.g. *S0 at 300 K (non-correlated)*. The axes show the original frame numbers. To compare non-correlated configurations, run the matrix on the uncorrelated trajectory from the autocorrelation tab, or use a frame step close to the decorrelation stride. The MDAnalysis version thins long runs to at most *Maximum frames* (500 by default) and reports the mean, SD and maximum off-diagonal RMSD; both versions agree within 0.002 Å on the test trajectories.
+*MONET Custom Functionalities › RMSD Matrix* (Kabsch, NumPy) and *MDAnalysis › Pairwise RMSD matrix* (`DistanceMatrix`) plot the RMSD between every pair of analysed frames. Under each matrix choose the colour map (plasma, viridis, inferno, magma, coolwarm or the app theme), whether frame 0 is in the upper-left corner (as `matplotlib.imshow`) or the lower-left one, and a plot title, e.g. *S0 at 300 K (non-correlated)*. The axes show the original frame numbers. To compare non-correlated configurations, run the matrix on the uncorrelated trajectory from the autocorrelation tab, or use a frame step close to the decorrelation stride. The MDAnalysis version thins long runs to at most *Maximum frames* (500 by default) and reports the mean, SD and maximum off-diagonal RMSD; both versions agree within 0.002 Å on the test trajectories.
 
 ### Fluctuations and trends
 
-*Custom analyses › Fluctuations & trends* maps how atoms, bonds, angles and dihedrals oscillate during the run:
+*MONET Custom Functionalities › Fluctuations & trends* maps how atoms, bonds, angles and dihedrals oscillate during the run:
 
 - **Items**: every bond, angle or dihedral found from the first-frame connectivity (bond cutoff of the viewer) among the atoms entered (blank = all), or only the groups entered (MONET IDs, in order). *Atoms* gives the positional fluctuation of each atom after removing global translation and rotation (periodic runs are unwrapped first).
 - **Statistics per item**: mean; SD (RMSF for atoms, circular SD for dihedrals); minimum and maximum; 5–95 % range; linear trend with its error and R²; drift between the second and first half of the run; standard error from five block averages; dominant oscillation frequency (cm⁻¹ with the time axis set, otherwise its period in frames) and its share of the spectral power. A trend is marked *significant* when the five block means follow a line beyond three times the error of their slope and the change over the run exceeds 10 % of the SD, so fast oscillations are not mistaken for drift.
@@ -215,7 +218,7 @@ Normalised g(r) and the running coordination number n(r) for an element pair (or
 
 ### MSD and diffusion
 
-Positions are unwrapped with minimum-image steps (keep the frame step small enough that atoms move less than half a cell between analysed frames; a warning is shown otherwise), the centre-of-geometry drift can be removed, and MSD(t) is averaged over all time origins (FFT algorithm). D = slope / 6 from a linear fit in the chosen window (default 10–50 % of the run), reported in cm²/s and Å²/fs, for the selection and per element.
+Positions are unwrapped with minimum-image steps (keep the frame step small enough that atoms move less than half a cell between analysed frames; a warning is shown otherwise), the centre-of-mass drift of the whole system can be removed (it is computed from all atoms, so the diffusion of a single atom or molecule is kept), and MSD(t) is averaged over all time origins (FFT algorithm). D = slope / 6 from a linear fit in the chosen window (default 10–50 % of the run), reported in cm²/s and Å²/fs, for the selection and per element.
 
 ### VDOS
 
@@ -390,15 +393,15 @@ Large systems stay responsive: bonds are found with a spatial grid (linear in th
 
 ### Performance
 
-The Python engine indexes frame offsets once (numpy, cached in the system temp directory under `monet-index`) and then parses only the requested frames/atoms. Measured on a 66 MB trajectory (5000 frames × 292 atoms, 73 atoms selected, every 10th frame sampled, average and Gaussian inputs on):
+The Python engine indexes frame offsets once (numpy, cached per user in `~/.cache/monet/index`, or `$MONET_CACHE_DIR`; index files unused for 30 days are deleted) and then parses only the requested frames/atoms. Measured on a 66 MB trajectory (5000 frames × 292 atoms, 73 atoms selected, every 10th frame sampled, average and Gaussian inputs on):
 
 | Task | Before | Now |
 | --- | --- | --- |
 | Indexing / analysing the file | 3.0 s | 0.2 s (Python) · 1.7 s (desktop) |
-| Extraction | 11.8 s + 3.0 s re-analysis | 2.8 s (Python) · 3.1 s (desktop) |
+| Extraction | 11.8 s + 3.0 s re-analysis | 2.8 s (Python engine, launcher and desktop) |
 | Bond-length series (2 pairs) | 7.6 s | 3.8 s |
 
-The desktop app streams the extraction in a single pass with back-pressure, so memory use does not grow with the trajectory length.
+The extraction streams the trajectory in a single pass, so memory use does not grow with the trajectory length. Calculations run on persistent Python workers: the libraries and the trajectory index stay loaded between requests, so only the first request after start-up waits for the imports (about 0.5 s); later frame reads take about 1 ms.
 
 ## Input formats
 
@@ -451,7 +454,23 @@ npm install
 npm start
 ```
 
-Activate the Python environment before launching Electron so its Python bridge can find ASE. Desktop mode uses native dialogs and writes results to the selected directory. It is meant for development: no packaged desktop installers are distributed, because the analyses need a Python environment anyway.
+Activate the Python environment before launching Electron: extraction, ASE and MDAnalysis run on the same Python engine as the launcher (persistent workers from `bridge-worker.js`), so `python3` with numpy, ASE and MDAnalysis must be on PATH. Desktop mode uses native dialogs and writes results to the selected directory. No packaged desktop installers are distributed, because the analyses need a Python environment anyway.
+
+## Source layout
+
+| Files | Role |
+| --- | --- |
+| `index.html`, `styles.css`, `theme.js` | page and themes |
+| `app-core.js` … `app-start.js` | page logic, loaded in order by `index.html`: state and navigation (`app-core`), workflow steps 1–6 (`app-workflow`), analysis workspace, charts and player (`app-analysis`), geometry and dynamics analyses (`app-geometry`), MDAnalysis and registered analyses (`app-mdanalysis`), structure, atom identity and fluctuations (`app-structure`), history, console and sessions (`app-history`), start-up (`app-start`) |
+| `analysis-forms.js` | forms and *More analyses* tabs built from the analysis registry |
+| `viewer.js`, `plot.js`, `xyz.js`, `pbc.js`, `fit.js`, `units.js`, `ase-model.js` | 3D viewer, charts, XYZ parser and numeric helpers |
+| `qm-*.js`, `monet_qm.py` | QM input generation (JavaScript and Python, kept in parity by tests) |
+| `provenance.js`, `console.js`, `report.js`, `replaygen.js`, `monet_replay.py` | analysis history, console, methods report and `replay.py` |
+| `browser-bridge.js`, `preload.js`, `main.js`, `bridge-worker.js` | browser and desktop bridges to Python |
+| `start_monet.py` | launcher: local server, sessions and the pool of Python workers |
+| `ase_bridge.py` | Python worker: one JSON command per line (`--serve`) |
+| `monet_registry.py`, `monet_analyses/`, `plugins/` | analysis registry, built-in MDAnalysis analyses, plugins ([docs/plugins.md](docs/plugins.md)) |
+| `monet_io.py`, `monet_analysis.py`, `monet_mda.py`, `monet_formats.py` | trajectory I/O, analysis numerics, MDAnalysis helpers, format import |
 
 ## Changes
 

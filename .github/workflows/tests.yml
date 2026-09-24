@@ -43,6 +43,25 @@ jobs:
           node tests/session.cjs
           node tests/replay.cjs
           node tests/history-ui.cjs
+          node tests/launcher.cjs
+          node tests/registry.cjs
+          node tests/app-load.cjs
+
+  lint:
+    # Correctness linters: ruff (pyflakes rules, ruff.toml) and ESLint (recommended rules, eslint.config.js).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: ruff
+        run: python -m pip install ruff && ruff check .
+      - name: ESLint
+        run: npm install --no-save --ignore-scripts eslint@9 @eslint/js@9 globals && npx eslint .
 
   launchers:
     # The double-click launchers create the environment on every platform.

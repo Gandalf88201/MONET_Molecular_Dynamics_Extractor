@@ -288,19 +288,20 @@
   <main class="viewer-area">
 
     <!-- Tab bar -->
-    <div class="viewer-tabbar">
+    <div class="viewer-tabbar" role="tablist" aria-label="Analysis modules">
       <button class="sidebar-toggle" id="sidebar-toggle" title="Hide or show the workflow panel" aria-pressed="false">⇤</button>
-      <button class="vtab" data-vtab="ase" id="vtab-ase" title="Analyses computed with ASE">
+      <button class="vtab" role="tab" data-vtab="ase" id="vtab-ase" title="Analyses computed with ASE">
         ASE
         <span class="ase-tab-badge" id="ase-tab-badge">✓</span>
       </button>
-      <button class="vtab" data-vtab="mda" id="vtab-mda" title="Analyses computed with MDAnalysis">MDAnalysis</button>
-      <button class="vtab" data-vtab="custom" id="vtab-custom" title="MONET's own analyses (autocorrelation, RMSD, dynamics)">Custom analyses</button>
-      <button class="vtab active" data-vtab="view3d" id="vtab-view3d" title="3D view and MONET file processing">MONET processing</button>
+      <button class="vtab" role="tab" data-vtab="mda" id="vtab-mda" title="Analyses computed with MDAnalysis">MDAnalysis</button>
+      <button class="vtab active" role="tab" data-vtab="custom" id="vtab-custom" title="MONET's own tools: 3D viewer and extraction, autocorrelation, RMSD, dynamics">MONET Custom Functionalities</button>
     </div>
 
-    <!-- ── 3D Viewer tab ── -->
+    <!-- ── 3D Viewer: first page of MONET Custom Functionalities ── -->
     <div class="vtab-content active" id="vtab-content-view3d">
+      <!-- Filled from the "custom" sub-tabs by app-analysis.js -->
+      <div class="ase-subtabbar" id="monet-subtabbar" role="tablist" aria-label="MONET Custom Functionalities"></div>
       <div class="viewer-header">
         <span id="viewer-title">3D Molecular Viewer</span>
         <label class="view-style">Style <select class="field-input field-input-sm view-style-select" id="view-style"></select></label>
@@ -471,23 +472,24 @@
       </div>
       <!-- ASE sub-tabs -->
       <p class="panel-desc module-intro" id="module-intro"></p>
-      <div class="ase-subtabbar">
-        <button class="ase-stab" data-group="ase" data-stab="structure">Structure</button>
-        <button class="ase-stab" data-group="ase" data-stab="bonds">Bond Lengths</button>
-        <button class="ase-stab" data-group="ase" data-stab="angles">Bond Angles</button>
-        <button class="ase-stab" data-group="ase" data-stab="dihedrals">Dihedral Angles</button>
-        <button class="ase-stab" data-group="ase" data-stab="pdd">Pair Distances</button>
-        <button class="ase-stab" data-group="ase" data-stab="coordination">Coordination</button>
-        <button class="ase-stab" data-group="ase" data-stab="convert">Convert / Wrap</button>
-        <button class="ase-stab" data-group="mda" data-stab="topology">Topology &amp; consistency</button>
-        <button class="ase-stab" data-group="mda" data-stab="mda">Analyses</button>
-        <button class="ase-stab active" data-group="custom" data-stab="acf">Autocorrelation</button>
-        <button class="ase-stab" data-group="custom" data-stab="fluct">Fluctuations &amp; trends</button>
-        <button class="ase-stab" data-group="custom" data-stab="rmsd">RMSD (Kabsch)</button>
-        <button class="ase-stab" data-group="custom" data-stab="rmsdmatrix">RMSD Matrix</button>
-        <button class="ase-stab" data-group="custom" data-stab="rdf">RDF</button>
-        <button class="ase-stab" data-group="custom" data-stab="msd">MSD / Diffusion</button>
-        <button class="ase-stab" data-group="custom" data-stab="vdos">VDOS</button>
+      <div class="ase-subtabbar" role="tablist" aria-label="Analyses of the module">
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="structure">Structure</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="bonds">Bond Lengths</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="angles">Bond Angles</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="dihedrals">Dihedral Angles</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="pdd">Pair Distances</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="coordination">Coordination</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="convert">Convert / Wrap</button>
+        <button class="ase-stab" role="tab" data-group="mda" data-stab="topology">Topology &amp; consistency</button>
+        <button class="ase-stab" role="tab" data-group="mda" data-stab="mda">Analyses</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="view3d">3D viewer &amp; extraction</button>
+        <button class="ase-stab active" role="tab" data-group="custom" data-stab="acf">Autocorrelation</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="fluct">Fluctuations &amp; trends</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rmsd">RMSD (Kabsch)</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rmsdmatrix">RMSD Matrix</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rdf">RDF</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="msd">MSD / Diffusion</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="vdos">VDOS</button>
       </div>
 
       <!-- ASE: structure summary -->
@@ -933,7 +935,7 @@
           <input class="field-input field-input-sm" type="number" id="msd-fit-start" min="0" step="any" placeholder="10%" />
           <label class="field-label" for="msd-fit-end">to (fs)</label>
           <input class="field-input field-input-sm" type="number" id="msd-fit-end" min="0" step="any" placeholder="50%" />
-          <label><input type="checkbox" id="msd-drift" checked /> Remove centre-of-geometry drift</label>
+          <label title="Subtracts the centre-of-mass motion of the whole system, so a single atom or molecule keeps its own diffusion"><input type="checkbox" id="msd-drift" checked /> Remove the system centre-of-mass drift</label>
           <button class="btn btn-sm btn-accent" id="btn-run-msd">Compute MSD</button>
         </div>
         <p class="panel-desc">Positions are unwrapped when a periodic cell is present; MSD is averaged over all time origins; D = slope / 6 from a linear fit in the chosen window.</p>
@@ -1169,6 +1171,76 @@
         </div>
         <canvas class="chart-canvas" id="chart-mda"></canvas>
         <div class="chart-placeholder" id="chart-mda-ph">MDAnalysis results</div>
+        <div class="hidden pca-block" id="mda-pca-block">
+          <h4>Principal components</h4>
+          <p class="panel-desc">Tick the components to plot (up to 10). Click a projection plot to show that frame in the viewer; Shift-click adds it to the frame list below.</p>
+          <div class="result-tables" id="pca-components"></div>
+          <div class="ase-plot-actions dist-chart-actions">
+            <strong>Distribution</strong>
+            <button class="btn btn-sm" id="clear-mdadist" disabled>Clear</button>
+            <button class="btn btn-sm" id="download-mdadist" disabled>Download plot PNG</button>
+            <button class="btn btn-sm" id="csv-mdadist" disabled>Download data CSV</button>
+            <label class="plot-view">Bins <input class="field-input field-input-sm" id="mdadist-bins" type="number" min="2" max="500" value="60" /></label>
+          </div>
+          <canvas class="chart-canvas" id="chart-mdadist"></canvas>
+          <div class="chart-placeholder" id="chart-mdadist-ph">Probability distribution of the plotted projections. Click a bar to select that projection window; Shift-click widens it.</div>
+
+          <h4>Select configurations</h4>
+          <div class="ase-ctrl-row">
+            <label class="field-label" for="pca-mode">Select by</label>
+            <select class="field-input" id="pca-mode">
+              <option value="window">projection window (from the distribution)</option>
+              <option value="extremes">extremes of a component</option>
+              <option value="list">frame list (from the plot or typed)</option>
+            </select>
+          </div>
+          <div class="pca-mode-row" data-mode="window">
+            <div class="ase-ctrl-row">
+              <select class="field-input field-input-sm pca-pc" id="pca-win-pc" aria-label="Component of the first window"></select>
+              <label class="field-label" for="pca-win-low">from</label>
+              <input class="field-input field-input-sm" type="number" step="any" id="pca-win-low" />
+              <label class="field-label" for="pca-win-high">to</label>
+              <input class="field-input field-input-sm" type="number" step="any" id="pca-win-high" />
+              <span class="field-label">Å</span>
+            </div>
+            <div class="ase-ctrl-row">
+              <label class="field-label" for="pca-win2-pc">and</label>
+              <select class="field-input field-input-sm pca-pc" id="pca-win2-pc" aria-label="Component of the second window"></select>
+              <label class="field-label" for="pca-win2-low">from</label>
+              <input class="field-input field-input-sm" type="number" step="any" id="pca-win2-low" />
+              <label class="field-label" for="pca-win2-high">to</label>
+              <input class="field-input field-input-sm" type="number" step="any" id="pca-win2-high" />
+              <span class="field-label">Å</span>
+            </div>
+          </div>
+          <div class="ase-ctrl-row pca-mode-row hidden" data-mode="extremes">
+            <select class="field-input field-input-sm pca-pc" id="pca-ext-pc" aria-label="Component"></select>
+            <label class="field-label" for="pca-ext-n">configurations at each end</label>
+            <input class="field-input field-input-sm" type="number" min="1" id="pca-ext-n" value="5" />
+          </div>
+          <div class="pca-mode-row hidden" data-mode="list">
+            <label class="field-label" for="pca-frame-list">Frames of the active trajectory (e.g. 120 4500 9000-9500:50)</label>
+            <div class="pick-row">
+              <textarea class="field-input" id="pca-frame-list" rows="2" placeholder="Shift-click the projection plot, or type frame numbers"></textarea>
+              <button class="btn btn-sm" id="pca-add-shown" type="button" title="Add the frame shown in the viewer">+ shown frame</button>
+            </div>
+          </div>
+          <div class="ase-ctrl-row">
+            <label class="field-label" for="pca-spacing">Minimum spacing (frames)</label>
+            <input class="field-input field-input-sm" type="number" min="1" id="pca-spacing" value="1" title="Consecutive MD frames are near copies: set the decorrelation stride from the ACF to keep independent configurations" />
+            <button class="btn btn-sm btn-accent" id="pca-select" type="button">Select</button>
+            <button class="btn btn-sm" id="pca-clear" type="button" disabled>Clear selection</button>
+          </div>
+          <div class="info-box hidden" id="pca-selection" aria-live="polite">
+            <span id="pca-selection-text"></span>
+            <div class="ase-plot-actions">
+              <button class="btn btn-sm btn-accent" id="pca-write" type="button">Write the selected configurations</button>
+              <a class="btn btn-sm hidden" id="pca-download" download>Download selected configurations</a>
+              <button class="btn btn-sm hidden" id="pca-activate" type="button">Use them for the extraction</button>
+            </div>
+          </div>
+          <div class="result-tables" id="pca-selected-table"></div>
+        </div>
         <div class="hidden" id="mda-matrix-block">
         <div class="ase-ctrl-row matrix-style" id="mdamatrix-style">
           <label class="field-label" for="mdamatrix-colormap">Colour map</label>
@@ -1331,6 +1403,14 @@
 <script src="console.js"></script>
 <script src="report.js"></script>
 <script src="replaygen.js"></script>
-<script src="renderer.js"></script>
+<script src="analysis-forms.js"></script>
+<script src="app-core.js"></script>
+<script src="app-workflow.js"></script>
+<script src="app-analysis.js"></script>
+<script src="app-geometry.js"></script>
+<script src="app-mdanalysis.js"></script>
+<script src="app-structure.js"></script>
+<script src="app-history.js"></script>
+<script src="app-start.js"></script>
 </body>
 </html>

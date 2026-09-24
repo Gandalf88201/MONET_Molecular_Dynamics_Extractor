@@ -49,6 +49,17 @@ assert.ok(Math.abs(model.tauFromAcf(expAcf) - 39.7292) < 1e-3); checks++
 assert.ok(Math.abs(model.subsampleInefficiency(expAcf, 40) - (1 + 2 / (Math.E - 1))) < 1e-3); checks++
 assert.equal(model.subsampleInefficiency([1, 0, 0.5], 1), 1); assert.equal(model.subsampleInefficiency(expAcf, 39.6), model.subsampleInefficiency(expAcf, 40)); checks++
 
+// Configurations picked on PCA projections: typed frame lists, projection windows, spacing, extremes.
+assert.deepEqual(model.parseFrameList('12, 3 5-7 20-30:5 3', 100), [3, 5, 6, 7, 12, 20, 25, 30]); checks++
+assert.throws(() => model.parseFrameList('4-2'), /first-last/); assert.throws(() => model.parseFrameList('1 x'), /not a frame number/); assert.throws(() => model.parseFrameList('99', 50), /past the last frame \(49\)/); checks++
+const pcaFrames = [0, 2, 4, 6, 8, 10]
+const pcaProjections = [[-3, -1, 0, 1, 2, 3], [5, 5, -5, -5, 5, 5]]
+assert.deepEqual(model.framesInWindows(pcaFrames, pcaProjections, [{ component: 0, low: 1, high: -1 }]), [2, 4, 6]); checks++
+assert.deepEqual(model.framesInWindows(pcaFrames, pcaProjections, [{ component: 0, low: -1, high: 3 }, { component: 1, low: 0, high: 9 }]), [2, 8, 10]); checks++
+assert.deepEqual(model.thinFrames([10, 0, 2, 3, 7], 3), [0, 3, 7, 10]); assert.deepEqual(model.thinFrames([4, 1]), [1, 4]); checks++
+const ends = model.extremeFrames(pcaFrames, pcaProjections[0], 2, 4)
+assert.deepEqual(ends.low.map(item => item.frame), [0, 4]); assert.deepEqual(ends.high.map(item => item.frame), [10, 6]); checks++
+
 // Grid bond search equals the brute-force result and scales to large systems.
 {
   const { findBonds } = require('../viewer.js')
@@ -126,6 +137,13 @@ async function run () {
   assert.ok((await handlers.get('analyze-file')(null, path.join(temp, 'missing.xyz'))).error); checks++
   const result = await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, filePath, outputDir: path.join(temp, 'desktop') })
   assert.equal(result.success, true); assert.equal(result.sampledFrames, 2); checks++
+  // A derived trajectory (e.g. a PCA selection) keeps the original frame in the extracted comment lines.
+  assert.equal(XYZ.outputComment(3, 'Lattice="1 0 0 0 1 0 0 0 1" frame=3 source_frame=5244'), 'frame 3 source_frame=5244'); assert.equal(XYZ.outputComment(0, 'Water frame 0'), 'frame 0'); checks++
+  const derived = path.join(temp, 'derived.xyz')
+  fs.writeFileSync(derived, fs.readFileSync(filePath, 'utf8').split('\n').map((line, i) => i % 5 === 1 ? `${line} source_frame=${[5244, 16231][(i - 1) / 5]}` : line).join('\n'))
+  await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, generateGaussian: false, filePath: derived, outputDir: path.join(temp, 'desktop-derived') })
+  const derivedLines = fs.readFileSync(path.join(temp, 'desktop-derived/2-SAMPLED_CONFIGURATIONS/SAMPLED_CONFIGURATIONS.xyz'), 'utf8').split('\n')
+  assert.equal(derivedLines[1], 'frame 0 source_frame=5244'); assert.equal(derivedLines[5], 'frame 1 source_frame=16231'); checks++
   // Template-based QM inputs: same files from the desktop and browser engines.
   const qm = QM.defaultSpec(['orca', 'qe', 'vasp'])
   qm.common.multiplicities = [1]
@@ -160,6 +178,8 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     const potcarText = fs.readFileSync(path.join(temp, 'desktop-potcar/2-SAMPLED_CONFIGURATIONS/conf1/vasp/POTCAR'), 'utf8')
     assert.match(potcarText, /PAW_PBE O[\s\S]*PAW_PBE H/); checks++
   }
+  // The desktop app extracts with the Python engine, like the launcher: portable Gaussian inputs (relative %chk).
+  assert.match(fs.readFileSync(path.join(temp, 'desktop/2-SAMPLED_CONFIGURATIONS/conf1/sing.dat'), 'utf8'), /^%nproc=6\n%chk=s0\.chk\n/); checks++
   const extracted = fs.readFileSync(path.join(temp, 'desktop/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz'), 'utf8')
   assert.equal(parse(extracted).configCount, 2); assert.equal(parse(extracted).atomCount, 2); checks++
   // Python's standard ZIP reader verifies CRCs and output numerics independently.
@@ -175,6 +195,11 @@ with zipfile.ZipFile(sys.argv[1]) as z:
  assert z.read('1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz').decode().splitlines()[0] == '2'
 `, path.join(temp, 'results.zip')]); checks++
   fs.rmSync(temp, { recursive: true, force: true })
+  // One version everywhere: CITATION.cff (checked against the release tag), package.json, the title bar and the changelog.
+  { const version = fs.readFileSync(path.join(root, 'CITATION.cff'), 'utf8').match(/^version: *(\S+)/m)[1]
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version, version)
+    assert.match(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), new RegExp(`class="titlebar-sub">[^<]*v ${version.replace(/\./g, '\\.')}<`))
+    assert.match(fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'), new RegExp(`^## ${version.replace(/\./g, '\\.')}( |$)`, 'm')); checks++ }
   console.log(`PASS: ${checks} regression checks (XYZ parser, browser adapter, ZIP output, desktop IPC).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 })

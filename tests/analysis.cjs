@@ -101,6 +101,8 @@ r = bridge({ action: 'rmsd_matrix', filename: path.join(temp, 'rigid.xyz'), alig
 assert.equal(r.matrix.length, 5); assert.equal(r.matrix[2][2], 0); assert.equal(r.matrix[1][3], r.matrix[3][1]); assert.ok(r.matrix[0][4] > 5); checks++
 r = bridge({ action: 'rmsd_matrix', filename: path.join(temp, 'rigid.xyz'), align: true, max_frames: 3 })
 assert.equal(r.matrix.length, 3); assert.equal(r.truncated, true); assert.ok(Math.max(...r.matrix.flat()) < 1e-6); checks++
+r = bridge({ action: 'rmsd_matrix', filename: path.join(temp, 'rigid.xyz'), align: true, max_frames: 5 })
+assert.equal(r.matrix.length, 5); assert.equal(r.truncated, false); checks++
 
 // RDF: simple cubic first shell at 2 A with 6 neighbours; g -> ~1 is not expected for a crystal, but n(r) is exact.
 r = bridge({ action: 'rdf', filename: path.join(temp, 'lattice.xyz'), rmax: 3.5, nbins: 70 })
@@ -126,6 +128,14 @@ near(r.fits.selection.D_cm2_s, 1.25e-4, 1.25e-5, 'diffusion cm2/s'); checks++
 near(r.series.selection[10], 6 * 1.25e-3 * 10, 0.02, 'MSD(10 fs)'); checks++
 r = bridge({ action: 'msd', filename: path.join(temp, 'brownian.xyz'), dt: 1, frame_step: 20, fit_start: 100, fit_end: 1500 })
 near(r.fits.selection.D_A2_fs, 1.25e-3, 2.5e-4, 'diffusion with frame step'); assert.equal(r.dt, 20); checks++
+// Drift removal uses the centre of mass of the whole system: atom 1 of 10 moves 0.1 A per frame,
+// so the system moves 0.01 A per frame and atom 1 keeps 0.09 A per frame of its own motion.
+fs.writeFileSync(path.join(temp, 'drift.xyz'), Array.from({ length: 20 }, (_, f) =>
+  `10\nframe=${f}\n` + Array.from({ length: 10 }, (_, i) => `Ar ${i === 0 ? (0.1 * f).toFixed(4) : 3 * i} 0 0\n`).join('')).join(''))
+r = bridge({ action: 'msd', filename: path.join(temp, 'drift.xyz'), dt: 1, indices: [0], by_element: false, remove_drift: true })
+near(r.series.selection[10], 0.81, 1e-6, 'MSD of one atom after removing the system drift'); checks++
+r = bridge({ action: 'msd', filename: path.join(temp, 'drift.xyz'), dt: 1, indices: [0], by_element: false, remove_drift: false })
+near(r.series.selection[10], 1.0, 1e-6, 'MSD of one atom with the drift kept'); checks++
 r = bridge({ action: 'msd', filename: path.join(temp, 'brownian.xyz'), dt: 0 })
 assert.equal(r.ok, false); assert.match(r.message, /dt must be a positive/); checks++
 
@@ -207,6 +217,21 @@ for (const bad of [{ stride: 0 }, { stride: 1.5 }, { stride: 3 }, { stride: 1, s
   assert.equal(r.ok, false, JSON.stringify(bad))
 }
 assert.match(bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'bad.xyz'), stride: 3 }).message, /shorter than the decorrelation time/); checks++
+// Picked frames (e.g. on PCA projections): exactly those, in time order, duplicates dropped.
+r = bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'picked.xyz'), frames: [2, 0, 2] })
+assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.n_frames, 2); assert.equal(r.selected, true); assert.equal(r.first, 0); assert.equal(r.last, 2); assert.equal(r.stride, undefined); checks++
+const pickedLines = fs.readFileSync(path.join(temp, 'picked.xyz'), 'utf8').split('\n')
+assert.match(pickedLines[1], /source_frame=0$/); assert.match(pickedLines[21], /frame=2 source_frame=2$/); assert.equal(pickedLines[22], srcLines[42]); checks++
+for (const frames of [[], [3], [-1], [1.5], 'x']) {
+  r = bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'bad.xyz'), frames })
+  assert.equal(r.ok, false, JSON.stringify(frames))
+}
+assert.match(bridge({ action: 'subsample', filename: path.join(temp, 'waters.xyz'), output: path.join(temp, 'bad.xyz'), frames: [5] }).message, /between 0 and 2/); checks++
+// Extracting the picked configurations keeps the original frame in the comment lines.
+r = bridge({ action: 'extract', filename: path.join(temp, 'picked.xyz'), output_dir: path.join(temp, 'picked-out'), selected: [1, 2, 3], frequency: 1 })
+assert.equal(r.ok, true, JSON.stringify(r))
+const extractedLines = fs.readFileSync(path.join(temp, 'picked-out/2-SAMPLED_CONFIGURATIONS/SAMPLED_CONFIGURATIONS.xyz'), 'utf8').split('\n')
+assert.equal(extractedLines[1], 'frame 0 source_frame=0'); assert.equal(extractedLines[6], 'frame 1 source_frame=2'); checks++
 
 // Wrapping into a triclinic cell: whole molecules keep their bonds, atoms end up inside the cell.
 const cellpar = [10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371]
@@ -378,4 +403,24 @@ const launcher = fs.readFileSync(path.join(root, 'start_monet.py'), 'utf8')
 assert.match(launcher, /'equilibration'/); assert.match(launcher, /'tau_int_method'/); checks++
 
 fs.rmSync(temp, { recursive: true, force: true })
+// Index cache: a cache file with unexpected content is ignored (re-indexed), and old index files are deleted.
+execFileSync(python, ['-c', `
+import json, os, sys, time, numpy as np
+sys.path.insert(0, sys.argv[1])
+os.environ['MONET_CACHE_DIR'] = sys.argv[2]
+import monet_io
+path = sys.argv[3]
+traj = monet_io.XYZTrajectory(path)
+cache = monet_io._cache_path(path)
+with np.load(cache) as data:
+    offsets, meta = data['offsets'], json.loads(str(data['meta']))
+np.savez(cache, offsets=offsets, meta=json.dumps({**meta, 'path': '/etc/passwd'}))
+again = monet_io.XYZTrajectory(path)
+assert again.path == path and again.nframes == traj.nframes
+old = os.path.join(sys.argv[2], 'old.npz'); open(old, 'wb').close()
+os.utime(old, (time.time() - 40 * 86400,) * 2)
+os.remove(cache)
+monet_io.XYZTrajectory(path)
+assert not os.path.exists(old)
+`, root, fs.mkdtempSync(path.join(os.tmpdir(), 'monet-cache-')), path.join(root, 'examples', 'water.XYZ')]); checks++
 console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations, tau_int).`)

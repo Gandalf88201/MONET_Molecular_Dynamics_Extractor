@@ -201,7 +201,61 @@
     return { centres: counts.map((_, i) => low + (i + 0.5) * width), density: counts.map(count => count / (data.length * width)), width }
   }
 
-  const api = { atomMap, groupsFromIds, selectedIndices, cellParameters, cellVectors, verifyAtoms, seriesLabel, seriesStats, histogram, ANGLE_PERIODS, tauFromAcf, subsampleInefficiency }
+  // ── Configurations picked on PCA projections (frame numbers of the active file) ──
+
+  // "0 150 2500-2600 3000-4000:100" → sorted unique frames; a range may carry a step after ':'.
+  function parseFrameList (text, count) {
+    const frames = new Set()
+    for (const token of String(text).split(/[\s,;]+/).filter(Boolean)) {
+      const match = /^(\d+)(?:-(\d+)(?::(\d+))?)?$/.exec(token)
+      if (!match) throw new Error(`“${token}” is not a frame number or a range such as 100-200 or 100-200:10.`)
+      const first = Number(match[1])
+      const last = match[2] === undefined ? first : Number(match[2])
+      const step = match[3] === undefined ? 1 : Number(match[3])
+      if (last < first || step < 1) throw new Error(`“${token}”: write ranges as first-last (optionally :step ≥ 1).`)
+      for (let frame = first; frame <= last; frame += step) {
+        if (count !== undefined && frame >= count) throw new Error(`Frame ${frame} is past the last frame (${count - 1}).`)
+        frames.add(frame)
+      }
+    }
+    return [...frames].sort((a, b) => a - b)
+  }
+
+  // Frames whose projections lie inside every window { component, low, high } (inclusive).
+  function framesInWindows (frames, projections, windows) {
+    return frames.filter((_, i) => windows.every(({ component, low, high }) => {
+      const value = projections[component][i]
+      return Number.isFinite(value) && value >= Math.min(low, high) && value <= Math.max(low, high)
+    }))
+  }
+
+  // Keep frames at least `spacing` apart, in time order (spacing 1 keeps them all).
+  function thinFrames (frames, spacing = 1) {
+    const kept = []
+    for (const frame of [...frames].sort((a, b) => a - b)) {
+      if (!kept.length || frame - kept[kept.length - 1] >= spacing) kept.push(frame)
+    }
+    return kept
+  }
+
+  // The `n` lowest and `n` highest projections of one component, each at least `spacing` frames
+  // from the others already taken on the same side (the frames next to an extreme are near copies).
+  function extremeFrames (frames, values, n, spacing = 1) {
+    const order = frames.map((frame, i) => ({ frame, value: values[i] })).filter(item => Number.isFinite(item.value))
+      .sort((a, b) => a.value - b.value)
+    const take = items => {
+      const chosen = []
+      for (const item of items) {
+        if (chosen.length >= n) break
+        if (chosen.every(other => Math.abs(other.frame - item.frame) >= spacing)) chosen.push(item)
+      }
+      return chosen
+    }
+    return { low: take(order), high: take([...order].reverse()) }
+  }
+
+  const api = { atomMap, groupsFromIds, selectedIndices, cellParameters, cellVectors, verifyAtoms, seriesLabel, seriesStats, histogram, ANGLE_PERIODS, tauFromAcf, subsampleInefficiency,
+    parseFrameList, framesInWindows, thinFrames, extremeFrames }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.MonetASEModel = api
 })(globalThis)

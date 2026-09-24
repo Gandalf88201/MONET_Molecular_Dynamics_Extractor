@@ -1,0 +1,5 @@
+# Correctness checks only (pyflakes and syntax errors); the code keeps its own formatting.
+extend-exclude = [".claude", "docs"]
+
+[lint]
+select = ["F", "E9"]
