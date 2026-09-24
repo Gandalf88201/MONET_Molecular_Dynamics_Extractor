@@ -81,7 +81,17 @@ checks += 1
 
 session.close()
 assert not session.dir.exists()
+
+# Every command key the bridge reads is either allowed from the page or set by the launcher itself,
+# so a new parameter cannot be dropped silently in browser mode (registered analyses use 'params').
+import re
+source = Path(sys.argv[1], 'ase_bridge.py').read_text() + Path(sys.argv[1], 'monet_registry.py').read_text()
+read = set(re.findall(r'''(?:cmd|command|self\._cmd)(?:\.get\(|\[)['"](\w+)['"]''', source))
+launcher_set = {'action', 'filename', 'input', 'output', 'output_dir', 'zip', 'reference', 'cell_file'}
+missing = read - sm.ALLOWED - launcher_set
+assert not missing, f'add {sorted(missing)} to ALLOWED in start_monet.py'
+checks += 1
 print(checks)
 `
 const checks = Number(execFileSync(process.env.PYTHON || 'python3', ['-c', script, root], { encoding: 'utf8' }).trim().split('\n').pop())
-console.log(`PASS: ${checks} launcher checks (worker reuse, cancel, job limit, session file cleanup).`)
+console.log(`PASS: ${checks} launcher checks (worker reuse, cancel, job limit, session file cleanup, parameter whitelist).`)

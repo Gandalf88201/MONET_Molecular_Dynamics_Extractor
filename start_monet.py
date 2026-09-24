@@ -40,7 +40,7 @@ ALLOWED = {'indices', 'quantity', 'groups', 'center', 'atom_ids', 'stride', 'sta
            'first_frame_only', 'cell', 'pbc', 'mic', 'angle_range', 'angle_normal', 'seed', 'bond_scale',
            'index', 'selected', 'frequency', 'compute_average', 'generate_gaussian', 'atom_count', 'history', 'qm', 'source_name', 'cell_vectors',
            'align', 'unwrap', 'reference_index', 'max_frames', 'dt', 'fit_start', 'fit_end', 'remove_drift',
-           'by_element', 'mass_weighted', 'smooth_cm', 'max_cm', 'quantity', 'groups', 'max_lag', 'mode', 'fit_until', 'tau_int_method',
+           'by_element', 'mass_weighted', 'smooth_cm', 'max_cm', 'max_lag', 'mode', 'fit_until', 'tau_int_method',
            'selection', 'donors', 'hydrogens', 'acceptors', 'd_a_cutoff', 'angle', 'radius', 'pattern', 'restrict', 'frames'}
 MAX_JOBS = 3
 MAX_DOWNLOADS = 40      # older downloads are deleted when more results are produced
