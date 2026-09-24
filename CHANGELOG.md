@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.3.0 (2026-09-24)
 
 - Interface:
   - *MONET processing* is renamed *MONET Custom Functionalities* and holds the former *Custom analyses* tab. Its first sub-tab, *3D viewer & extraction*, is the 3D view; the other sub-tabs are the custom analyses.
