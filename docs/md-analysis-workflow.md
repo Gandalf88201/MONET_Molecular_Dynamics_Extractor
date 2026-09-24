@@ -87,7 +87,7 @@ The first part of every trajectory relaxes from the starting structure. For AIMD
 *Rule of thumb for AIMD:* production runs are often only 10–100 ps long, so a few ps of equilibration is a large share of the data. Say explicitly how much was discarded and why. Grossman et al. [15] showed that properties of AIMD water depend on the simulation protocol (length, equilibration, fictitious mass). Short runs need extra care.
 
 **MONET.**
-- *Custom analyses › Fluctuations & trends* reports, for each series, the linear trend, the drift between the two halves and a block-based significance test (`series_statistics` in `monet_analysis.py`).
+- *MONET Custom Functionalities › Fluctuations & trends* reports, for each series, the linear trend, the drift between the two halves and a block-based significance test (`series_statistics` in `monet_analysis.py`).
 - *Autocorrelation › **Detect equilibration*** implements Chodera's maximum-N_eff method [13]: `detect_equilibration` in `monet_analysis.py` scans t₀ over the first half of the run and returns the t₀ that maximises N_eff(t₀) = (T − t₀)/g(t₀). **✂ Use the production window from t₀** then crops the active trajectory to it, exactly like the uncorrelated trajectory does, with **↩ Full trajectory** to go back.
 
 ---
@@ -173,7 +173,7 @@ The table assumes a single-exponential ACF. For multi-exponential decays, apply 
 | Pairwise RMSD matrix, clustering | decorrelated subset | This limits redundant, correlated neighbours along the diagonal. It is also cheaper: the cost grows as N². |
 | QM post-processing | decorrelated subset (§11) | Each QM calculation must add new information. |
 
-**MONET.** The ACF is the first tab of *Custom analyses*.
+**MONET.** The ACF is the first analysis tab of *MONET Custom Functionalities*.
 - `autocorrelation` computes the linear or circular normalised ACF with the FFT and averages over groups.
 - `correlation_time` fits exp(−t/τ) or (1 − c)e^{−t/τ} + c, up to the first zero crossing, three 1/e times, or all lags. It also returns τ_int with the chosen estimator (below; Sokal's window by default, not the fit's first-zero-crossing truncation).
 - MONET then computes t* = τ ln(1/ε) and the stride ⌈t*/Δt⌉. It writes the uncorrelated extXYZ with `source_frame` tags and can make it the active trajectory.
@@ -243,7 +243,7 @@ Report the populations with block-based errors. Lyman and Zuckerman [35] define 
 - For complex landscapes, see sketch-map [43].
 
 **MONET.**
-- *Custom analyses › RMSD Matrix* uses `rmsd_matrix` (Kabsch, NumPy).
+- *MONET Custom Functionalities › RMSD Matrix* uses `rmsd_matrix` (Kabsch, NumPy).
 - *MDAnalysis › Pairwise RMSD matrix* uses `DistanceMatrix` and reports the mean, SD and maximum off-diagonal RMSD.
 - MDAnalysis also provides `pca.PCA` and `diffusionmap.DiffusionMap`.
 

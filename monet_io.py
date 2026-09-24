@@ -14,13 +14,17 @@ import hashlib
 import json
 import mmap
 import os
+from pathlib import Path
 import re
-import tempfile
+import time
 
 import numpy as np
 
 CHUNK = 64 << 20
 INDEX_VERSION = 2
+CACHE_DAYS = 30
+# The index file holds only these attributes (plus offsets); anything else in a cache file is ignored.
+_CACHE_KEYS = ('natoms', 'symbols', 'format', 'ncols', 'comment0', 'species_col', 'pos_col', 'properties', 'first', 'raw_symbols')
 _SYMBOL = re.compile(r'^[A-Za-z]{1,3}$')
 
 
@@ -33,9 +37,25 @@ def _normalize(symbol):
 
 
 def _cache_dir():
-    path = os.environ.get('MONET_CACHE_DIR') or os.path.join(tempfile.gettempdir(), 'monet-index')
-    os.makedirs(path, exist_ok=True)
+    """Per-user index cache: $MONET_CACHE_DIR, else $XDG_CACHE_HOME/monet/index or ~/.cache/monet/index.
+
+    It is never a shared folder such as /tmp, where another user of the machine could place index files.
+    """
+    base = os.environ.get('XDG_CACHE_HOME') or os.path.join(Path.home(), '.cache')
+    path = os.environ.get('MONET_CACHE_DIR') or os.path.join(base, 'monet', 'index')
+    os.makedirs(path, mode=0o700, exist_ok=True)
     return path
+
+
+def _prune_cache(folder, days=CACHE_DAYS):
+    """Delete index files not used for `days` days."""
+    limit = time.time() - days * 86400
+    for entry in os.scandir(folder):
+        try:
+            if entry.name.endswith('.npz') and entry.stat().st_mtime < limit:
+                os.remove(entry.path)
+        except OSError:
+            pass
 
 
 def _cache_path(path):
@@ -67,6 +87,7 @@ class XYZTrajectory:
         if cache and os.path.exists(cache):
             try:
                 self._load(cache)
+                os.utime(cache)  # recently used: kept by _prune_cache
                 return
             except Exception:
                 pass
@@ -79,6 +100,7 @@ class XYZTrajectory:
         if cache:
             try:
                 self._save(cache)
+                _prune_cache(os.path.dirname(cache))
             except OSError:
                 pass
 
@@ -96,8 +118,10 @@ class XYZTrajectory:
         with np.load(cache) as data:
             self.offsets = data['offsets']
             meta = json.loads(str(data['meta']))
-        for key, value in meta.items():
-            setattr(self, key, value)
+        if not isinstance(meta, dict) or set(meta) != set(_CACHE_KEYS):
+            raise ValueError('Not a MONET index file.')
+        for key in _CACHE_KEYS:
+            setattr(self, key, meta[key])
         self.raw_symbols = np.array([s.encode('ascii') for s in self.raw_symbols])
 
     def _first_frame(self):
@@ -184,12 +208,10 @@ class XYZTrajectory:
         count = str(self.natoms).encode()
         ends = []
         line_no = 0          # lines completed so far (relative to self.first)
-        last_start = 0       # start offset of the current line, relative to buffer
         with open(self.path, 'rb') as fh:
             fh.seek(self.first)
             base = self.first
             carry = b''
-            header_start = self.first
             while True:
                 chunk = fh.read(CHUNK)
                 buf = carry + chunk

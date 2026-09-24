@@ -213,4 +213,13 @@ r = bridge({ action: 'ase_coordination', filename: xtc, indices: [0, 1], frame_s
 assert.deepEqual(r.frame_indices, [0, 5]); assert.deepEqual(r.series['O (mean of 1)'], [2, 2]); assert.deepEqual(r.series.H2, [1, 1]); checks++
 
 fs.rmSync(temp, { recursive: true, force: true })
+// Element fallback: PDB atom names of standard residues use their first letter (CA = carbon), others two letters.
+execFileSync(python, ['-c', `
+import sys; sys.path.insert(0, sys.argv[1])
+from ase.data import chemical_symbols
+from monet_mda import element_from_name
+valid = set(chemical_symbols[1:])
+got = [element_from_name(n, r, valid) for n, r in [('CA', 'ALA'), ('HG1', 'SER'), ('NE2', 'HIS'), ('CD', 'PRO'), ('OW', 'SOL'), ('CA', 'CA'), ('CL', 'CL'), ('NA', 'NA'), ('1HB', 'LYS')]]
+assert got == ['C', 'H', 'N', 'C', 'O', 'Ca', 'Cl', 'Na', 'H'], got
+`, root]); checks++
 console.log(`PASS: ${checks} MDAnalysis checks (XTC/TRR/DCD + topology, ASE formats, selections, generic analyses, atom identity, ASE structure).`)

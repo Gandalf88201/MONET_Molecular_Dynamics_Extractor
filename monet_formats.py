@@ -418,7 +418,6 @@ def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_f
     count = 0
     natoms = None
     symbols0 = None
-    size = max(os.path.getsize(path), 1)
     with open(output, 'w', buffering=8 << 20) as fh:
         for symbols, positions, lattice, pbc, step, *rest in frames(path, detected, name, reference, cell_file, cell_vectors):
             positions = np.asarray(positions, dtype=float)

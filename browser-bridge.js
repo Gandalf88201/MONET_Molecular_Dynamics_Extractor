@@ -16,7 +16,6 @@
   const server = Boolean(token)
   const limit = 100 * 1024 * 1024
   const fullName = 'MONET-results/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz'
-  let convertedURL = null
   let resultURL = null
   let localCancel = false
   const desktopOnly = 'To enable ASE in your browser, run python3 start_monet.py and open the address it prints. Python and ASE must be installed.'
@@ -200,7 +199,8 @@
     }
   }
 
-  const downloadURL = id => `/api/download/${id}?token=${encodeURIComponent(token)}`
+  // The random download ID is the permission for that one file: the session token stays out of URLs.
+  const downloadURL = id => `/api/download/${encodeURIComponent(id)}`
 
   async function serverRun (command, scope = 'ase', onProgress = emitAse) {
     const key = command.action === 'convert' ? command.input : command.filename
@@ -294,6 +294,8 @@
     onAseProgress: callback => { aseProgress.add(callback); return () => aseProgress.delete(callback) },
     aseCheck: () => request('/api/check', {}),
     listFormats: () => request('/api/formats', {}),
+    // Registered analyses (monet_registry.py) with their parameters.
+    listAnalyses: async () => server ? job({ action: 'list_analyses' }, 'ase', () => {}) : { ok: false, error: desktopOnly },
     aseSelectOutput: async name => name.split(/[\\/]/).pop(),
     aseRun: async command => {
       try {

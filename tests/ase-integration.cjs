@@ -30,7 +30,7 @@ async function main () {
   assert.equal(cross.status, 403); checks++
   let file = new File([fileText], 'water.XYZ')
   const download = async result => {
-    assert.match(result.downloadURL, /^\/api\/download\/[^?]+\?token=/)
+    assert.match(result.downloadURL, /^\/api\/download\/[A-Za-z0-9_-]+$/)
     const response = await fetch(origin + result.downloadURL)
     assert.equal(response.status, 200)
     return Buffer.from(await response.arrayBuffer())
@@ -133,7 +133,10 @@ with zipfile.ZipFile(sys.argv[1]) as z:
  assert full.splitlines()[:3] == ['2', 'frame 0', 'O  0.0000000  0.0000000  0.0000000'], full
 `, path.join(temp, 'results.zip')]); checks++
   fs.rmSync(temp, { recursive: true, force: true })
-  assert.equal((await fetch(origin + processed.downloadURL.replace(/token=.*/, 'token=wrong'))).status, 403); checks++
+  assert.equal((await fetch(origin + '/api/download/unknown-id')).status, 404); checks++
+  // A download ID from another host name (DNS rebinding) is refused; fetch() cannot set Host, so use node:http.
+  const foreignHost = await new Promise((resolve, reject) => require('node:http').get(origin + processed.downloadURL, { headers: { Host: 'evil.example' } }, response => { response.resume(); resolve(response.statusCode) }).on('error', reject))
+  assert.equal(foreignHost, 403); checks++
   result = await api.aseRun({ action: 'bonds', filename: 'MONET-results/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz', pairs: [[0, 1]], frame_step: 1 })
   assert.equal(result.ok, true, JSON.stringify(result)); checks++
   // A separately selected conversion file must not replace a loaded input with the same name.

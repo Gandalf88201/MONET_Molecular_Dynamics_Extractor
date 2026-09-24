@@ -49,7 +49,13 @@ let frameCount = 2
 const framesCommands = []
 const topologyCommands = []
 let topologyBreak = false
+// The page scripts (app-*.js, index.html order) in one eval, so that the test can reach their shared state.
+const appScript = () => [...fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/<script src="(app-[^"]+)"><\/script>/g)]
+  .map(match => fs.readFileSync(path.join(root, match[1]), 'utf8')).join('\n')
+// Registered analyses as the Python side lists them (monet_registry.py: MDAnalysis and the example plugins).
+const REGISTRY = JSON.parse(require('node:child_process').execFileSync(process.env.PYTHON || 'python3', [path.join(root, 'ase_bridge.py')], { input: '{"action": "list_analyses"}', encoding: 'utf8' }).trim().split('\n').pop())
 w.monet = {
+  listAnalyses: async () => REGISTRY,
   isBrowser: true, selectFile: async () => nextFile,
   canImport: true,
   importFile: async (name, options) => { importCalls.push([name, options]); return { filePath: 'imported/' + name + '.extxyz', sourceLabel: 'VASP XDATCAR', frames: 2, warning: name.endsWith('.dcd') ? 'No topology was given: every atom is imported as element X.' : undefined } },
@@ -108,6 +114,7 @@ w.monet = {
     if (command.action === 'dihedrals') return { ok: true, frame_indices: [0, 1], series: { [command.quads[0].join('-')]: [270, 90] } }
     if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, tau_int_error: 5, tau_int_window: 3, tau_int_converged: true, tau_int_method: command.tau_int_method, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), frame_step: command.frame_step || 1, n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3], blocking: { sizes: [1, 2], times: [command.dt, 2 * command.dt], sem: [0.5, 0.7], sem_error: [0.01, 0.05], plateau_index: null, plateau_sem: null, g: null } }
     if (command.action === 'equilibration') { latestCommand = command; return { ok: true, starts: [0, 1, 2], times: [0, command.dt, 2 * command.dt], g: [4, 2, 2], n_effective: [1, 1.5, 0.5], t0: equilT0, t0_time: equilT0 * command.dt, t0_frame: equilT0, group: command.groups.length - 1, per_group_t0: command.groups.map((_, k) => k + 1), n_frames: 4, frame_step: 1, dt: command.dt, g_t0: 2, n_effective_t0: 1.5, n_effective_full: 1 } }
+    if (command.action === 'run_analysis') return { ok: true, analysis: command.analysis, kind: 'series', x: [0, 1], xLabel: 'Frame', yLabel: 'Radius of gyration (Å)', series: [{ label: 'Rg (mass-weighted, 2 atoms)', data: [1, 1.2] }], n_frames: 2, frame_indices: [0, 1], table: { columns: ['Quantity', 'Mean'], rows: [['Rg', 1.1]] } }
     if (command.action === 'rmsd_matrix') return { ok: true, matrix: [[0, 1], [1, 0]], frame_indices: [0, 10], aligned: true, truncated: false }
     if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
     if (command.action === 'vdos') return { ok: true, wavenumber: [0, 500, 1000], intensity: [0, .002, 0], nyquist_cm: 33356, resolution_cm: 8.3, n_frames: 100, dt: command.dt }
@@ -136,12 +143,12 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'app']) w.eval((file === 'app' ? appScript() : fs.readFileSync(path.join(root, file), 'utf8')) + (file === 'app' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
 async function click (id) { el(id).click(); await tick(); await tick() }
-const chooseMda = name => { el('mda-analysis').value = name; el('mda-analysis').dispatchEvent(new w.Event('change')) }
+const chooseMda = name => { el('mda-analysis').value = `mdanalysis.${name}`; el('mda-analysis').dispatchEvent(new w.Event('change')) }
 async function mdaChecks () {
   // MDAnalysis module: its own tab with the generic analysis form.
   await click('vtab-mda')
@@ -283,6 +290,32 @@ async function mdaChecks () {
   assert.ok(el('vtab-ase').classList.contains('active')); assert.equal(el('ase-sub-mda').classList.contains('active'), false); checks++
   await click('vtab-mda')
   assert.ok(el('ase-sub-mda').classList.contains('active')); checks++
+}
+
+async function registryChecks () {
+  // Plugin analyses of the MONET Custom module: the form comes from the declared parameters.
+  w.document.querySelector('.ase-stab[data-stab="extcustom"]').click(); await tick()
+  assert.ok(el('ase-sub-extcustom').classList.contains('active')); assert.ok(el('vtab-custom').classList.contains('active')); checks++
+  el('extcustom-analysis').value = 'custom.radius_of_gyration'; el('extcustom-analysis').dispatchEvent(new w.Event('change'))
+  assert.ok(el('extcustom-p-indices')); assert.equal(el('extcustom-p-mass_weighted').checked, true); checks++
+  assert.match(el('extcustom-description').textContent, /Plugin: plugins\/radius_of_gyration\.py/); checks++
+  const two = w.testMonet.aseState.analysisAtoms.slice(0, 2)
+  el('extcustom-p-indices').value = two.map(a => a.monetId).join(' ')
+  await click('btn-run-extcustom')
+  assert.equal(latestCommand.action, 'run_analysis'); assert.equal(latestCommand.analysis, 'custom.radius_of_gyration'); checks++
+  // MONET IDs typed in the form reach the analysis as indices of the analysed file.
+  assert.deepEqual([...latestCommand.params.indices], two.map(a => a.aseIndex)); assert.equal(latestCommand.params.mass_weighted, true); assert.ok(latestCommand.atom_ids); checks++
+  assert.match(w.testMonet.charts.extcustom.data.datasets[0].label, /^Rg .* · mean 1\.1/); assert.match(el('extcustom-table').textContent, /Rg/); checks++
+  el('extcustom-p-indices').value = '999'
+  latestCommand = null
+  await click('btn-run-extcustom')
+  assert.equal(latestCommand, null); assert.match(el('status-msg').textContent, /MONET atom 999/); checks++
+  await click('clear-extcustom')
+  assert.equal(w.testMonet.charts.extcustom.data, null); assert.equal(el('extcustom-table').textContent, ''); checks++
+  // The ASE module lists its own plugins; a choice parameter becomes a menu.
+  el('extase-analysis').value = 'ase.cell_volume'; el('extase-analysis').dispatchEvent(new w.Event('change'))
+  assert.deepEqual([...el('extase-p-quantity').options].map(o => o.value), ['volume', 'density', 'lengths']); checks++
+  assert.ok([...el('extase-analysis').querySelectorAll('optgroup')].some(group => group.label === 'Cell')); checks++
 }
 
 async function fluctChecks () {
@@ -457,11 +490,34 @@ async function run () {
   // Analysis comes before extraction: loading opens the ASE module with the workflow folded away.
   assert.ok(el('panel-analysis').classList.contains('active')); assert.ok(el('nav-analysis').classList.contains('active')); checks++
   assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(w.document.querySelector('.layout').classList.contains('sidebar-collapsed')); checks++
-  // Module order: ASE, MDAnalysis, custom analyses, then MONET processing.
-  assert.deepEqual($$('.vtab').map(b => b.dataset.vtab), ['ase', 'mda', 'custom', 'view3d']); checks++
+  // Module order: ASE, MDAnalysis, then MONET Custom Functionalities (3D view, extraction and custom analyses).
+  assert.deepEqual($$('.vtab').map(b => b.dataset.vtab), ['ase', 'mda', 'custom']); checks++
+  assert.equal(el('vtab-custom').textContent.trim(), 'MONET Custom Functionalities'); checks++
   assert.ok(el('vtab-ase').classList.contains('active')); assert.ok(el('ase-sub-structure').classList.contains('active')); checks++
-  assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['structure', 'bonds', 'angles', 'dihedrals', 'pdd', 'coordination', 'convert']); checks++
+  // Tabs are announced as tabs, with the selected one marked.
+  assert.equal(el('vtab-ase').getAttribute('role'), 'tab'); assert.equal(el('vtab-ase').getAttribute('aria-selected'), 'true'); assert.equal(el('vtab-custom').getAttribute('aria-selected'), 'false'); checks++
+  assert.equal(w.document.querySelector('.ase-stab[data-stab="structure"]').getAttribute('aria-selected'), 'true'); assert.equal(w.document.querySelector('.ase-stab[data-stab="bonds"]').getAttribute('aria-selected'), 'false'); checks++
+  assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['structure', 'bonds', 'angles', 'dihedrals', 'pdd', 'coordination', 'convert', 'extase']); checks++
   assert.match(el('module-intro').textContent, /ASE modules/); checks++
+  // The MONET tab opens on the 3D view, whose sub-tab row also leads to the custom analyses.
+  await click('vtab-custom')
+  assert.ok(el('vtab-custom').classList.contains('active')); assert.ok(el('vtab-content-view3d').classList.contains('active')); checks++
+  assert.equal(w.document.querySelector('.layout').classList.contains('sidebar-collapsed'), false); checks++
+  const monetLinks = [...el('monet-subtabbar').children]
+  assert.deepEqual(monetLinks.map(b => b.textContent), ['3D viewer & extraction', 'Autocorrelation', 'Fluctuations & trends', 'RMSD (Kabsch)', 'RMSD Matrix', 'RDF', 'MSD / Diffusion', 'VDOS', 'More analyses']); checks++
+  assert.equal(monetLinks.at(-1).hidden, false); checks++
+  assert.ok(monetLinks[0].classList.contains('active')); checks++
+  monetLinks[3].click(); await tick(); await tick()
+  assert.ok(el('vtab-custom').classList.contains('active')); assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(el('ase-sub-rmsd').classList.contains('active')); checks++
+  assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['view3d', 'acf', 'fluct', 'rmsd', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'extcustom']); checks++
+  assert.match(el('module-intro').textContent, /MONET custom functionalities/); checks++
+  // Switching module and back keeps the last MONET page; the "3D viewer" sub-tab returns to the view.
+  await click('vtab-ase'); await click('vtab-custom')
+  assert.ok(el('ase-sub-rmsd').classList.contains('active')); assert.ok(el('vtab-content-ase').classList.contains('active')); checks++
+  w.document.querySelector('.ase-stab[data-stab="view3d"]').click(); await tick()
+  assert.ok(el('vtab-content-view3d').classList.contains('active')); assert.ok(el('vtab-custom').classList.contains('active')); checks++
+  await click('vtab-ase')
+  assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(el('ase-sub-structure').classList.contains('active')); checks++
   // Atom identity is checked automatically in MONET, ASE and MDAnalysis.
   assert.equal(topologyCommands.length, 1); assert.deepEqual([...topologyCommands[0].atom_ids], [1, 2, 3, 4]); checks++
   assert.ok(el('topology-status').classList.contains('topology-ok')); assert.match(el('topology-status').textContent, /4 atoms: MONET IDs, ASE indices and MDAnalysis ids/); checks++
@@ -840,7 +896,7 @@ async function run () {
   await click('restore-full-trajectory'); await tick()
   assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(el('md-stride').value, '5'); assert.equal(el('inp-freq').value, '13'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
   // Cropping an already-derived trajectory (equilibration crop of the uncorrelated trajectory) must keep the
-  // derived md-stride, not fall back to the full trajectory's (renderer.js activateTrajectory regression).
+  // derived md-stride, not fall back to the full trajectory's (activateTrajectory regression).
   el('acf-plateau-eps').dispatchEvent(new w.Event('change'))
   assert.equal(el('acf-accept').disabled, false); checks++
   await click('acf-accept'); await tick(); await tick()
@@ -949,6 +1005,7 @@ async function run () {
   pick(1); pick(3)
   await click('ase-continue')
   assert.ok(el('panel-2').classList.contains('active')); assert.ok(el('vtab-content-view3d').classList.contains('active')); checks++
+  assert.ok(el('vtab-custom').classList.contains('active')); checks++
   assert.equal(w.document.querySelector('.layout').classList.contains('sidebar-collapsed'), false); checks++
   await click('next-2')
   assert.equal(el('use-ase-selection').disabled, false); checks++
@@ -1057,6 +1114,7 @@ async function run () {
   assert.equal(latestCommand.action, 'mda_select'); assert.equal(el('ase-picked-count').textContent, '2'); assert.match(el('mda-pick-status').textContent, /2 atoms in 1 residues/); checks++
   await mdaChecks()
   await fluctChecks()
+  await registryChecks()
   // Day/night toggle persists the choice and redraws canvases without errors.
   const theme = w.document.documentElement.dataset.theme
   let redraws = 0
