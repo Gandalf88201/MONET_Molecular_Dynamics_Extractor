@@ -524,9 +524,17 @@ html, body {
 }
 #mol-canvas:active { cursor: grabbing }
 
+/* Canvas area of the 3D view: the empty-state message covers only this, never the tabs or the header. */
+.viewer-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
 .viewer-overlay {
   position: absolute;
-  inset: 36px 0 0 0;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;

@@ -28,7 +28,7 @@ function clearTrajectory () {
   $('stat-atoms').textContent = '—'
   $('sampled-count').textContent = '—'
   $('viewer-title').textContent = '3D Molecular Viewer'
-  $('viewer-overlay').classList.remove('hidden')
+  setViewerEmpty(true)
   viewer.loadAtoms([])
   $('atom-table-body').innerHTML = ''
   syncSelectionUI()
@@ -327,7 +327,7 @@ async function loadFrameForViewer (frameIdx) {
     state.filePath, frameIdx, state.fileInfo.atomCount
   )
   if (result.error) throw new Error(result.error)
-  $('viewer-overlay').classList.add('hidden')
+  setViewerEmpty(false)
 
   state.firstFrame = result.atoms
   // The lattice of frame 0 (extended XYZ Lattice="…", also written by the importer for CIF/cell files) is the
@@ -762,7 +762,7 @@ $('back-6').addEventListener('click', () => {
   $('file-display').classList.add('hidden')
   $('next-1').disabled = true
   $('inp-freq').value  = 10
-  $('viewer-overlay').classList.remove('hidden')
+  setViewerEmpty(true)
   viewer.loadAtoms([])
   $('atom-table-body').innerHTML = ''
   $('log-box').innerHTML         = ''
