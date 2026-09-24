@@ -41,6 +41,9 @@ function redrawVisibleChart () {
   for (const chart of Object.values(charts)) if (chart.data && chart.canvas.clientWidth && chart.canvas.clientHeight) chart._render()
 }
 window.addEventListener('resize', redrawVisibleChart)
+// The workflow panel folds and unfolds with a short width transition: redraw whenever the viewer area
+// changes size, so canvases never keep the resolution of an intermediate width (stretched atoms, plots).
+if (window.ResizeObserver) new ResizeObserver(() => { resizeCanvas(); redrawVisibleChart() }).observe(document.querySelector('.viewer-area'))
 
 // ASE sub-tab switching
 function selectSubtab (id) {
