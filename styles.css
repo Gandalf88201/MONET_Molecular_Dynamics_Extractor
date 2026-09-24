@@ -938,7 +938,8 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .topology-ok { border-left: 3px solid var(--ok, #2e9b5f); }
 .topology-bad { border-left: 3px solid var(--danger, #d64545); }
 
-.fluct-table { max-height: 320px; overflow: auto; }
+/* A scroll container in the column flex of the sub-panel would otherwise shrink to zero height. */
+.fluct-table { max-height: 320px; overflow: auto; flex-shrink: 0; }
 .fluct-table th { cursor: pointer; user-select: none; white-space: nowrap; }
 .fluct-table tbody tr { cursor: pointer; }
 .fluct-table tbody tr.active td { background: var(--accent-soft, rgba(77,157,224,.18)); }

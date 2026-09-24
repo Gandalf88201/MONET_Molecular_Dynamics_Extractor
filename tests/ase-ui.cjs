@@ -135,7 +135,8 @@ w.monet = {
     if (command.action === 'fluctuations') {
       const st = (mean, std, trend) => ({ mean, std, min: mean - 2 * std, max: mean + 2 * std, range: 4 * std, p5: mean - std, p95: mean + std, slope: trend ? 0.002 : 0, slope_error: 0.0001, r2: 0.5, drift: trend ? 0.1 : 0, block_sem: 0.01, trend, frequency: 0.03, frequency_share: 0.4, rmsf: std })
       const items = command.groups || (command.quantity === 'atoms' ? (command.indices || [0, 1, 2, 3]).map(i => [i]) : [[0, 1], [1, 2]])
-      return { ok: true, quantity: command.quantity, items, statistics: items.map((_, k) => st(1 + k, 0.02 * (k + 1), k === 1)), frame_indices: [0, 1, 2], n_frames: 3, dt: command.dt ? command.dt * command.frame_step : null, periodic: false, auto: !command.groups, series: command.groups?.length === 1 || command.quantity !== 'dihedrals' ? items.map((_, k) => [1 + k, 1.1 + k, 0.9 + k]) : null }
+      const withTensor = (entry, k) => (command.quantity === 'atoms' ? { ...entry, u: [0.01 * (k + 1), 0.004, 0.002, 0.001, 0, 0] } : entry)
+      return { ok: true, quantity: command.quantity, items, statistics: items.map((_, k) => withTensor(st(1 + k, 0.02 * (k + 1), k === 1), k)), frame_indices: [0, 1, 2], n_frames: 3, dt: command.dt ? command.dt * command.frame_step : null, periodic: false, auto: !command.groups, series: command.groups?.length === 1 || command.quantity !== 'dihedrals' ? items.map((_, k) => [1 + k, 1.1 + k, 0.9 + k]) : null }
     }
     if (command.action === 'ase_structure') return { ok: true, frame: command.frame, summary: [['Formula (Hill)', 'C3H'], ['Atoms', 4]], bonds: { columns: ['Pair', 'Bonds'], rows: [['C–C', 2]] }, coordination: { columns: ['Element', 'Atoms'], rows: [['C', 3]] }, molecules: [0, 0, 0, 0], coordination_numbers: [1, 2, 1, 0] }
     if (command.action === 'ase_coordination') return { ok: true, frame_indices: [0, 1], bond_scale: command.bond_scale, series: { 'C (mean of 2)': [1.5, 1.5], C1: [1, 1], C3: [2, 2] } }
@@ -359,6 +360,22 @@ async function fluctChecks () {
   await click('btn-run-fluct')
   assert.deepEqual([...latestCommand.indices], [atomsNow[0].aseIndex]); assert.equal(latestCommand.align, true); assert.ok(latestCommand.dt > 0); checks++
   assert.equal(w.testMonet.aseViewer.overlay.atomColors.size, 1); assert.match(el('fluct-table').querySelector('thead').textContent, /RMSF.*Dominant ν \(cm⁻¹\)/); checks++
+  // Anisotropic displacement ellipsoids on the atoms, drawn by the viewer, independent of the colour map.
+  assert.equal(el('fluct-ellipsoid-row').classList.contains('hidden'), false)
+  let ellipsoids = w.testMonet.aseViewer.overlay.ellipsoids
+  assert.equal(ellipsoids.length, 1); assert.equal(ellipsoids[0].id, atomsNow[0].monetId); assert.deepEqual([...ellipsoids[0].u], [0.01, 0.004, 0.002, 0.001, 0, 0]); assert.match(ellipsoids[0].color, /^rgb\(/); checks++
+  near(w.testMonet.aseViewer.overlay.ellipsoidScale, 1.5382, 1e-9); assert.match(w.testMonet.aseViewer.overlay.legend.title, /ellipsoids 50 %/); checks++
+  el('fluct-ellipsoid-prob').value = '90'; el('fluct-ellipsoid-scale').value = '4'; el('fluct-ellipsoid-scale').dispatchEvent(new w.Event('change'))
+  near(w.testMonet.aseViewer.overlay.ellipsoidScale, 2.5003 * 4, 1e-9); assert.match(w.testMonet.aseViewer.overlay.legend.title, /90 % ×4/); checks++
+  w.testMonet.aseViewer.render()
+  el('fluct-map').checked = false; el('fluct-map').dispatchEvent(new w.Event('change'))
+  ellipsoids = w.testMonet.aseViewer.overlay.ellipsoids
+  assert.equal(ellipsoids[0].color, null); assert.equal(w.testMonet.aseViewer.overlay.atomColors.size, 0); assert.equal(w.testMonet.aseViewer.overlay.legend, undefined); assert.match(w.testMonet.aseViewer.overlay.caption, /Displacement ellipsoids 90 %/); checks++
+  w.testMonet.aseViewer.render()
+  el('fluct-ellipsoids').checked = false; el('fluct-ellipsoids').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.aseViewer.overlay, null); checks++
+  el('fluct-map').checked = true; el('fluct-ellipsoids').checked = true; el('fluct-ellipsoid-prob').value = '50'; el('fluct-ellipsoid-scale').value = '1'
+  el('fluct-map').dispatchEvent(new w.Event('change'))
   near(w.testMonet.charts.fluct.data.datasets[0].data[0], 0.03 * 1e15 / 2.99792458e10, 1e-6); checks++
   el('fluct-quantity').value = 'dihedrals'; el('fluct-quantity').dispatchEvent(new w.Event('change'))
   el('fluct-scope').value = 'groups'; el('fluct-scope').dispatchEvent(new w.Event('change'))

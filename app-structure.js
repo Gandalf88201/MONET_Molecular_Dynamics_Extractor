@@ -158,11 +158,14 @@ $('btn-run-topology').addEventListener('click', () => checkTopology())
 var FLUCT_WIDTH = { atoms: 1, bonds: 2, angles: 3, dihedrals: 4 }
 var fluct = null // { r, active, sort: { key, dir } }
 const FS_TO_CM1 = 1e15 / 2.99792458e10
+// sqrt of the χ²(3) quantile: semi-axes, in standard deviations, of the ellipsoid holding that probability.
+const FLUCT_PROBABILITY = { 50: 1.5382, 90: 2.5003, 99: 3.3682 }
 
 function updateFluctForm () {
   const quantity = $('fluct-quantity').value
   const groups = $('fluct-scope').value === 'groups'
   $('fluct-align-row').classList.toggle('hidden', quantity !== 'atoms')
+  $('fluct-ellipsoid-row').classList.toggle('hidden', quantity !== 'atoms')
   $('fluct-groups-row').classList.toggle('hidden', !groups)
   $('fluct-atoms-row').classList.toggle('hidden', groups)
   $('fluct-groups-label').textContent = quantity === 'atoms' ? 'Atoms — MONET IDs' : `Groups of ${FLUCT_WIDTH[quantity]} MONET IDs, in order`
@@ -221,9 +224,11 @@ function drawFluct () {
     yLabel: column[1], labels: names, notes: [fluct.summary], yMin: values.every(v => !Number.isFinite(v) || v >= 0) ? 0 : undefined,
     datasets: [{ label: `${column[1]} of ${r.items.length} ${r.quantity}`, data: values.map(v => (Number.isFinite(v) ? v : null)), bars: true, colorIndex: 0 }]
   })
-  // Colour map on the molecule.
+  // Colour map and displacement ellipsoids on the molecule.
   const finite = values.filter(Number.isFinite)
-  if (!$('fluct-map').checked || !finite.length) return aseViewer.setOverlay(null)
+  const mapped = $('fluct-map').checked && finite.length > 0
+  const ellipsoids = r.quantity === 'atoms' && $('fluct-ellipsoids').checked && r.statistics.some(st => st.u)
+  if (!mapped && !ellipsoids) return aseViewer.setOverlay(null)
   const low = Math.min(...finite), high = Math.max(...finite)
   const name = $('fluct-colormap').value
   const color = value => {
@@ -231,16 +236,31 @@ function drawFluct () {
     return `rgb(${red},${green},${blue})`
   }
   const monetId = index => r.atomMapping.find(a => a.aseIndex === index)?.monetId
-  const overlay = { dimAtoms: true, atomColors: new Map(), segments: [], legend: { title: `${column[1]} · ${r.quantity}`, min: low, max: high, colors: Array.from({ length: 9 }, (_, k) => color(low + (k / 8) * (high - low))), format: v => fmt(v, 3) } }
-  r.items.forEach((item, k) => {
-    if (!Number.isFinite(values[k])) return
-    if (r.quantity === 'atoms') overlay.atomColors.set(monetId(item[0]), color(values[k]))
-    else overlay.segments.push({ ids: item.map(monetId), color: color(values[k]) })
-  })
-  // Draw the largest values last, on top.
+  const overlay = { dimAtoms: mapped, atomColors: new Map(), segments: [] }
+  if (mapped) {
+    overlay.legend = { title: `${column[1]} · ${r.quantity}`, min: low, max: high, colors: Array.from({ length: 9 }, (_, k) => color(low + (k / 8) * (high - low))), format: v => fmt(v, 3) }
+    r.items.forEach((item, k) => {
+      if (!Number.isFinite(values[k])) return
+      if (r.quantity === 'atoms') overlay.atomColors.set(monetId(item[0]), color(values[k]))
+      else overlay.segments.push({ ids: item.map(monetId), color: color(values[k]) })
+    })
+  }
+  if (ellipsoids) {
+    const probability = $('fluct-ellipsoid-prob').value
+    const magnify = Math.min(50, Math.max(1, Number($('fluct-ellipsoid-scale').value) || 1))
+    // Ellipsoid of a 3D Gaussian enclosing the probability: sqrt of the χ²(3) quantile, in standard deviations.
+    overlay.ellipsoidScale = FLUCT_PROBABILITY[probability] * magnify
+    overlay.ellipsoids = r.items.map((item, k) => ({
+      id: monetId(item[0]), u: r.statistics[k].u, color: mapped && Number.isFinite(values[k]) ? color(values[k]) : null
+    })).filter(e => e.id !== undefined && e.u?.every(Number.isFinite))
+    const note = `ellipsoids ${probability} %${magnify > 1 ? ` ×${fmt(magnify, 3)}` : ''}`
+    if (overlay.legend) overlay.legend.title += ` · ${note}`
+    else overlay.caption = `Displacement ${note}`
+  }
   aseViewer.setOverlay(overlay)
 }
 for (const id of ['fluct-metric', 'fluct-colormap', 'fluct-map']) $(id).addEventListener('change', () => { drawFluct(); renderFluctTable() })
+for (const id of ['fluct-ellipsoids', 'fluct-ellipsoid-prob', 'fluct-ellipsoid-scale']) $(id).addEventListener('change', () => drawFluct())
 
 function renderFluctTable () {
   const box = $('fluct-table')
@@ -364,7 +384,13 @@ $('btn-run-fluct').addEventListener('click', async () => {
   if (axis) command.dt = axis.dt
   clearAnalysis('fluct', false)
   const r = await runAse('fluct', command)
-  if (!r.ok) return setStatus('Fluctuation error: ' + (r.message || r.error))
+  if (!r.ok) {
+    // Shown next to the plot too: the status bar alone is easily missed.
+    const message = 'Fluctuation error: ' + (r.message || r.error)
+    $('fluct-summary').textContent = message
+    $('fluct-summary').classList.remove('hidden')
+    return setStatus(message)
+  }
   const spreads = r.statistics.map(st => (quantity === 'atoms' ? st.rmsf : st.std))
   let top = 0
   spreads.forEach((v, k) => { if (v > spreads[top]) top = k })
@@ -389,10 +415,13 @@ $('fluct-table-csv').addEventListener('click', () => {
   const { r } = fluct
   const columns = fluctColumns(r)
   const cell = value => (/[",\n]/.test(String(value)) ? `"${String(value).replace(/"/g, '""')}"` : value)
-  const lines = [`# ${fluct.summary}`, ['item', 'monet_ids', ...columns.map(c => c[1]), 'trend'].map(cell).join(',')]
+  // Atoms also carry their displacement tensor (Å², Cartesian axes of the first frame).
+  const tensor = r.statistics.some(st => st.u) ? ['U11 (Å²)', 'U22 (Å²)', 'U33 (Å²)', 'U12 (Å²)', 'U13 (Å²)', 'U23 (Å²)'] : []
+  const lines = [`# ${fluct.summary}`, ['item', 'monet_ids', ...columns.map(c => c[1]), 'trend', ...tensor].map(cell).join(',')]
   r.items.forEach((item, k) => {
     const ids = item.map(index => r.atomMapping.find(a => a.aseIndex === index)?.monetId).join(' ')
-    lines.push([fluctItemName(item, r.atomMapping), ids, ...columns.map(c => { const v = c[2](r.statistics[k]); return Number.isFinite(v) ? v : '' }), r.statistics[k].trend].map(cell).join(','))
+    const u = tensor.map((_, i) => (Number.isFinite(r.statistics[k].u?.[i]) ? r.statistics[k].u[i] : ''))
+    lines.push([fluctItemName(item, r.atomMapping), ids, ...columns.map(c => { const v = c[2](r.statistics[k]); return Number.isFinite(v) ? v : '' }), r.statistics[k].trend, ...u].map(cell).join(','))
   })
   const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/csv' })
   const link = document.createElement('a')

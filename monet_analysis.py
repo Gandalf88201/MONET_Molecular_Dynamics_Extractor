@@ -597,12 +597,15 @@ def atomic_fluctuations(positions, cells=None, pbc=None, align=True):
     Returns (|dev| series (n, F), RMSF (n,), deviations (F, n, 3)). Periodic
     trajectories are unwrapped first; `align` removes global translation and
     rotation (Kabsch on the analysed atoms, iterated once on the average).
+    Deviations are expressed in the Cartesian axes of the first frame, so that
+    displacement tensors can be drawn on the first-frame structure.
     """
     x = np.asarray(positions, dtype=float)
     if cells is not None and pbc is not None and np.any(pbc):
         x, _ = unwrap(x, cells, pbc)
     x = x - x.mean(axis=1, keepdims=True) if align else x
     if align and x.shape[1] >= 3:
+        first = np.eye(3)
         for _ in range(2):
             reference = x.mean(axis=0)
             reference = reference - reference.mean(axis=0)
@@ -612,7 +615,28 @@ def atomic_fluctuations(positions, cells=None, pbc=None, align=True):
             U[:, :, -1] *= d[:, None]
             R = np.einsum('fij,fjk->fik', U, Vt)
             x = np.einsum('fni,fij->fnj', x, R)
+            first = first @ R[0]
+        # One common rotation back to the first frame: magnitudes and spectra are unchanged.
+        x = x @ first.T
     deviation = x - x.mean(axis=0)
     magnitude = np.linalg.norm(deviation, axis=2)
     rmsf = np.sqrt(np.mean(magnitude ** 2, axis=0))
     return magnitude.T, rmsf, deviation
+
+
+def displacement_tensors(deviation):
+    """Mean-square displacement tensor U (n, 3, 3) in Å² of every atom from its deviations (F, n, 3)."""
+    d = np.asarray(deviation, dtype=float)
+    return np.einsum('fni,fnj->nij', d, d) / len(d)
+
+
+def crystal_adp(u_cart, cell):
+    """Cartesian displacement tensors (n, 3, 3) → CIF U^ij (n, 3, 3), referred to the crystal axes.
+
+    CIF convention: U_cart = A N U N Aᵀ, with A the lattice vectors as columns and
+    N = diag(|a*|, |b*|, |c*|); `cell` has the lattice vectors as rows, in the axes of u_cart.
+    """
+    A = np.asarray(cell, dtype=float).T
+    N = np.diag(np.linalg.norm(np.linalg.inv(A), axis=1))
+    M = np.linalg.inv(A @ N)
+    return np.einsum('ij,njk,lk->nil', M, np.asarray(u_cart, dtype=float), M)
