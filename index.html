@@ -295,12 +295,13 @@
         <span class="ase-tab-badge" id="ase-tab-badge">✓</span>
       </button>
       <button class="vtab" data-vtab="mda" id="vtab-mda" title="Analyses computed with MDAnalysis">MDAnalysis</button>
-      <button class="vtab" data-vtab="custom" id="vtab-custom" title="MONET's own analyses (autocorrelation, RMSD, dynamics)">Custom analyses</button>
-      <button class="vtab active" data-vtab="view3d" id="vtab-view3d" title="3D view and MONET file processing">MONET processing</button>
+      <button class="vtab active" data-vtab="custom" id="vtab-custom" title="MONET's own tools: 3D viewer and extraction, autocorrelation, RMSD, dynamics">MONET Custom Functionalities</button>
     </div>
 
-    <!-- ── 3D Viewer tab ── -->
+    <!-- ── 3D Viewer: first page of MONET Custom Functionalities ── -->
     <div class="vtab-content active" id="vtab-content-view3d">
+      <!-- Filled from the "custom" sub-tabs by renderer.js -->
+      <div class="ase-subtabbar" id="monet-subtabbar"></div>
       <div class="viewer-header">
         <span id="viewer-title">3D Molecular Viewer</span>
         <label class="view-style">Style <select class="field-input field-input-sm view-style-select" id="view-style"></select></label>
@@ -481,6 +482,7 @@
         <button class="ase-stab" data-group="ase" data-stab="convert">Convert / Wrap</button>
         <button class="ase-stab" data-group="mda" data-stab="topology">Topology &amp; consistency</button>
         <button class="ase-stab" data-group="mda" data-stab="mda">Analyses</button>
+        <button class="ase-stab" data-group="custom" data-stab="view3d">3D viewer &amp; extraction</button>
         <button class="ase-stab active" data-group="custom" data-stab="acf">Autocorrelation</button>
         <button class="ase-stab" data-group="custom" data-stab="fluct">Fluctuations &amp; trends</button>
         <button class="ase-stab" data-group="custom" data-stab="rmsd">RMSD (Kabsch)</button>

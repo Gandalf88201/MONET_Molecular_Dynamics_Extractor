@@ -56,14 +56,13 @@ With the launcher, a trajectory is uploaded **once** (no size limit other than `
 
 ## Analysis modules
 
-After loading, the files are shared by four tabs, in the order of a typical study:
+After loading, the files are shared by three tabs, in the order of a typical study:
 
 1. **ASE** — Structure (formula, masses, centre of mass, inertia, cell, volume, density, shortest distance, overlapping atoms, molecules, bonds per element pair, coordination numbers, space group with `spglib` if installed), bond lengths, bond angles, dihedrals, pair distances, coordination numbers along the trajectory, conversion to other formats and wrapping.
 2. **MDAnalysis** — *Topology & consistency* (atom-identity check, below) and *Analyses*: `rms.RMSD` (with extra groups), pairwise RMSD matrix (`diffusionmap.DistanceMatrix` with `rms.rmsd`, optimal superposition of every pair), `rms.RMSF`, radius of gyration, `pca.PCA` (up to 10 components picked from a list, their distribution, and configurations picked by projection window, extremes or frame list, written as a trajectory for the extraction), `msd.EinsteinMSD`, `gnm.GNMAnalysis`, `diffusionmap.DiffusionMap`, `align.AlignTraj` (aligned trajectory to download or to analyse in MONET), `HydrogenBondAnalysis` (occupancy table with MONET IDs), `contacts.Contacts`, `rdf.InterRDF`, centre-of-mass and minimum distances between groups, `atomicdistances`, `dihedrals.Dihedral` (−180…180°), `lineardensity`, `density.DensityAnalysis` (OpenDX file), `dihedrals.Ramachandran` and `dssp.DSSP` (proteins). Each analysis shows its own fields; **← picked** inserts the atoms selected in the viewer as `id …`.
-3. **Custom analyses** — MONET's autocorrelation (decorrelation time and uncorrelated trajectory), fluctuations and trends, Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion and VDOS.
-4. **MONET processing** — 3D view, sampling, extraction and QM inputs.
+3. **MONET Custom Functionalities** — *3D viewer & extraction* (3D view, sampling, extraction and QM inputs), then MONET's own analyses: autocorrelation (decorrelation time and uncorrelated trajectory), fluctuations and trends, Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion and VDOS.
 
-The viewer, atom table, cell and time axis are common to the three analysis tabs.
+The viewer, atom table, cell and time axis are common to all analysis sub-tabs.
 
 Not included, because they need data an MD trajectory in XYZ form does not carry or tools that are not installed: ASE calculators, optimisers, MD engines and NEB (energies/forces); MDAnalysis modules that need charges, external programs, membranes or are deprecated (dielectric, HOLE2, leaflet finder, water dynamics, ENCORE/PSA, BAT, persistence length, helix and nucleic-acid analyses). Symmetry needs `spglib` (`python -m pip install spglib`).
 
@@ -197,11 +196,11 @@ Set the **Time axis** row at the top of the ASE panel: the MD time step of your 
 
 ### Pairwise RMSD matrices
 
-*Custom analyses › RMSD Matrix* (Kabsch, NumPy) and *MDAnalysis › Pairwise RMSD matrix* (`DistanceMatrix`) plot the RMSD between every pair of analysed frames. Under each matrix choose the colour map (plasma, viridis, inferno, magma, coolwarm or the app theme), whether frame 0 is in the upper-left corner (as `matplotlib.imshow`) or the lower-left one, and a plot title, e.g. *S0 at 300 K (non-correlated)*. The axes show the original frame numbers. To compare non-correlated configurations, run the matrix on the uncorrelated trajectory from the autocorrelation tab, or use a frame step close to the decorrelation stride. The MDAnalysis version thins long runs to at most *Maximum frames* (500 by default) and reports the mean, SD and maximum off-diagonal RMSD; both versions agree within 0.002 Å on the test trajectories.
+*MONET Custom Functionalities › RMSD Matrix* (Kabsch, NumPy) and *MDAnalysis › Pairwise RMSD matrix* (`DistanceMatrix`) plot the RMSD between every pair of analysed frames. Under each matrix choose the colour map (plasma, viridis, inferno, magma, coolwarm or the app theme), whether frame 0 is in the upper-left corner (as `matplotlib.imshow`) or the lower-left one, and a plot title, e.g. *S0 at 300 K (non-correlated)*. The axes show the original frame numbers. To compare non-correlated configurations, run the matrix on the uncorrelated trajectory from the autocorrelation tab, or use a frame step close to the decorrelation stride. The MDAnalysis version thins long runs to at most *Maximum frames* (500 by default) and reports the mean, SD and maximum off-diagonal RMSD; both versions agree within 0.002 Å on the test trajectories.
 
 ### Fluctuations and trends
 
-*Custom analyses › Fluctuations & trends* maps how atoms, bonds, angles and dihedrals oscillate during the run:
+*MONET Custom Functionalities › Fluctuations & trends* maps how atoms, bonds, angles and dihedrals oscillate during the run:
 
 - **Items**: every bond, angle or dihedral found from the first-frame connectivity (bond cutoff of the viewer) among the atoms entered (blank = all), or only the groups entered (MONET IDs, in order). *Atoms* gives the positional fluctuation of each atom after removing global translation and rotation (periodic runs are unwrapped first).
 - **Statistics per item**: mean; SD (RMSF for atoms, circular SD for dihedrals); minimum and maximum; 5–95 % range; linear trend with its error and R²; drift between the second and first half of the run; standard error from five block averages; dominant oscillation frequency (cm⁻¹ with the time axis set, otherwise its period in frames) and its share of the spectral power. A trend is marked *significant* when the five block means follow a line beyond three times the error of their slope and the change over the run exceeds 10 % of the SD, so fast oscillations are not mistaken for drift.

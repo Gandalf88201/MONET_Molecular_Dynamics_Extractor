@@ -23,7 +23,8 @@
   --on-accent: #0d0d1a;
   --overlay:   rgba(13, 13, 26, 0.85);
   --shadow:    #0008;
-  --font:      'Courier New', Courier, monospace;
+  --font:      system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --mono:      ui-monospace, 'Cascadia Mono', Consolas, Menlo, 'DejaVu Sans Mono', monospace;
 
   /* Canvas tokens (viewer, plots and PNG export) */
   --canvas-bg:   #0d0d1a;
@@ -86,6 +87,7 @@ html, body {
   overflow: hidden;
   font-family: var(--font);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   color: var(--text);
   background: var(--bg);
 }
@@ -444,6 +446,7 @@ html, body {
   border-radius: 4px;
   padding: 8px;
   overflow-y: auto;
+  font-family: var(--mono);
   font-size: 0.72rem;
   line-height: 1.6;
   min-height: 180px;
@@ -486,7 +489,7 @@ html, body {
 .tree-node { font-size: 0.75rem }
 .tree-dir  { color: var(--blue); margin-bottom: 3px }
 .tree-file { color: var(--text-dim); padding-left: 1.2rem }
-.tree-file code, .tree-dir code { font-family: var(--font) }
+.tree-file code, .tree-dir code { font-family: var(--mono) }
 
 /* ── 3D Viewer ── */
 .viewer-area {
@@ -559,7 +562,7 @@ html, body {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px }
 ::-webkit-scrollbar-thumb:hover { background: var(--border-strong) }
 
-code { font-family: var(--font) }
+code { font-family: var(--mono) }
 
 /* ============================================================
    ASE Badge (title bar)
@@ -607,7 +610,7 @@ code { font-family: var(--font) }
 .vtab {
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   color: var(--text-dim);
   font-family: var(--font);
   font-size: 0.78rem;
@@ -619,8 +622,9 @@ code { font-family: var(--font) }
   gap: 6px;
   transition: color .15s, border-color .15s;
 }
-.vtab:hover  { color: var(--text) }
-.vtab.active { color: var(--blue); border-bottom-color: var(--blue) }
+.vtab:hover  { color: var(--text); background: var(--bg3) }
+/* Active module: filled tab, bold label, thick underline */
+.vtab.active { color: var(--text); background: var(--accent2); border-bottom-color: var(--blue); font-weight: 700 }
 
 .ase-tab-badge {
   background: var(--green);
@@ -662,10 +666,10 @@ code { font-family: var(--font) }
   flex-shrink: 0;
 }
 
-.ase-stab {
+.ase-stab, .ase-stab-link {
   background: transparent;
   border: none;
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   color: var(--text-dim);
   font-family: var(--font);
   font-size: 0.73rem;
@@ -673,8 +677,8 @@ code { font-family: var(--font) }
   cursor: pointer;
   transition: color .15s, border-color .15s;
 }
-.ase-stab:hover  { color: var(--text) }
-.ase-stab.active { color: var(--gold); border-bottom-color: var(--gold) }
+.ase-stab:hover, .ase-stab-link:hover { color: var(--text) }
+.ase-stab.active, .ase-stab-link.active { color: var(--gold); background: var(--gold-soft); border-bottom-color: var(--gold); font-weight: 700 }
 
 /* Sub-panels */
 .ase-subpanel {
@@ -835,7 +839,7 @@ code { font-family: var(--font) }
   cursor: pointer;
 }
 .theme-toggle:hover { border-color: var(--blue) }
-.theme-toggle:focus-visible, .btn:focus-visible, .vtab:focus-visible, .ase-stab:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px }
+.theme-toggle:focus-visible, .btn:focus-visible, .vtab:focus-visible, .ase-stab:focus-visible, .ase-stab-link:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px }
 body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-color .2s, color .2s }
 .ase-global-actions { padding: 6px 10px 0; flex-shrink: 0; }
 
@@ -851,7 +855,7 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .qm-grid .field-label { display: flex; flex-direction: column; gap: 3px; }
 .qm-grid .field-input { padding: 5px 7px; }
 .qm-templates summary { cursor: pointer; color: var(--blue); font-size: .78rem; }
-.qm-template-text { font-size: .72rem; line-height: 1.35; resize: vertical; margin-top: 6px; white-space: pre; }
+.qm-template-text { font-family: var(--mono); font-size: .72rem; line-height: 1.35; resize: vertical; margin-top: 6px; white-space: pre; }
 
 /* ── Time axis and new analyses ── */
 .ase-time-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 12px; border-bottom: 1px solid var(--border); font-size: .74rem; color: var(--text-dim); flex-shrink: 0; }
@@ -868,7 +872,7 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .plot-view-select { width: auto !important; }
 .plot-view input[type="text"] { width: 7em; }
 .dist-options:not(.ase-plot-actions) { display: flex; flex-direction: column; gap: 4px; margin: 4px 0 8px; }
-.dist-options textarea { font-family: var(--mono, monospace); font-size: .75rem; resize: vertical; }
+.dist-options textarea { font-family: var(--mono); font-size: .75rem; resize: vertical; }
 .dist-options.hidden { display: none; }
 
 /* ── Collapsible workflow panel and larger ASE viewer ── */
@@ -900,8 +904,8 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .player-row input[type="range"] { flex: 1 1 140px; min-width: 120px; }
 .player-row .field-input-sm[type="number"] { width: 4.5em; }
 .player-play { min-width: 5.5em; }
-.player-frame { font-family: var(--mono, monospace); font-size: .75rem; color: var(--text-dim); white-space: nowrap; }
-.player-live { font-family: var(--mono, monospace); font-size: .78rem; min-height: 1.1em; }
+.player-frame { font-family: var(--mono); font-size: .75rem; color: var(--text-dim); white-space: nowrap; }
+.player-live { font-family: var(--mono); font-size: .78rem; min-height: 1.1em; }
 
 .time-mirror { padding: 4px 0 6px; border-bottom: 1px dashed var(--border, rgba(127,127,127,.3)); margin-bottom: 6px; }
 .field-missing { outline: 2px solid var(--danger, #d64545) !important; outline-offset: 1px; }
@@ -946,7 +950,7 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .history-badge { color: #d9534f; font-weight: 600; }
 .history-pane { display: none; flex: 1; min-height: 0; flex-direction: column; padding: 8px; gap: 8px; }
 .history-pane.active { display: flex; }
-.console-lines, .history-list, .console-output, .history-detail pre { font-family: ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+.console-lines, .history-list, .console-output, .history-detail pre { font-family: var(--mono); white-space: pre-wrap; word-break: break-word; }
 .console-lines { flex: 1; overflow: auto; }
 .console-line { padding: 2px 4px; border-radius: 4px; }
 .console-rerunnable { cursor: pointer; }
@@ -958,7 +962,7 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .console-output.console-error { color: #d9534f; }
 .console-input-row { display: flex; align-items: center; gap: 6px; }
 .console-prompt { color: var(--accent); font-weight: 700; }
-.console-input { flex: 1; font-family: ui-monospace, Menlo, Consolas, monospace; }
+.console-input { flex: 1; font-family: var(--mono); }
 .history-filters, .history-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .history-list { flex: 1; overflow: auto; margin: 0; padding-left: 0; list-style: none; }
 .history-item { padding: 3px 6px; border-radius: 4px; cursor: pointer; }
@@ -987,7 +991,7 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .qm-cell-vectors { margin: 0; overflow-x: auto; font-size: .8em; }
 .qm-species { border-collapse: collapse; font-size: .85em; margin: .4rem 0; }
 .qm-species td, .qm-species th { padding: .15rem .4rem; }
-.qm-preview { max-height: 16rem; overflow: auto; font-size: .8em; }
+.qm-preview { font-family: var(--mono); max-height: 16rem; overflow: auto; font-size: .8em; }
 .qm-custom { font-size: .8em; opacity: .8; margin-left: .4rem; }
 
 /* PCA: component list, distribution and configuration selection (MDAnalysis tab) */

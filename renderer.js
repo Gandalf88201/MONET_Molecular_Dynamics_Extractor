@@ -148,9 +148,10 @@ $('rail-expand').addEventListener('click', () => setSidebarCollapsed(false))
 const ANALYSIS_GROUPS = {
   ase: 'ASE modules on the loaded trajectory: structure summary, geometry along the frames, coordination, conversion and wrapping.',
   mda: 'MDAnalysis modules on the same trajectory: topology and atom-identity check, then RMSD/RMSF, PCA, hydrogen bonds, contacts, RDF, densities and more.',
-  custom: 'MONET analyses: autocorrelation (decorrelation time and uncorrelated configurations), Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion and VDOS.'
+  custom: 'MONET custom functionalities: 3D viewer and extraction, autocorrelation (decorrelation time and uncorrelated configurations), Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion and VDOS.'
 }
-const lastSubtab = { ase: 'structure', mda: 'topology', custom: 'acf' }
+// The 3D view (sub-tab "view3d") is the first page of the MONET custom functionalities.
+const lastSubtab = { ase: 'structure', mda: 'topology', custom: 'view3d' }
 let activeGroup = 'custom'
 
 function showGroup (group, subtab) {
@@ -163,8 +164,10 @@ function showGroup (group, subtab) {
 }
 
 function showViewerTab (id) {
+  if (id === 'custom' && lastSubtab.custom === 'view3d') id = 'view3d'
   const group = ANALYSIS_GROUPS[id] ? id : null
-  $$('.vtab').forEach(b => b.classList.toggle('active', b.dataset.vtab === id))
+  if (id === 'view3d') lastSubtab.custom = 'view3d'
+  $$('.vtab').forEach(b => b.classList.toggle('active', b.dataset.vtab === (group || 'custom')))
   $$('.vtab-content').forEach(c => c.classList.remove('active'))
   $(`vtab-content-${group ? 'ase' : id}`).classList.add('active')
   // Analysis modules get the full width; the 3D view is used with the workflow steps.
@@ -1042,12 +1045,21 @@ function selectSubtab (id) {
 }
 $$('.ase-stab').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (btn.dataset.stab === 'view3d') return showViewerTab('view3d')
     // A sub-tab of another module (e.g. from "Use selection") also switches the module tab.
     if (btn.dataset.group !== activeGroup || !$('vtab-content-ase').classList.contains('active')) {
       lastSubtab[btn.dataset.group] = btn.dataset.stab
       showViewerTab(btn.dataset.group)
     } else selectSubtab(btn.dataset.stab)
   })
+})
+// The 3D view repeats the MONET sub-tabs, so the custom analyses are one click away.
+$$('.ase-stab[data-group="custom"]').forEach(source => {
+  const btn = document.createElement('button')
+  btn.className = 'ase-stab-link' + (source.dataset.stab === 'view3d' ? ' active' : '')
+  btn.textContent = source.textContent
+  btn.addEventListener('click', () => source.click())
+  $('monet-subtabbar').appendChild(btn)
 })
 
 // =============================================================================
@@ -4358,8 +4370,8 @@ const CONSOLE_FORMS = {
 function revealPanel (tab) {
   const button = document.querySelector(`.ase-stab[data-stab="${tab}"]`)
   if (!button) return
+  lastSubtab[button.dataset.group] = tab
   showViewerTab(button.dataset.group)
-  showGroup(button.dataset.group, tab)
 }
 
 function consoleMessage (text, error = false) {

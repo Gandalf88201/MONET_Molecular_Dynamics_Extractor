@@ -457,11 +457,30 @@ async function run () {
   // Analysis comes before extraction: loading opens the ASE module with the workflow folded away.
   assert.ok(el('panel-analysis').classList.contains('active')); assert.ok(el('nav-analysis').classList.contains('active')); checks++
   assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(w.document.querySelector('.layout').classList.contains('sidebar-collapsed')); checks++
-  // Module order: ASE, MDAnalysis, custom analyses, then MONET processing.
-  assert.deepEqual($$('.vtab').map(b => b.dataset.vtab), ['ase', 'mda', 'custom', 'view3d']); checks++
+  // Module order: ASE, MDAnalysis, then MONET Custom Functionalities (3D view, extraction and custom analyses).
+  assert.deepEqual($$('.vtab').map(b => b.dataset.vtab), ['ase', 'mda', 'custom']); checks++
+  assert.equal(el('vtab-custom').textContent.trim(), 'MONET Custom Functionalities'); checks++
   assert.ok(el('vtab-ase').classList.contains('active')); assert.ok(el('ase-sub-structure').classList.contains('active')); checks++
   assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['structure', 'bonds', 'angles', 'dihedrals', 'pdd', 'coordination', 'convert']); checks++
   assert.match(el('module-intro').textContent, /ASE modules/); checks++
+  // The MONET tab opens on the 3D view, whose sub-tab row also leads to the custom analyses.
+  await click('vtab-custom')
+  assert.ok(el('vtab-custom').classList.contains('active')); assert.ok(el('vtab-content-view3d').classList.contains('active')); checks++
+  assert.equal(w.document.querySelector('.layout').classList.contains('sidebar-collapsed'), false); checks++
+  const monetLinks = [...el('monet-subtabbar').children]
+  assert.deepEqual(monetLinks.map(b => b.textContent), ['3D viewer & extraction', 'Autocorrelation', 'Fluctuations & trends', 'RMSD (Kabsch)', 'RMSD Matrix', 'RDF', 'MSD / Diffusion', 'VDOS']); checks++
+  assert.ok(monetLinks[0].classList.contains('active')); checks++
+  monetLinks[3].click(); await tick(); await tick()
+  assert.ok(el('vtab-custom').classList.contains('active')); assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(el('ase-sub-rmsd').classList.contains('active')); checks++
+  assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['view3d', 'acf', 'fluct', 'rmsd', 'rmsdmatrix', 'rdf', 'msd', 'vdos']); checks++
+  assert.match(el('module-intro').textContent, /MONET custom functionalities/); checks++
+  // Switching module and back keeps the last MONET page; the "3D viewer" sub-tab returns to the view.
+  await click('vtab-ase'); await click('vtab-custom')
+  assert.ok(el('ase-sub-rmsd').classList.contains('active')); assert.ok(el('vtab-content-ase').classList.contains('active')); checks++
+  w.document.querySelector('.ase-stab[data-stab="view3d"]').click(); await tick()
+  assert.ok(el('vtab-content-view3d').classList.contains('active')); assert.ok(el('vtab-custom').classList.contains('active')); checks++
+  await click('vtab-ase')
+  assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(el('ase-sub-structure').classList.contains('active')); checks++
   // Atom identity is checked automatically in MONET, ASE and MDAnalysis.
   assert.equal(topologyCommands.length, 1); assert.deepEqual([...topologyCommands[0].atom_ids], [1, 2, 3, 4]); checks++
   assert.ok(el('topology-status').classList.contains('topology-ok')); assert.match(el('topology-status').textContent, /4 atoms: MONET IDs, ASE indices and MDAnalysis ids/); checks++
@@ -949,6 +968,7 @@ async function run () {
   pick(1); pick(3)
   await click('ase-continue')
   assert.ok(el('panel-2').classList.contains('active')); assert.ok(el('vtab-content-view3d').classList.contains('active')); checks++
+  assert.ok(el('vtab-custom').classList.contains('active')); checks++
   assert.equal(w.document.querySelector('.layout').classList.contains('sidebar-collapsed'), false); checks++
   await click('next-2')
   assert.equal(el('use-ase-selection').disabled, false); checks++

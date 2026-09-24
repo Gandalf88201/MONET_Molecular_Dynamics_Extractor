@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Interface:
+  - *MONET processing* is renamed *MONET Custom Functionalities* and holds the former *Custom analyses* tab. Its first sub-tab, *3D viewer & extraction*, is the 3D view; the other sub-tabs are the custom analyses.
+  - The interface uses the system sans-serif font. Code, logs, consoles and QM input files use a monospace font, and numbers keep aligned digits.
+  - The selected module tab and sub-tab are filled, bold and underlined, so the active one is clear.
 - MDAnalysis PCA:
   - up to 10 principal components come back from one calculation, and the component list (variance, explained and cumulated %, mean ± std) chooses which projections are plotted; *Components plotted at first* sets how many are ticked;
   - a distribution chart shows the plotted projections on common bins;
