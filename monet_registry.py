@@ -324,6 +324,14 @@ class Context:
     def natoms(self):
         return len(self.atoms())
 
+    @property
+    def atom_ids(self):
+        """MONET ID of every atom of the analysed file (index i → ID), e.g. for labels in written files."""
+        ids = self._cmd.get('atom_ids')
+        if isinstance(ids, list) and len(ids) == self.natoms and all(type(i) is int for i in ids):
+            return list(ids)
+        return list(range(1, self.natoms + 1))
+
     def universe(self):
         """(frame indices, MDAnalysis Universe) of the analysed frames; atom ids are the MONET IDs."""
         if self._universe is None:

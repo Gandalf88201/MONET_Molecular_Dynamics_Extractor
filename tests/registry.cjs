@@ -115,6 +115,42 @@ r = bridge({'action': 'run_analysis', 'analysis': 'ase.cell_volume', 'filename':
 assert r['ok'] and abs(r['series'][0]['data'][0] - 1000) < 1e-9, r
 checks += 1
 
+# Thermal ellipsoids plugin: PDB ANISOU in Cartesian axes, CIF U^ij in the crystal axes of a triclinic cell.
+rng = np.random.default_rng(3)
+cell = np.array([[6.0, 0, 0], [1.5, 7.0, 0], [0.8, -1.1, 8.0]])
+base = np.array([[0.1, 0.1, 0.1], [0.4, 0.2, 0.3], [0.7, 0.6, 0.2], [0.2, 0.8, 0.9]]) @ cell
+lattice = 'Lattice="' + ' '.join(str(v) for v in cell.ravel()) + '" Properties=species:S:1:pos:R:3 pbc="T T T"'
+crystal = Path(tempfile.mkdtemp()) / 'crystal.xyz'
+with open(crystal, 'w') as fh:
+    for _ in range(200):
+        p = base + rng.standard_normal(base.shape) * [0.12, 0.05, 0.08]
+        p -= np.floor(p @ np.linalg.inv(cell)) @ cell
+        fh.write('4\n' + lattice + '\n' + ''.join(f'{e} {x:.6f} {y:.6f} {z:.6f}\n' for e, (x, y, z) in zip(['Si', 'O', 'O', 'Na'], p)))
+listed_adp = [a for a in listed['analyses'] if a['id'].startswith('custom.displacement_ellipsoids')]
+assert [a['output']['suffix'] for a in listed_adp] == ['-adp.pdb', '-adp.cif'], listed_adp
+pdb_path, cif_path = crystal.with_suffix('.pdb'), crystal.with_suffix('.cif')
+common = {'filename': str(crystal), 'mic': True, 'atom_ids': [11, 12, 13, 14], 'params': {}}
+pdb = bridge({'action': 'run_analysis', 'analysis': 'custom.displacement_ellipsoids', 'output': str(pdb_path), **common})
+cif = bridge({'action': 'run_analysis', 'analysis': 'custom.displacement_ellipsoids_cif', 'output': str(cif_path), **common})
+assert pdb['ok'] and cif['ok'] and pdb['atoms'] == [0, 1, 2, 3] and pdb['bars'], (pdb, cif)
+u_cart = np.array([[[r[2], r[5], r[6]], [r[5], r[3], r[7]], [r[6], r[7], r[4]]] for r in pdb['table']['rows']])
+assert np.allclose([r[1] for r in pdb['table']['rows']], np.trace(u_cart, axis1=1, axis2=2) / 3, atol=1e-6)
+assert np.allclose(pdb['series'][0]['data'], [r[1] for r in cif['table']['rows']], rtol=0, atol=1e-6), 'same U_eq in both files'
+# Fixed PDB columns: serial = MONET ID, ANISOU = 10⁴ U in columns 29–70.
+anisou = [l for l in pdb_path.read_text().splitlines() if l.startswith('ANISOU')]
+assert [int(l[6:11]) for l in anisou] == [11, 12, 13, 14] and all(len(l) == 78 for l in anisou), anisou
+assert np.allclose([[int(l[28 + 7 * k:35 + 7 * k]) for k in range(6)] for l in anisou],
+                   [[u[0, 0], u[1, 1], u[2, 2], u[0, 1], u[0, 2], u[1, 2]] for u in u_cart * 1e4], atol=0.51)
+# CIF: back to Cartesian, U = A N U* N Aᵀ gives the tensors of the PDB (which rounds to 10⁻⁶ Å² in the table).
+text = cif_path.read_text()
+assert "_space_group_IT_number 1" in text and '_cell_length_b 7.158911' in text and '\nSi11 Si ' in text, text
+u_star = np.array([[float(v) for v in l.split()[1:]] for l in text.split('_atom_site_aniso_U_23\n')[1].split('\n') if l])
+u_star = np.array([[[u[0], u[3], u[4]], [u[3], u[1], u[5]], [u[4], u[5], u[2]]] for u in u_star])
+A = cell.T; N = np.diag(np.linalg.norm(np.linalg.inv(A), axis=1))
+assert np.allclose(np.einsum('ij,njk,lk->nil', A @ N, u_star, A @ N), u_cart, atol=5e-6)
+assert not bridge({'action': 'run_analysis', 'analysis': 'custom.displacement_ellipsoids_cif', 'filename': water, 'output': str(cif_path), 'params': {}})['ok']
+checks += 1
+
 # The MDAnalysis tab still uses mda_run with the short names; parameters are checked by the registry.
 r = bridge({'action': 'mda_run', 'analysis': 'rgyr', 'filename': water, 'params': {'selection': 'all'}})
 assert r['ok'] and r['analysis'] == 'mdanalysis.rgyr', r

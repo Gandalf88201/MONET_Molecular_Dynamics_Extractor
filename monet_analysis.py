@@ -628,3 +628,15 @@ def displacement_tensors(deviation):
     """Mean-square displacement tensor U (n, 3, 3) in Å² of every atom from its deviations (F, n, 3)."""
     d = np.asarray(deviation, dtype=float)
     return np.einsum('fni,fnj->nij', d, d) / len(d)
+
+
+def crystal_adp(u_cart, cell):
+    """Cartesian displacement tensors (n, 3, 3) → CIF U^ij (n, 3, 3), referred to the crystal axes.
+
+    CIF convention: U_cart = A N U N Aᵀ, with A the lattice vectors as columns and
+    N = diag(|a*|, |b*|, |c*|); `cell` has the lattice vectors as rows, in the axes of u_cart.
+    """
+    A = np.asarray(cell, dtype=float).T
+    N = np.diag(np.linalg.norm(np.linalg.inv(A), axis=1))
+    M = np.linalg.inv(A @ N)
+    return np.einsum('ij,njk,lk->nil', M, np.asarray(u_cart, dtype=float), M)

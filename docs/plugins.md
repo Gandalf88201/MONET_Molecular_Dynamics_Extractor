@@ -100,6 +100,7 @@ Everything follows the MONET settings (frame step, crystal cell, periodic bounda
 | `ctx.frames(atoms=None, need_cell=False)` | `Frames(frames, positions, cells, pbc)`: frame indices, positions `(F, n, 3)` in Å, cells `(F, 3, 3)` or `None`, PBC flags. `need_cell=True` asks the user for a cell when there is none |
 | `ctx.atoms()` | first frame as an `ase.Atoms` (cell and PBC applied) |
 | `ctx.symbols`, `ctx.natoms` | element symbols, number of atoms |
+| `ctx.atom_ids` | MONET ID of every atom (index → ID), for labels in the files you write |
 | `ctx.universe()` | `(frames, Universe)`: in-memory MDAnalysis Universe; atom `id` = MONET ID, residues from the topology or from bonded molecules |
 | `ctx.atom_properties()` | topology columns of imported files (`resname`, `resid`, `atomname`) or `{}` |
 | `ctx.dt` | fs between two analysed frames (time axis × frame step), or `None` when the time axis is not set |
