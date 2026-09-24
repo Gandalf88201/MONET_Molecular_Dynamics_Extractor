@@ -43,6 +43,7 @@ jobs:
           node tests/session.cjs
           node tests/replay.cjs
           node tests/history-ui.cjs
+          node tests/launcher.cjs
 
   launchers:
     # The double-click launchers create the environment on every platform.

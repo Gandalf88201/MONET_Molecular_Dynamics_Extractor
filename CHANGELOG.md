@@ -21,6 +21,11 @@
 - Extraction from a derived trajectory (uncorrelated, cropped, PCA selection) writes `frame N source_frame=M` in FULL_TRAJECTORY_EXTRACTED.xyz and SAMPLED_CONFIGURATIONS.xyz, so every configuration can be traced to its frame in the original run. The Python, desktop and browser engines all do this; files without `source_frame=` are unchanged.
 - Fix: a cell applied by hand or read from a cell file (e.g. a CIF) was dropped when a derived trajectory (uncorrelated, cropped, aligned, PCA selection) became active. It now follows the derived trajectory and comes back with ↩ Full trajectory, so plane-wave inputs (QE, VASP, CP2K, Qbox) keep it.
 
+- Launcher:
+  - calculations run on persistent Python workers (`ase_bridge.py --serve`): libraries and trajectory indexes stay loaded, so after the first request a frame read takes about 1 ms instead of about 0.5 s. A worker starts in the background when the launcher starts; a cancelled calculation stops its worker.
+  - session files are deleted as soon as nothing uses them: released trajectories, derived copies (unwrapped, aligned, uncorrelated) once their download is gone, and job folders that produced nothing. Only the 40 newest downloads are kept.
+  - the job limit is checked before a calculation starts, so a refused request no longer starts Python.
+  - download links no longer contain the session token; the random download ID is the permission for that file.
 - Fix: *Remove drift* in MSD / Diffusion subtracted the centre of the selected atoms, so a single atom, ion or molecule lost the diffusion the MSD measures (MSD and D close to zero). It now subtracts the centre-of-mass motion of the whole system, with minimum-image steps across periodic boundaries. MSD and D computed earlier for small selections with this option on should be recomputed.
 
 ## 2.2.0 (2026-09-23)

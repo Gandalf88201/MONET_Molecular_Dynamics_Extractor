@@ -200,7 +200,8 @@
     }
   }
 
-  const downloadURL = id => `/api/download/${id}?token=${encodeURIComponent(token)}`
+  // The random download ID is the permission for that one file: the session token stays out of URLs.
+  const downloadURL = id => `/api/download/${encodeURIComponent(id)}`
 
   async function serverRun (command, scope = 'ase', onProgress = emitAse) {
     const key = command.action === 'convert' ? command.input : command.filename

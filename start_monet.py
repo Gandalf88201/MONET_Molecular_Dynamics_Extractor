@@ -3,10 +3,12 @@
 
 Trajectories are uploaded once to a private session directory and referenced
 by random file IDs; client paths are never used as filesystem paths.
-Calculations run as background jobs that report progress and can be cancelled.
+Calculations run as background jobs on persistent Python workers
+(ase_bridge.py --serve); they report progress and can be cancelled.
 """
 import argparse
 import atexit
+from collections import deque
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -21,7 +23,7 @@ import sys
 import tempfile
 import threading
 import time
-from urllib.parse import parse_qs, unquote, urlsplit
+from urllib.parse import unquote, urlsplit
 import webbrowser
 import zipfile
 
@@ -38,6 +40,8 @@ ALLOWED = {'indices', 'quantity', 'groups', 'center', 'atom_ids', 'stride', 'sta
            'by_element', 'mass_weighted', 'smooth_cm', 'max_cm', 'quantity', 'groups', 'max_lag', 'mode', 'fit_until', 'tau_int_method',
            'selection', 'donors', 'hydrogens', 'acceptors', 'd_a_cutoff', 'angle', 'radius', 'pattern', 'restrict', 'frames'}
 MAX_JOBS = 3
+MAX_DOWNLOADS = 40      # older downloads are deleted when more results are produced
+WORKER_RECYCLE = 200    # a worker is replaced after this many commands (bounded memory growth)
 MAX_JSON = 16 * 1024 * 1024
 CHUNK = 1024 * 1024
 SESSION_SCHEMA = 'monet-session/1'
@@ -181,54 +185,136 @@ def build_session_zip(target, data, methods, replay):
     return target
 
 
-class Job:
-    """One ase_bridge.py subprocess; its progress lines are kept for polling."""
+class Worker:
+    """A persistent `ase_bridge.py --serve` process that runs one command at a time."""
 
-    def __init__(self, command, finish=None):
+    def __init__(self):
+        self.process = subprocess.Popen(
+            [sys.executable, str(ROOT / 'ase_bridge.py'), '--serve'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True, encoding='utf-8', bufsize=1)
+        self.stderr = deque(maxlen=20)
+        self.commands = 0
+        threading.Thread(target=self._drain, daemon=True).start()
+
+    def _drain(self):
+        for line in self.process.stderr:
+            self.stderr.append(line)
+
+    def alive(self):
+        return self.process.poll() is None
+
+    def detail(self):
+        lines = ''.join(self.stderr).strip().splitlines()
+        return lines[-1] if lines else 'Check the Python installation.'
+
+    def run(self, command, on_progress):
+        """(result line or None, reusable). The worker is not reusable when it exited or was killed."""
+        self.commands += 1
+        try:
+            self.process.stdin.write(json.dumps(command) + '\n')
+            self.process.stdin.flush()
+        except (BrokenPipeError, OSError):
+            return None, False
+        result = None
+        for line in self.process.stdout:
+            try:
+                message = json.loads(line)
+            except ValueError:
+                continue
+            kind = message.get('type')
+            if kind == 'progress':
+                on_progress(message)
+            elif kind in {'result', 'error'}:
+                result = message
+            elif kind == 'end':
+                return result, True
+        return result, False
+
+    def kill(self):
+        if self.alive():
+            self.process.terminate()
+            threading.Timer(3, lambda: self.alive() and self.process.kill()).start()
+
+
+class WorkerPool:
+    """Idle workers kept warm for the next job; a busy worker belongs to one job only."""
+
+    def __init__(self, size=MAX_JOBS):
+        self.size = size
+        self.idle = []
+        self.lock = threading.Lock()
+        self.closed = False
+
+    def acquire(self):
+        with self.lock:
+            while self.idle:
+                worker = self.idle.pop()
+                if worker.alive():
+                    return worker
+        return Worker()
+
+    def release(self, worker):
+        if worker.alive() and worker.commands < WORKER_RECYCLE:
+            with self.lock:
+                if not self.closed and len(self.idle) < self.size:
+                    self.idle.append(worker)
+                    return
+        worker.kill()
+
+    def warm(self):
+        """Start one worker in the background, so the first calculation does not wait for the imports."""
+        threading.Thread(target=lambda: self.release(Worker()), daemon=True).start()
+
+    def close(self):
+        with self.lock:
+            self.closed = True
+            idle, self.idle = self.idle, []
+        for worker in idle:
+            worker.kill()
+
+
+class Job:
+    """One bridge command run on a pooled worker; its progress is kept for polling."""
+
+    def __init__(self, command, finish=None, cleanup=None):
         self.id = secrets.token_urlsafe(12)
         self.command = command
         self.finish = finish
+        self.cleanup = cleanup
         self.state = 'running'
         self.progress = {'message': 'Starting …', 'percent': 0}
         self.result = None
         self.cancelled = False
         self.started = time.time()
-        self.process = None
+        self.worker = None
         self.lock = threading.Lock()
         self.done = threading.Event()
-        threading.Thread(target=self.run, daemon=True).start()
 
-    def run(self):
-        result, stderr = None, []
+    def start(self, pool):
+        threading.Thread(target=self.run, args=(pool,), daemon=True).start()
+
+    def _progress(self, message):
+        self.progress = {'message': message.get('message', ''), 'percent': message.get('percent')}
+
+    def run(self, pool):
+        result = None
         try:
-            self.process = subprocess.Popen(
-                [sys.executable, str(ROOT / 'ase_bridge.py')], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True, encoding='utf-8')
-            drain = threading.Thread(target=lambda: stderr.extend(self.process.stderr.readlines()[-20:]), daemon=True)
-            drain.start()
-            if self.cancelled:
-                self.process.kill()
+            worker = pool.acquire()
+            with self.lock:
+                self.worker = worker
+            reusable = False
             try:
-                self.process.stdin.write(json.dumps(self.command))
-                self.process.stdin.close()
-            except BrokenPipeError:
-                pass
-            for line in self.process.stdout:
-                try:
-                    message = json.loads(line)
-                except ValueError:
-                    continue
-                if message.get('type') == 'progress':
-                    self.progress = {'message': message.get('message', ''), 'percent': message.get('percent')}
-                elif message.get('type') in {'result', 'error'}:
-                    result = message
-            self.process.wait()
-            drain.join(1)
+                if not self.cancelled:
+                    result, reusable = worker.run(self.command, self._progress)
+            finally:
+                if self.cancelled or not reusable:
+                    worker.kill()
+                else:
+                    pool.release(worker)
             if self.cancelled:
                 result = {'ok': False, 'cancelled': True, 'error': 'Calculation cancelled.'}
             elif result is None:
-                detail = ''.join(stderr).strip().splitlines()[-1:] or ['Check the Python installation.']
-                result = {'ok': False, 'error': f'ASE returned no result. {detail[0]}'}
+                result = {'ok': False, 'error': f'ASE returned no result. {worker.detail()}'}
             elif result.get('ok') and self.finish:
                 result = self.finish(result)
         except Exception as error:
@@ -236,14 +322,16 @@ class Job:
         with self.lock:
             self.result = result
             self.state = 'cancelled' if self.cancelled else 'done' if result.get('ok') else 'error'
+        if self.cleanup:
+            self.cleanup()
         self.done.set()
 
     def cancel(self):
-        self.cancelled = True
-        process = self.process
-        if process and process.poll() is None:
-            process.terminate()
-            threading.Timer(3, lambda: process.poll() is None and process.kill()).start()
+        with self.lock:
+            self.cancelled = True
+            worker = self.worker
+        if worker:
+            worker.kill()
 
     def status(self):
         with self.lock:
@@ -252,33 +340,74 @@ class Job:
 
 
 class Session:
+    """Files of one launcher run. Every upload, job output and download lives in its own folder
+    under `dir`; a folder is deleted as soon as no file or download refers to it any more."""
+
     def __init__(self):
         self.dir = Path(tempfile.mkdtemp(prefix='monet-session-'))
-        self.files = {}      # id -> {'path', 'name', 'size'}
-        self.downloads = {}  # id -> {'path', 'name'}
+        self.files = {}      # id -> {'path', 'name', 'size', 'sha256', 'owner'}
+        self.downloads = {}  # id -> {'path', 'name', 'owner'}, oldest first
+        self.refs = {}       # owner folder -> ids of the files and downloads inside it
         self.jobs = {}
+        self.pool = WorkerPool()
         self.lock = threading.Lock()
         atexit.register(self.close)
 
     def close(self):
         for job in list(self.jobs.values()):
             job.cancel()
+        self.pool.close()
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def new_dir(self, prefix):
         return Path(tempfile.mkdtemp(prefix=prefix, dir=self.dir))
 
+    def _owner(self, path):
+        """The folder directly under the session directory that holds `path`."""
+        return self.dir / Path(path).resolve().relative_to(self.dir.resolve()).parts[0]
+
+    def _ref(self, owner, key):
+        self.refs.setdefault(owner, set()).add(key)
+
+    def _unref(self, owner, key):
+        """Drop one reference (lock held); returns the folder to delete when it became unused."""
+        keys = self.refs.get(owner)
+        if keys is not None:
+            keys.discard(key)
+            if not keys:
+                del self.refs[owner]
+                return owner
+        return None
+
+    def drop_if_unused(self, folder):
+        """Delete a job folder that produced nothing to keep."""
+        with self.lock:
+            unused = folder not in self.refs
+        if unused:
+            shutil.rmtree(folder, ignore_errors=True)
+
     def add_file(self, path, name, sha256=None):
         file_id = secrets.token_urlsafe(16)
         digest = sha256 or sha256_file(path)
+        owner = self._owner(path)
         with self.lock:
-            self.files[file_id] = {'path': Path(path), 'name': name, 'size': Path(path).stat().st_size, 'sha256': digest}
+            self.files[file_id] = {'path': Path(path), 'name': name, 'size': Path(path).stat().st_size, 'sha256': digest, 'owner': owner}
+            self._ref(owner, file_id)
         return file_id
 
     def add_download(self, path, name):
         download_id = secrets.token_urlsafe(16)
+        owner = self._owner(path)
+        unused = []
         with self.lock:
-            self.downloads[download_id] = {'path': Path(path), 'name': safe_name(name, 'download')}
+            self.downloads[download_id] = {'path': Path(path), 'name': safe_name(name, 'download'), 'owner': owner}
+            self._ref(owner, download_id)
+            while len(self.downloads) > MAX_DOWNLOADS:
+                old_id, old = next(iter(self.downloads.items()))
+                del self.downloads[old_id]
+                unused.append(self._unref(old['owner'], old_id))
+        for folder in filter(None, unused):
+            shutil.rmtree(folder, ignore_errors=True)
         return download_id
 
     def file(self, file_id):
@@ -288,23 +417,23 @@ class Session:
         return entry
 
     def release(self, file_id):
-        """Delete an uploaded file (not job outputs, which may still be downloaded)."""
+        """Forget a file the page no longer uses; its folder goes when no download still needs it."""
         with self.lock:
-            entry = self.files.get(file_id) if isinstance(file_id, str) else None
-            if not entry or not entry['path'].parent.name.startswith('upload-'):
-                return
-            self.files.pop(file_id)
-        shutil.rmtree(entry['path'].parent, ignore_errors=True)
+            entry = self.files.pop(file_id, None) if isinstance(file_id, str) else None
+            unused = self._unref(entry['owner'], file_id) if entry else None
+        if unused:
+            shutil.rmtree(unused, ignore_errors=True)
 
     def register(self, job):
+        """Start a job unless MAX_JOBS are already running (checked before any process is used)."""
         with self.lock:
             if sum(old.state == 'running' for old in self.jobs.values()) >= MAX_JOBS:
-                job.cancel()
                 raise RuntimeError('Too many calculations are running. Please wait.')
             self.jobs[job.id] = job
             finished = [key for key, old in self.jobs.items() if old.state != 'running']
             for key in finished[:-50]:
                 self.jobs.pop(key, None)
+        job.start(self.pool)
         return job
 
     def check(self):
@@ -386,7 +515,7 @@ class Session:
                 result['extracted_sha256'] = self.files[result['extracted_id']]['sha256']
             return result
 
-        return self.register(Job(command, finish))
+        return self.register(Job(command, finish, cleanup=lambda: self.drop_if_unused(workdir)))
 
     def export_session(self, request):
         folder = self.new_dir('session-')
@@ -404,6 +533,7 @@ class Server(ThreadingHTTPServer):
         self.session = Session()
         self.max_upload = max_upload
         self.sessions_dir = Path(sessions_dir).expanduser()
+        self.session.pool.warm()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -461,9 +591,8 @@ class Handler(BaseHTTPRequestHandler):
         session = self.server.session
         parts = url.path.split('/')
         if url.path.startswith('/api/download/') and len(parts) == 4:
-            # Plain links cannot send headers, so downloads carry the token in the query.
-            if not self.authorized(parse_qs(url.query).get('token', [''])[0]):
-                return self.denied()
+            # Plain links cannot send headers: the random download ID is the permission for this one
+            # file, so the session token never appears in a URL (or the browser history).
             entry = session.downloads.get(parts[3])
             if not entry or not entry['path'].exists():
                 return self.respond(404, {'ok': False, 'error': 'This download is no longer available.'})

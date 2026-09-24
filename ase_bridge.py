@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
 """
 MONET ASE Bridge
-Receives one JSON command on stdin, streams JSON progress lines,
+Receives JSON commands on stdin, streams JSON progress lines,
 then writes a final JSON result line to stdout.
 
 Protocol
 --------
-  stdin  : one JSON object (the command)
+  single command (default): stdin holds one JSON object (the command).
+  worker (--serve): stdin holds one JSON command per line; the process stays alive
+           and ends the output of every command with {"type":"end"}.
+
   stdout : zero-or-more  {"type":"progress","message":"...","percent":0-100}
            followed by exactly one {"type":"result",...}
            or           {"type":"error","message":"..."}
 """
 import sys, os, json, traceback, math, platform
+from collections import OrderedDict
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import monet_io
@@ -80,15 +84,23 @@ def _apply_geometry(atoms, cmd):
     return atoms
 
 
-_TRAJECTORIES = {}
+# Open trajectories, kept between the commands of a worker (--serve). The key includes size and
+# modification time, so a file changed on disk is indexed again.
+_TRAJECTORIES = OrderedDict()
+_MAX_TRAJECTORIES = 8
 
 
 def _trajectory(filename):
     """Indexed XYZ/extXYZ access, or None for other formats (read through ASE)."""
-    if filename not in _TRAJECTORIES:
-        _TRAJECTORIES[filename] = (monet_io.XYZTrajectory(filename, progress=lambda m, p: prog(m, p * .1))
-                                   if monet_io.is_xyz(filename) else None)
-    return _TRAJECTORIES[filename]
+    stat = os.stat(filename)
+    key = (os.path.abspath(filename), stat.st_size, stat.st_mtime_ns)
+    if key not in _TRAJECTORIES:
+        _TRAJECTORIES[key] = (monet_io.XYZTrajectory(filename, progress=lambda m, p: prog(m, p * .1))
+                              if monet_io.is_xyz(filename) else None)
+        while len(_TRAJECTORIES) > _MAX_TRAJECTORIES:
+            _TRAJECTORIES.popitem(last=False)
+    _TRAJECTORIES.move_to_end(key)
+    return _TRAJECTORIES[key]
 
 
 def _first_atoms(filename, cmd):
@@ -1485,14 +1497,16 @@ ACTIONS = {
     "average":   action_average,
 }
 
-def main():
-    raw = sys.stdin.read().strip()
-    if not raw:
+def run_command(raw):
+    """Parse, validate and run one command given as JSON text."""
+    if not raw.strip():
         err("Empty command"); return
     try:
         cmd = json.loads(raw)
     except json.JSONDecodeError as e:
         err(f"JSON parse error: {e}"); return
+    if not isinstance(cmd, dict):
+        err("The command must be a JSON object."); return
 
     action = cmd.get("action")
     handler = ACTIONS.get(action)
@@ -1505,6 +1519,25 @@ def main():
         handler(cmd)
     except Exception:
         _report_exception()
+
+
+def serve():
+    """Worker mode: run one command per input line until stdin closes.
+
+    Libraries stay imported and trajectory indexes stay open between commands, so only the
+    first command pays the start-up time. {"type": "end"} tells the caller the worker is free.
+    """
+    for line in sys.stdin:
+        if line.strip():
+            run_command(line)
+            _emit({"type": "end"})
+
+
+def main():
+    if '--serve' in sys.argv[1:]:
+        serve()
+    else:
+        run_command(sys.stdin.read())
 
 if __name__ == "__main__":
     main()
