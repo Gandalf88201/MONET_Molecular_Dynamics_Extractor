@@ -126,6 +126,14 @@ near(r.fits.selection.D_cm2_s, 1.25e-4, 1.25e-5, 'diffusion cm2/s'); checks++
 near(r.series.selection[10], 6 * 1.25e-3 * 10, 0.02, 'MSD(10 fs)'); checks++
 r = bridge({ action: 'msd', filename: path.join(temp, 'brownian.xyz'), dt: 1, frame_step: 20, fit_start: 100, fit_end: 1500 })
 near(r.fits.selection.D_A2_fs, 1.25e-3, 2.5e-4, 'diffusion with frame step'); assert.equal(r.dt, 20); checks++
+// Drift removal uses the centre of mass of the whole system: atom 1 of 10 moves 0.1 A per frame,
+// so the system moves 0.01 A per frame and atom 1 keeps 0.09 A per frame of its own motion.
+fs.writeFileSync(path.join(temp, 'drift.xyz'), Array.from({ length: 20 }, (_, f) =>
+  `10\nframe=${f}\n` + Array.from({ length: 10 }, (_, i) => `Ar ${i === 0 ? (0.1 * f).toFixed(4) : 3 * i} 0 0\n`).join('')).join(''))
+r = bridge({ action: 'msd', filename: path.join(temp, 'drift.xyz'), dt: 1, indices: [0], by_element: false, remove_drift: true })
+near(r.series.selection[10], 0.81, 1e-6, 'MSD of one atom after removing the system drift'); checks++
+r = bridge({ action: 'msd', filename: path.join(temp, 'drift.xyz'), dt: 1, indices: [0], by_element: false, remove_drift: false })
+near(r.series.selection[10], 1.0, 1e-6, 'MSD of one atom with the drift kept'); checks++
 r = bridge({ action: 'msd', filename: path.join(temp, 'brownian.xyz'), dt: 0 })
 assert.equal(r.ok, false); assert.match(r.message, /dt must be a positive/); checks++
 

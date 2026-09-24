@@ -576,6 +576,28 @@ def action_rdf(cmd):
        n_a=len(group_a), n_b=len(group_b), label=f"{first or 'all'}–{second or 'all'}")
 
 
+def _com_drift(cmd):
+    """Centre-of-mass displacement of the whole system (F, 3) from the first analysed frame.
+
+    Steps between analysed frames use the minimum image, so atoms crossing a periodic
+    boundary do not move the centre. Atoms without a mass (element X) count equally.
+    """
+    drift, previous, weights = [], None, None
+    for _, atoms in _load_images(cmd['filename'], cmd.get('frame_step', 1), cmd=cmd, label='Centre of mass, frame'):
+        positions = atoms.get_positions()
+        if weights is None:
+            masses = atoms.get_masses()
+            weights = masses / masses.sum() if masses.sum() > 0 else np.full(len(atoms), 1 / len(atoms))
+            drift.append(np.zeros(3))
+        else:
+            step = positions - previous
+            if atoms.cell.rank == 3 and atoms.pbc.any():
+                step = monet_analysis.minimum_image(step, atoms.cell.array, atoms.pbc)
+            drift.append(drift[-1] + weights @ step)
+        previous = positions
+    return np.array(drift)
+
+
 def action_msd(cmd):
     """Mean-square displacement (unwrapped, time-origin averaged) and diffusion coefficient."""
     if not _require_ase(): return
@@ -584,7 +606,9 @@ def action_msd(cmd):
     frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'))
     positions, warning = _maybe_unwrap({**cmd, 'unwrap': True}, positions, cells, pbc)
     if cmd.get('remove_drift', True):
-        positions = positions - (positions.mean(axis=1, keepdims=True) - positions[:1].mean(axis=1, keepdims=True))
+        # The drift is the motion of the whole system, never of the selection: the centre of a
+        # single atom or molecule is exactly the displacement that its MSD has to measure.
+        positions = positions - _com_drift(cmd)[:, None, :]
     if len(frames) < 4:
         raise ValueError('MSD needs at least four analysed frames.')
     prog("Computing MSD …", 90)

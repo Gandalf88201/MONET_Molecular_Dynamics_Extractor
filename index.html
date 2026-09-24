@@ -935,7 +935,7 @@
           <input class="field-input field-input-sm" type="number" id="msd-fit-start" min="0" step="any" placeholder="10%" />
           <label class="field-label" for="msd-fit-end">to (fs)</label>
           <input class="field-input field-input-sm" type="number" id="msd-fit-end" min="0" step="any" placeholder="50%" />
-          <label><input type="checkbox" id="msd-drift" checked /> Remove centre-of-geometry drift</label>
+          <label title="Subtracts the centre-of-mass motion of the whole system, so a single atom or molecule keeps its own diffusion"><input type="checkbox" id="msd-drift" checked /> Remove the system centre-of-mass drift</label>
           <button class="btn btn-sm btn-accent" id="btn-run-msd">Compute MSD</button>
         </div>
         <p class="panel-desc">Positions are unwrapped when a periodic cell is present; MSD is averaged over all time origins; D = slope / 6 from a linear fit in the chosen window.</p>

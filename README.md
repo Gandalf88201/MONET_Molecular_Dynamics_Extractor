@@ -214,7 +214,7 @@ Normalised g(r) and the running coordination number n(r) for an element pair (or
 
 ### MSD and diffusion
 
-Positions are unwrapped with minimum-image steps (keep the frame step small enough that atoms move less than half a cell between analysed frames; a warning is shown otherwise), the centre-of-geometry drift can be removed, and MSD(t) is averaged over all time origins (FFT algorithm). D = slope / 6 from a linear fit in the chosen window (default 10–50 % of the run), reported in cm²/s and Å²/fs, for the selection and per element.
+Positions are unwrapped with minimum-image steps (keep the frame step small enough that atoms move less than half a cell between analysed frames; a warning is shown otherwise), the centre-of-mass drift of the whole system can be removed (it is computed from all atoms, so the diffusion of a single atom or molecule is kept), and MSD(t) is averaged over all time origins (FFT algorithm). D = slope / 6 from a linear fit in the chosen window (default 10–50 % of the run), reported in cm²/s and Å²/fs, for the selection and per element.
 
 ### VDOS
 
