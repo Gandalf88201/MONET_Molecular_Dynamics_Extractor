@@ -8,6 +8,9 @@
   - A failed calculation is reported next to the plot as well as in the status bar.
 - New plugin `plugins/displacement_ellipsoids.py` (*MONET Custom Functionalities › More analyses*): thermal ellipsoids (anisotropic displacement parameters) from the trajectory, written as a PDB with `ANISOU` records (Cartesian axes of the first frame) or as a CIF with U^ij in the crystal axes (IUCr convention, P1) for Mercury, VESTA, Olex2, PyMOL or ORTEP. Table of U_eq, U_ij, principal RMS amplitudes and anisotropy.
 - Plugin API: `ctx.atom_ids` gives the MONET ID of every atom, for labels in written files.
+- The thermal ellipsoids plugin is self-contained: it also runs when copied into MONET 2.3.1 (it failed there with `AttributeError: module 'monet_analysis' has no attribute 'displacement_tensors'`). Long trajectories are aligned in blocks of 2000 frames.
+- MCP server `monet_mcp.py` for AI assistants (Claude Desktop, Claude Code, Gemini CLI): open trajectories (with import of other formats), list and run every MONET, MDAnalysis and plugin analysis, select atoms, find bonded groups and derive trajectories, with atoms as MONET IDs, compact results (full data on request) and progress. It runs headless on files; reads only below `--data` folders and writes only into `--output`. Needs the optional `mcp` Python SDK (1.x or 2.x). Guide: `docs/mcp.md`.
+- Failed analyses (MDAnalysis and *More analyses*) are shown in their panel: the reason in one line, the plugin file when a plugin failed, and the Python traceback folded below. The status bar gets only the one-line reason instead of the whole traceback.
 
 ## 2.3.1 (2026-09-24)
 

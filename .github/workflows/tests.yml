@@ -21,7 +21,7 @@ jobs:
         with:
           node-version: 22
       - name: Install Python dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt "mcp>=1.2"
       - name: Install DOM test dependencies
         run: npm install --no-save --ignore-scripts jsdom @napi-rs/canvas
       - name: Run test suites
@@ -46,6 +46,7 @@ jobs:
           node tests/launcher.cjs
           node tests/registry.cjs
           node tests/app-load.cjs
+          node tests/mcp.cjs
 
   lint:
     # Correctness linters: ruff (pyflakes rules, ruff.toml) and ESLint (recommended rules, eslint.config.js).

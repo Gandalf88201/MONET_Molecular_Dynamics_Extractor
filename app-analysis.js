@@ -831,7 +831,7 @@ function clearAnalysis (kind, report = true) {
   if (charts[`${kind}dist`]) clearAnalysis(`${kind}dist`, false)
   for (const id of { msd: ['msd-info'], vdos: ['vdos-info'] }[kind] || []) $(id).classList.add('hidden')
   if (kind === 'mda' || REGISTRY_PANELS[kind]) {
-    for (const id of [`${kind}-download`, `${kind}-activate`]) $(id).classList.add('hidden')
+    for (const id of [`${kind}-download`, `${kind}-activate`, `${kind}-error`]) $(id).classList.add('hidden')
     $(`${kind}-table`).replaceChildren()
     if (kind === 'mda') resetPca()
     clearAnalysis(`${kind}matrix`, false)

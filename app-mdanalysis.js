@@ -404,6 +404,32 @@ function showRegistryOutput (kind, r, command) {
   return r.filePath || command.output
 }
 
+// A failed analysis is shown in its panel: the reason in one line, a Python traceback folded below it.
+function showAnalysisError (kind, label, message) {
+  const box = $(`${kind}-error`)
+  const text = String(message || 'Unknown error').trim()
+  const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
+  const traceback = /^Traceback \(most recent call last\)/.test(text)
+  const reason = traceback ? lines[lines.length - 1] : text
+  const plugin = traceback && (text.match(/plugins[\\/][\w.-]+\.py/g) || []).pop()
+  box.replaceChildren()
+  const title = document.createElement('strong')
+  title.textContent = `${label} failed: `
+  box.append(title, reason)
+  if (plugin) box.append(document.createElement('br'), `The error comes from the plugin ${plugin.replace(/\\/g, '/')}; check that it matches this MONET version.`)
+  if (traceback) {
+    const details = document.createElement('details')
+    const summary = document.createElement('summary')
+    summary.textContent = 'Python traceback'
+    const pre = document.createElement('pre')
+    pre.textContent = text
+    details.append(summary, pre)
+    box.append(details)
+  }
+  box.classList.remove('hidden')
+  setStatus(`${label} failed: ${reason}`)
+}
+
 $('btn-run-mda').addEventListener('click', async () => {
   const spec = registrySpec($('mda-analysis').value)
   let command
@@ -411,7 +437,7 @@ $('btn-run-mda').addEventListener('click', async () => {
   if (!command) return
   clearAnalysis('mda', false)
   const r = await runAse('mda', command)
-  if (!r.ok) return setStatus('MDAnalysis error: ' + (r.message || r.error))
+  if (!r.ok) return showAnalysisError('mda', `MDAnalysis ${spec.label}`, r.message || r.error)
   const written = showRegistryOutput('mda', r, command)
   if (spec.output?.trajectory) {
     mdaAlignedPath = written
@@ -449,7 +475,7 @@ for (const kind of Object.keys(REGISTRY_PANELS)) {
     if (!command) return
     clearAnalysis(kind, false)
     const r = await runAse(kind, command)
-    if (!r.ok) return setStatus(`${spec.label}: ${r.message || r.error}`)
+    if (!r.ok) return showAnalysisError(kind, spec.label, r.message || r.error)
     const written = showRegistryOutput(kind, r, command)
     registryWritten[kind] = spec.output?.trajectory ? { path: written, step: command.frame_step, label: spec.label } : null
     $(`${kind}-activate`).classList.toggle('hidden', !registryWritten[kind])

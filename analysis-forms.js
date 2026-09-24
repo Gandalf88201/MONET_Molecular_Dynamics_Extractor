@@ -167,6 +167,7 @@
         <a class="btn btn-sm hidden" id="${kind}-download" download>Download file</a>
         <button class="btn btn-sm hidden" id="${kind}-activate">Analyse this trajectory in MONET</button>
       </div>
+      <div class="analysis-error hidden" id="${kind}-error" role="alert"></div>
       <canvas class="chart-canvas" id="chart-${kind}"></canvas>
       <div class="chart-placeholder" id="chart-${kind}-ph">Results of the chosen analysis</div>
       <div class="hidden" id="${kind}-matrix-block">

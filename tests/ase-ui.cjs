@@ -114,6 +114,7 @@ w.monet = {
     if (command.action === 'dihedrals') return { ok: true, frame_indices: [0, 1], series: { [command.quads[0].join('-')]: [270, 90] } }
     if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, tau_int_error: 5, tau_int_window: 3, tau_int_converged: true, tau_int_method: command.tau_int_method, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), frame_step: command.frame_step || 1, n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3], blocking: { sizes: [1, 2], times: [command.dt, 2 * command.dt], sem: [0.5, 0.7], sem_error: [0.01, 0.05], plateau_index: null, plateau_sem: null, g: null } }
     if (command.action === 'equilibration') { latestCommand = command; return { ok: true, starts: [0, 1, 2], times: [0, command.dt, 2 * command.dt], g: [4, 2, 2], n_effective: [1, 1.5, 0.5], t0: equilT0, t0_time: equilT0 * command.dt, t0_frame: equilT0, group: command.groups.length - 1, per_group_t0: command.groups.map((_, k) => k + 1), n_frames: 4, frame_step: 1, dt: command.dt, g_t0: 2, n_effective_t0: 1.5, n_effective_full: 1 } }
+    if (command.action === 'run_analysis' && command.params.mass_weighted === false) return { ok: false, message: 'Traceback (most recent call last):\n  File "/x/plugins/radius_of_gyration.py", line 3, in radius_of_gyration\n    rg = monet_analysis.missing()\nAttributeError: module \'monet_analysis\' has no attribute \'missing\'\n' }
     if (command.action === 'run_analysis') return { ok: true, analysis: command.analysis, kind: 'series', x: [0, 1], xLabel: 'Frame', yLabel: 'Radius of gyration (Å)', series: [{ label: 'Rg (mass-weighted, 2 atoms)', data: [1, 1.2] }], n_frames: 2, frame_indices: [0, 1], table: { columns: ['Quantity', 'Mean'], rows: [['Rg', 1.1]] } }
     if (command.action === 'rmsd_matrix') return { ok: true, matrix: [[0, 1], [1, 0]], frame_indices: [0, 10], aligned: true, truncated: false }
     if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
@@ -311,6 +312,16 @@ async function registryChecks () {
   latestCommand = null
   await click('btn-run-extcustom')
   assert.equal(latestCommand, null); assert.match(el('status-msg').textContent, /MONET atom 999/); checks++
+  // A plugin failure is shown in the panel: the reason, the plugin file and the folded traceback.
+  el('extcustom-p-indices').value = two.map(a => a.monetId).join(' '); el('extcustom-p-mass_weighted').checked = false
+  await click('btn-run-extcustom')
+  assert.equal(el('extcustom-error').classList.contains('hidden'), false)
+  assert.match(el('extcustom-error').textContent, /Radius of gyration failed: AttributeError: module 'monet_analysis' has no attribute 'missing'/)
+  assert.match(el('extcustom-error').textContent, /plugin plugins\/radius_of_gyration\.py/); assert.ok(el('extcustom-error').querySelector('details pre').textContent.startsWith('Traceback'))
+  assert.equal(el('status-msg').textContent, "Radius of gyration failed: AttributeError: module 'monet_analysis' has no attribute 'missing'"); checks++
+  el('extcustom-p-mass_weighted').checked = true
+  await click('btn-run-extcustom')
+  assert.equal(el('extcustom-error').classList.contains('hidden'), true); checks++
   await click('clear-extcustom')
   assert.equal(w.testMonet.charts.extcustom.data, null); assert.equal(el('extcustom-table').textContent, ''); checks++
   // The ASE module lists its own plugins; a choice parameter becomes a menu.
