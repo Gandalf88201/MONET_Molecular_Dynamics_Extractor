@@ -327,6 +327,10 @@ With [MDAnalysis](https://www.mdanalysis.org/) installed (included in `requireme
 - **atoms**: every atom is moved into the cell;
 - **centre on selected atoms**: optionally, the atoms picked in the viewer are first moved to the cell centre. Every plot has **Download plot PNG** (2400 px wide, current theme) and **Download data CSV**.
 
+### AI assistants (MCP server)
+
+`monet_mcp.py` connects MONET to AI assistants that speak the Model Context Protocol (Claude Desktop, Claude Code, Gemini CLI). The assistant can open trajectories, list and run every analysis (MONET's own, MDAnalysis and plugins), select atoms and write derived trajectories, and you ask in plain language. It runs on your computer, on files, without the MONET window; it reads only the folders you allow (`--data`) and writes only into `--output`. Install the optional SDK with `.venv/bin/python -m pip install "mcp>=1.2"` and follow [docs/mcp.md](docs/mcp.md) for the client configuration.
+
 ### Analysis history, console and replay
 
 MONET keeps a text log of every step that changes a result. The log contains:
@@ -468,6 +472,7 @@ Activate the Python environment before launching Electron: extraction, ASE and M
 | `viewer.js`, `plot.js`, `xyz.js`, `pbc.js`, `fit.js`, `units.js`, `ase-model.js` | 3D viewer, charts, XYZ parser and numeric helpers |
 | `qm-*.js`, `monet_qm.py` | QM input generation (JavaScript and Python, kept in parity by tests) |
 | `provenance.js`, `console.js`, `report.js`, `replaygen.js`, `monet_replay.py` | analysis history, console, methods report and `replay.py` |
+| `monet_mcp.py` | MCP server for AI assistants (see `docs/mcp.md`) |
 | `browser-bridge.js`, `preload.js`, `main.js`, `bridge-worker.js` | browser and desktop bridges to Python |
 | `start_monet.py` | launcher: local server, sessions and the pool of Python workers |
 | `ase_bridge.py` | Python worker: one JSON command per line (`--serve`) |
