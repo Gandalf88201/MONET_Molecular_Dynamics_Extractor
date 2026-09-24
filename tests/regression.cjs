@@ -178,6 +178,8 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     const potcarText = fs.readFileSync(path.join(temp, 'desktop-potcar/2-SAMPLED_CONFIGURATIONS/conf1/vasp/POTCAR'), 'utf8')
     assert.match(potcarText, /PAW_PBE O[\s\S]*PAW_PBE H/); checks++
   }
+  // The desktop app extracts with the Python engine, like the launcher: portable Gaussian inputs (relative %chk).
+  assert.match(fs.readFileSync(path.join(temp, 'desktop/2-SAMPLED_CONFIGURATIONS/conf1/sing.dat'), 'utf8'), /^%nproc=6\n%chk=s0\.chk\n/); checks++
   const extracted = fs.readFileSync(path.join(temp, 'desktop/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz'), 'utf8')
   assert.equal(parse(extracted).configCount, 2); assert.equal(parse(extracted).atomCount, 2); checks++
   // Python's standard ZIP reader verifies CRCs and output numerics independently.

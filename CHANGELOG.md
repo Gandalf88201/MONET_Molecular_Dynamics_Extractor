@@ -26,6 +26,7 @@
   - session files are deleted as soon as nothing uses them: released trajectories, derived copies (unwrapped, aligned, uncorrelated) once their download is gone, and job folders that produced nothing. Only the 40 newest downloads are kept.
   - the job limit is checked before a calculation starts, so a refused request no longer starts Python.
   - download links no longer contain the session token; the random download ID is the permission for that file.
+- Desktop app (Electron): extraction now runs on the Python engine of the launcher (`monet_io.extract`) instead of a separate JavaScript copy, and ASE/MDAnalysis calls use the same persistent workers (`bridge-worker.js`). Gaussian inputs written by the desktop app use `%chk=s0.chk` like the other engines (they had an absolute local path). Electron is updated from 28 to 44. The desktop app needs Python 3 with numpy on PATH for extraction.
 - Fix: *Remove drift* in MSD / Diffusion subtracted the centre of the selected atoms, so a single atom, ion or molecule lost the diffusion the MSD measures (MSD and D close to zero). It now subtracts the centre-of-mass motion of the whole system, with minimum-image steps across periodic boundaries. MSD and D computed earlier for small selections with this option on should be recomputed.
 
 ## 2.2.0 (2026-09-23)

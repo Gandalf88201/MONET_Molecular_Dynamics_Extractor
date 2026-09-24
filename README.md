@@ -394,10 +394,10 @@ The Python engine indexes frame offsets once (numpy, cached in the system temp d
 | Task | Before | Now |
 | --- | --- | --- |
 | Indexing / analysing the file | 3.0 s | 0.2 s (Python) · 1.7 s (desktop) |
-| Extraction | 11.8 s + 3.0 s re-analysis | 2.8 s (Python) · 3.1 s (desktop) |
+| Extraction | 11.8 s + 3.0 s re-analysis | 2.8 s (Python engine, launcher and desktop) |
 | Bond-length series (2 pairs) | 7.6 s | 3.8 s |
 
-The desktop app streams the extraction in a single pass with back-pressure, so memory use does not grow with the trajectory length.
+The extraction streams the trajectory in a single pass, so memory use does not grow with the trajectory length. Calculations run on persistent Python workers: the libraries and the trajectory index stay loaded between requests, so only the first request after start-up waits for the imports (about 0.5 s); later frame reads take about 1 ms.
 
 ## Input formats
 
@@ -450,7 +450,7 @@ npm install
 npm start
 ```
 
-Activate the Python environment before launching Electron so its Python bridge can find ASE. Desktop mode uses native dialogs and writes results to the selected directory. It is meant for development: no packaged desktop installers are distributed, because the analyses need a Python environment anyway.
+Activate the Python environment before launching Electron: extraction, ASE and MDAnalysis run on the same Python engine as the launcher (persistent workers from `bridge-worker.js`), so `python3` with numpy, ASE and MDAnalysis must be on PATH. Desktop mode uses native dialogs and writes results to the selected directory. No packaged desktop installers are distributed, because the analyses need a Python environment anyway.
 
 ## Changes
 
