@@ -212,6 +212,14 @@ function resizeCanvas () {
   else viewer.render()
 }
 
+// Without a trajectory the 3D view shows only "Load a trajectory file to begin": the title,
+// style menu and hints appear with the first frame. The canvas is resized to the new space.
+function setViewerEmpty (empty) {
+  $('viewer-overlay').classList.toggle('hidden', !empty)
+  $('viewer-header').classList.toggle('hidden', empty)
+  resizeCanvas()
+}
+
 window.addEventListener('resize', resizeCanvas)
 
 viewer.onSelectionChange = ids => {

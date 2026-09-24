@@ -302,14 +302,17 @@
     <div class="vtab-content active" id="vtab-content-view3d">
       <!-- Filled from the "custom" sub-tabs by app-analysis.js -->
       <div class="ase-subtabbar" id="monet-subtabbar" role="tablist" aria-label="MONET Custom Functionalities"></div>
-      <div class="viewer-header">
+      <!-- Hidden until a trajectory is loaded (setViewerEmpty in app-core.js). -->
+      <div class="viewer-header hidden" id="viewer-header">
         <span id="viewer-title">3D Molecular Viewer</span>
         <label class="view-style">Style <select class="field-input field-input-sm view-style-select" id="view-style"></select></label>
         <span class="viewer-hint">Drag to rotate · Right-drag or Shift-drag to move · Scroll to zoom · Click atom to select · Right-click for selection options</span>
       </div>
-      <canvas id="mol-canvas"></canvas>
-      <div class="viewer-overlay" id="viewer-overlay">
-        <div class="overlay-msg">Load a trajectory file to begin</div>
+      <div class="viewer-stage">
+        <canvas id="mol-canvas"></canvas>
+        <div class="viewer-overlay" id="viewer-overlay">
+          <div class="overlay-msg">Load a trajectory file to begin</div>
+        </div>
       </div>
     </div>
 
