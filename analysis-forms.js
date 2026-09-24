@@ -133,6 +133,7 @@
     const bar = doc.querySelector('#vtab-content-ase .ase-subtabbar')
     const tab = doc.createElement('button')
     tab.className = 'ase-stab registry-empty'
+    tab.setAttribute('role', 'tab')
     tab.dataset.group = group
     tab.dataset.stab = kind
     tab.textContent = title

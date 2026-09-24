@@ -34,6 +34,13 @@
   - the job limit is checked before a calculation starts, so a refused request no longer starts Python.
   - download links no longer contain the session token; the random download ID is the permission for that file.
 - Desktop app (Electron): extraction now runs on the Python engine of the launcher (`monet_io.extract`) instead of a separate JavaScript copy, and ASE/MDAnalysis calls use the same persistent workers (`bridge-worker.js`). Gaussian inputs written by the desktop app use `%chk=s0.chk` like the other engines (they had an absolute local path). Electron is updated from 28 to 44. The desktop app needs Python 3 with numpy on PATH for extraction.
+- Fixes and hardening:
+  - the trajectory index cache moved from the shared temp folder to a per-user folder (`~/.cache/monet/index`, or `$MONET_CACHE_DIR`); cache files with unexpected content are ignored, and index files unused for 30 days are deleted.
+  - element guessing for topologies without elements: atom names of standard residues (amino acids, nucleotides, water) use their first letter, so `CA` is a carbon, not calcium (`HG`, `NE`, `CD` likewise).
+  - the aligned trajectory (MDAnalysis › Align) no longer breaks its extended-XYZ comment line when the selection contains double quotes.
+  - *RMSD Matrix* no longer reports "truncated" when the trajectory has exactly the maximum number of frames.
+  - module tabs and sub-tabs are announced as tabs to screen readers, with the selected one marked (`aria-selected`).
+  - a test checks that the version is the same in `CITATION.cff`, `package.json`, the title bar and the changelog.
 - Fix: *Remove drift* in MSD / Diffusion subtracted the centre of the selected atoms, so a single atom, ion or molecule lost the diffusion the MSD measures (MSD and D close to zero). It now subtracts the centre-of-mass motion of the whole system, with minimum-image steps across periodic boundaries. MSD and D computed earlier for small selections with this option on should be recomputed.
 
 ## 2.2.0 (2026-09-23)

@@ -393,7 +393,7 @@ Large systems stay responsive: bonds are found with a spatial grid (linear in th
 
 ### Performance
 
-The Python engine indexes frame offsets once (numpy, cached in the system temp directory under `monet-index`) and then parses only the requested frames/atoms. Measured on a 66 MB trajectory (5000 frames × 292 atoms, 73 atoms selected, every 10th frame sampled, average and Gaussian inputs on):
+The Python engine indexes frame offsets once (numpy, cached per user in `~/.cache/monet/index`, or `$MONET_CACHE_DIR`; index files unused for 30 days are deleted) and then parses only the requested frames/atoms. Measured on a 66 MB trajectory (5000 frames × 292 atoms, 73 atoms selected, every 10th frame sampled, average and Gaussian inputs on):
 
 | Task | Before | Now |
 | --- | --- | --- |

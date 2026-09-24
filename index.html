@@ -288,20 +288,20 @@
   <main class="viewer-area">
 
     <!-- Tab bar -->
-    <div class="viewer-tabbar">
+    <div class="viewer-tabbar" role="tablist" aria-label="Analysis modules">
       <button class="sidebar-toggle" id="sidebar-toggle" title="Hide or show the workflow panel" aria-pressed="false">⇤</button>
-      <button class="vtab" data-vtab="ase" id="vtab-ase" title="Analyses computed with ASE">
+      <button class="vtab" role="tab" data-vtab="ase" id="vtab-ase" title="Analyses computed with ASE">
         ASE
         <span class="ase-tab-badge" id="ase-tab-badge">✓</span>
       </button>
-      <button class="vtab" data-vtab="mda" id="vtab-mda" title="Analyses computed with MDAnalysis">MDAnalysis</button>
-      <button class="vtab active" data-vtab="custom" id="vtab-custom" title="MONET's own tools: 3D viewer and extraction, autocorrelation, RMSD, dynamics">MONET Custom Functionalities</button>
+      <button class="vtab" role="tab" data-vtab="mda" id="vtab-mda" title="Analyses computed with MDAnalysis">MDAnalysis</button>
+      <button class="vtab active" role="tab" data-vtab="custom" id="vtab-custom" title="MONET's own tools: 3D viewer and extraction, autocorrelation, RMSD, dynamics">MONET Custom Functionalities</button>
     </div>
 
     <!-- ── 3D Viewer: first page of MONET Custom Functionalities ── -->
     <div class="vtab-content active" id="vtab-content-view3d">
       <!-- Filled from the "custom" sub-tabs by renderer.js -->
-      <div class="ase-subtabbar" id="monet-subtabbar"></div>
+      <div class="ase-subtabbar" id="monet-subtabbar" role="tablist" aria-label="MONET Custom Functionalities"></div>
       <div class="viewer-header">
         <span id="viewer-title">3D Molecular Viewer</span>
         <label class="view-style">Style <select class="field-input field-input-sm view-style-select" id="view-style"></select></label>
@@ -472,24 +472,24 @@
       </div>
       <!-- ASE sub-tabs -->
       <p class="panel-desc module-intro" id="module-intro"></p>
-      <div class="ase-subtabbar">
-        <button class="ase-stab" data-group="ase" data-stab="structure">Structure</button>
-        <button class="ase-stab" data-group="ase" data-stab="bonds">Bond Lengths</button>
-        <button class="ase-stab" data-group="ase" data-stab="angles">Bond Angles</button>
-        <button class="ase-stab" data-group="ase" data-stab="dihedrals">Dihedral Angles</button>
-        <button class="ase-stab" data-group="ase" data-stab="pdd">Pair Distances</button>
-        <button class="ase-stab" data-group="ase" data-stab="coordination">Coordination</button>
-        <button class="ase-stab" data-group="ase" data-stab="convert">Convert / Wrap</button>
-        <button class="ase-stab" data-group="mda" data-stab="topology">Topology &amp; consistency</button>
-        <button class="ase-stab" data-group="mda" data-stab="mda">Analyses</button>
-        <button class="ase-stab" data-group="custom" data-stab="view3d">3D viewer &amp; extraction</button>
-        <button class="ase-stab active" data-group="custom" data-stab="acf">Autocorrelation</button>
-        <button class="ase-stab" data-group="custom" data-stab="fluct">Fluctuations &amp; trends</button>
-        <button class="ase-stab" data-group="custom" data-stab="rmsd">RMSD (Kabsch)</button>
-        <button class="ase-stab" data-group="custom" data-stab="rmsdmatrix">RMSD Matrix</button>
-        <button class="ase-stab" data-group="custom" data-stab="rdf">RDF</button>
-        <button class="ase-stab" data-group="custom" data-stab="msd">MSD / Diffusion</button>
-        <button class="ase-stab" data-group="custom" data-stab="vdos">VDOS</button>
+      <div class="ase-subtabbar" role="tablist" aria-label="Analyses of the module">
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="structure">Structure</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="bonds">Bond Lengths</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="angles">Bond Angles</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="dihedrals">Dihedral Angles</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="pdd">Pair Distances</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="coordination">Coordination</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="convert">Convert / Wrap</button>
+        <button class="ase-stab" role="tab" data-group="mda" data-stab="topology">Topology &amp; consistency</button>
+        <button class="ase-stab" role="tab" data-group="mda" data-stab="mda">Analyses</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="view3d">3D viewer &amp; extraction</button>
+        <button class="ase-stab active" role="tab" data-group="custom" data-stab="acf">Autocorrelation</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="fluct">Fluctuations &amp; trends</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rmsd">RMSD (Kabsch)</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rmsdmatrix">RMSD Matrix</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rdf">RDF</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="msd">MSD / Diffusion</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="vdos">VDOS</button>
       </div>
 
       <!-- ASE: structure summary -->

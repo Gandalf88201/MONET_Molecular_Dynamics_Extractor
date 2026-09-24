@@ -180,6 +180,12 @@ function showViewerTab (id) {
   if (group) showGroup(group)
   if (id === 'view3d') resizeCanvas()
   else redrawVisibleChart()
+  syncTabAria()
+}
+
+// Screen readers learn the selected module and analysis from aria-selected, set with the active class.
+function syncTabAria () {
+  for (const tab of document.querySelectorAll('[role="tab"]')) tab.setAttribute('aria-selected', String(tab.classList.contains('active')))
 }
 
 function continueToExtraction () {
@@ -1042,6 +1048,7 @@ function selectSubtab (id) {
   btn.classList.add('active')
   $(`ase-sub-${id}`).classList.add('active')
   lastSubtab[btn.dataset.group] = id
+  syncTabAria()
   if (charts[id]?.data) charts[id]._render()
   // The fluctuation colour map belongs to its own tab.
   if (id === 'fluct') drawFluct()
@@ -1062,12 +1069,14 @@ $$('.ase-stab').forEach(btn => {
 $$('.ase-stab[data-group="custom"]').forEach(source => {
   const btn = document.createElement('button')
   btn.className = 'ase-stab-link' + (source.dataset.stab === 'view3d' ? ' active' : '')
+  btn.setAttribute('role', 'tab')
   btn.dataset.stab = source.dataset.stab
   btn.textContent = source.textContent
   btn.hidden = source.classList.contains('registry-empty')
   btn.addEventListener('click', () => source.click())
   $('monet-subtabbar').appendChild(btn)
 })
+syncTabAria()
 // "More analyses" is shown only when plugins are installed for the module.
 function syncMonetSubtabs () {
   for (const btn of $('monet-subtabbar').children) {

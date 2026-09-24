@@ -565,12 +565,16 @@ def action_rmsd_matrix(cmd):
     if not _require_ase(): return
     max_frames = cmd.get('max_frames', 1000)
     prog("Loading frames …", 0)
-    frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'), max_frames=max_frames)
+    # One frame more than the limit tells whether the trajectory really had more frames.
+    frames, positions, cells, pbc = _frame_data(cmd, cmd.get('indices'), max_frames=max_frames + 1)
+    truncated = len(frames) > max_frames
+    frames, positions = frames[:max_frames], positions[:max_frames]
+    cells = cells[:max_frames] if cells is not None else None
     positions, warning = _maybe_unwrap(cmd, positions, cells, pbc)
     matrix = monet_analysis.rmsd_matrix(positions, bool(cmd.get('align', True)), progress=prog)
     prog("Done", 100)
     ok(matrix=np.round(matrix, 6).tolist(), frame_indices=frames, aligned=bool(cmd.get('align', True)),
-       truncated=len(frames) >= max_frames, warning=warning)
+       truncated=truncated, warning=warning)
 
 
 def _element_group(symbols, indices, element):

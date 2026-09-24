@@ -491,6 +491,9 @@ async function run () {
   assert.deepEqual($$('.vtab').map(b => b.dataset.vtab), ['ase', 'mda', 'custom']); checks++
   assert.equal(el('vtab-custom').textContent.trim(), 'MONET Custom Functionalities'); checks++
   assert.ok(el('vtab-ase').classList.contains('active')); assert.ok(el('ase-sub-structure').classList.contains('active')); checks++
+  // Tabs are announced as tabs, with the selected one marked.
+  assert.equal(el('vtab-ase').getAttribute('role'), 'tab'); assert.equal(el('vtab-ase').getAttribute('aria-selected'), 'true'); assert.equal(el('vtab-custom').getAttribute('aria-selected'), 'false'); checks++
+  assert.equal(w.document.querySelector('.ase-stab[data-stab="structure"]').getAttribute('aria-selected'), 'true'); assert.equal(w.document.querySelector('.ase-stab[data-stab="bonds"]').getAttribute('aria-selected'), 'false'); checks++
   assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['structure', 'bonds', 'angles', 'dihedrals', 'pdd', 'coordination', 'convert', 'extase']); checks++
   assert.match(el('module-intro').textContent, /ASE modules/); checks++
   // The MONET tab opens on the 3D view, whose sub-tab row also leads to the custom analyses.

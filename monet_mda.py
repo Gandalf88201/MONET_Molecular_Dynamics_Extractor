@@ -63,6 +63,26 @@ def _clean(value, fallback):
     return text or fallback
 
 
+# Residues whose atom names follow the PDB convention: the element is the first letter of the name
+# (CA is the alpha carbon, HG a hydrogen, NE a nitrogen), never a two-letter element.
+_STANDARD_RESIDUES = {
+    'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR',
+    'TRP', 'TYR', 'VAL', 'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX', 'ASH', 'GLH', 'LYN', 'ACE', 'NME', 'NMA',
+    'A', 'C', 'G', 'T', 'U', 'DA', 'DC', 'DG', 'DT', 'RA', 'RC', 'RG', 'RU', 'HOH', 'WAT', 'SOL', 'TIP3', 'TIP4', 'SPC',
+}
+
+
+def element_from_name(name, resname, valid):
+    """Element guessed from an atom name when the topology has none."""
+    letters = ''.join(ch for ch in str(name) if ch.isalpha())
+    if not letters:
+        return ''
+    if str(resname).strip().upper() in _STANDARD_RESIDUES and letters[0].upper() in 'CHNOSP':
+        return letters[0].upper()
+    two = letters[:2].capitalize()
+    return two if two in valid else letters[:1].upper()
+
+
 def _elements(universe):
     """Element symbols from the topology, guessing them from names/types when absent."""
     from ase.data import chemical_symbols
@@ -82,8 +102,7 @@ def _elements(universe):
     for i, element in enumerate(elements or [''] * len(atoms)):
         symbol = element.strip().capitalize()
         if symbol not in valid:
-            name = ''.join(ch for ch in str(atoms[i].name) if ch.isalpha())
-            symbol = name[:2].capitalize() if name[:2].capitalize() in valid else name[:1].upper()
+            symbol = element_from_name(atoms[i].name, getattr(atoms[i], 'resname', ''), valid)
         if symbol not in valid:
             raise ValueError(f'Cannot determine the element of atom {i + 1} ({atoms[i].name}); use a topology with element information.')
         out.append(symbol)

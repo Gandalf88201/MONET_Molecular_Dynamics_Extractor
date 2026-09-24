@@ -195,6 +195,11 @@ with zipfile.ZipFile(sys.argv[1]) as z:
  assert z.read('1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz').decode().splitlines()[0] == '2'
 `, path.join(temp, 'results.zip')]); checks++
   fs.rmSync(temp, { recursive: true, force: true })
+  // One version everywhere: CITATION.cff (checked against the release tag), package.json, the title bar and the changelog.
+  { const version = fs.readFileSync(path.join(root, 'CITATION.cff'), 'utf8').match(/^version: *(\S+)/m)[1]
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version, version)
+    assert.match(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), new RegExp(`class="titlebar-sub">[^<]*v ${version.replace(/\./g, '\\.')}<`))
+    assert.match(fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'), new RegExp(`^## ${version.replace(/\./g, '\\.')}( |$)`, 'm')); checks++ }
   console.log(`PASS: ${checks} regression checks (XYZ parser, browser adapter, ZIP output, desktop IPC).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 })
