@@ -1012,3 +1012,9 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .pca-components-table td:first-child, .pca-components-table th:first-child { width: 2.5rem; text-align: center; }
 .pca-components-table tr.pca-off td { color: var(--text-dim); }
 .pca-block .info-box .ase-plot-actions { margin-top: 6px; }
+
+/* Failed analysis: the reason in one line, the traceback folded. */
+.analysis-error { border: 1px solid var(--accent); border-left-width: 3px; border-radius: 4px; padding: 8px 10px; font-size: .8rem; color: var(--text); background: color-mix(in srgb, var(--accent) 8%, transparent); overflow-wrap: anywhere; }
+.analysis-error details { margin-top: 6px; }
+.analysis-error summary { cursor: pointer; color: var(--text-dim); }
+.analysis-error pre { margin: 6px 0 0; max-height: 220px; overflow: auto; font-family: var(--mono); font-size: .72rem; white-space: pre-wrap; }

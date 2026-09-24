@@ -18,6 +18,36 @@ DESCRIPTION = ('Mean-square displacement tensor U = ⟨Δr Δrᵀ⟩ (Å²) of e
 PARAMS = [Param.atoms('Atoms (blank = all)')]
 
 
+CHUNK = 2000  # frames per block: long trajectories are aligned without extra copies of all positions
+
+
+def _aligned_deviations(x):
+    """Deviations (F, n, 3) from the average after removing translation and rotation, in the axes of frame 0.
+
+    Kabsch on the chosen atoms, iterated once on the average (as Fluctuations & trends › Atoms).
+    Self-contained, so the plugin also runs on MONET releases that ship an older monet_analysis.
+    """
+    x = x - x.mean(axis=1, keepdims=True)
+    if x.shape[1] >= 3:
+        first = np.eye(3)
+        for _ in range(2):
+            reference = x.mean(axis=0)
+            reference = reference - reference.mean(axis=0)
+            for start in range(0, len(x), CHUNK):
+                block = x[start:start + CHUNK]
+                U, _, Vt = np.linalg.svd(np.einsum('fni,nj->fij', block, reference))
+                d = np.sign(np.linalg.det(np.einsum('fij,fjk->fik', U, Vt)))
+                U[:, :, -1] *= d[:, None]
+                R = np.einsum('fij,fjk->fik', U, Vt)
+                if start == 0:
+                    first = first @ R[0]
+                x[start:start + CHUNK] = np.einsum('fni,fij->fnj', block, R)
+        # One common rotation back to the first frame.
+        x = x @ first.T
+    x -= x.mean(axis=0)
+    return x
+
+
 def _tensors(ctx, p, need_cell=False):
     """Average positions (n, 3), tensors (n, 3, 3), first-frame cell, the atoms and the frame count."""
     import monet_analysis
@@ -27,14 +57,26 @@ def _tensors(ctx, p, need_cell=False):
     positions = np.asarray(data.positions, dtype=float)
     periodic = data.cells is not None and data.pbc is not None and np.any(data.pbc)
     if periodic and (ctx.mic or need_cell):
+        ctx.progress('Unwrapping periodic images …', 20)
         positions, _ = monet_analysis.unwrap(positions, data.cells, data.pbc)
-    ctx.progress('Displacement tensors …', 50)
-    _, _, deviation = monet_analysis.atomic_fluctuations(positions, align=True)
+    ctx.progress(f'Aligning {len(positions)} frames …', 40)
+    deviation = _aligned_deviations(positions.copy())
     # The aligned trajectory keeps the placement of the first frame: its average is frame 0 minus its deviation.
     mean = positions[0] - deviation[0]
+    ctx.progress('Displacement tensors …', 80)
+    u_cart = np.einsum('fni,fnj->nij', deviation, deviation) / len(deviation)
     chosen = p['indices'] if p['indices'] is not None else list(range(positions.shape[1]))
     cell = None if data.cells is None else np.asarray(data.cells[0], dtype=float)
-    return mean, monet_analysis.displacement_tensors(deviation), cell, chosen, len(data.frames)
+    return mean, u_cart, cell, chosen, len(data.frames)
+
+
+def _crystal_adp(u_cart, cell):
+    """Cartesian tensors → CIF U^ij in the crystal axes: U_cart = A N U N Aᵀ (A: lattice vectors as columns,
+    N = diag(|a*|, |b*|, |c*|)), with `cell` rows = lattice vectors in the axes of u_cart."""
+    A = np.asarray(cell, dtype=float).T
+    N = np.diag(np.linalg.norm(np.linalg.inv(A), axis=1))
+    M = np.linalg.inv(A @ N)
+    return np.einsum('ij,njk,lk->nil', M, u_cart, M)
 
 
 def _summary(u_cart, chosen, u_file, header):
@@ -54,7 +96,8 @@ def _summary(u_cart, chosen, u_file, header):
 
 
 def _labels(ctx, chosen, symbols):
-    ids = ctx.atom_ids
+    # ctx.atom_ids exists from MONET 2.3.2; older releases number the atoms of the file from 1.
+    ids = getattr(ctx, 'atom_ids', None) or list(range(1, len(symbols) + 1))
     return [f'{symbols[i]}{ids[i]}' for i in chosen], [ids[i] for i in chosen]
 
 
@@ -92,11 +135,10 @@ def displacement_ellipsoids(ctx, p):
                                     'axes (IUCr convention), space group P1. Needs a crystal cell.',
           category='Displacement', params=PARAMS, output={'suffix': '-adp.cif'})
 def displacement_ellipsoids_cif(ctx, p):
-    import monet_analysis
     mean, u_cart, cell, chosen, n_frames = _tensors(ctx, p, need_cell=True)
     if cell is None or abs(np.linalg.det(cell)) < 1e-9:
         raise ValueError('The CIF export needs a complete crystal cell: set it under Crystal cell and periodic boundaries.')
-    u_cif = monet_analysis.crystal_adp(u_cart, cell)
+    u_cif = _crystal_adp(u_cart, cell)
     symbols = ctx.symbols
     labels, _ = _labels(ctx, chosen, symbols)
     lengths = np.linalg.norm(cell, axis=1)
