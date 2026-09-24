@@ -49,6 +49,9 @@ let frameCount = 2
 const framesCommands = []
 const topologyCommands = []
 let topologyBreak = false
+// The page scripts (app-*.js, index.html order) in one eval, so that the test can reach their shared state.
+const appScript = () => [...fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/<script src="(app-[^"]+)"><\/script>/g)]
+  .map(match => fs.readFileSync(path.join(root, match[1]), 'utf8')).join('\n')
 // Registered analyses as the Python side lists them (monet_registry.py: MDAnalysis and the example plugins).
 const REGISTRY = JSON.parse(require('node:child_process').execFileSync(process.env.PYTHON || 'python3', [path.join(root, 'ase_bridge.py')], { input: '{"action": "list_analyses"}', encoding: 'utf8' }).trim().split('\n').pop())
 w.monet = {
@@ -140,7 +143,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'app']) w.eval((file === 'app' ? appScript() : fs.readFileSync(path.join(root, file), 'utf8')) + (file === 'app' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -893,7 +896,7 @@ async function run () {
   await click('restore-full-trajectory'); await tick()
   assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(el('md-stride').value, '5'); assert.equal(el('inp-freq').value, '13'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
   // Cropping an already-derived trajectory (equilibration crop of the uncorrelated trajectory) must keep the
-  // derived md-stride, not fall back to the full trajectory's (renderer.js activateTrajectory regression).
+  // derived md-stride, not fall back to the full trajectory's (activateTrajectory regression).
   el('acf-plateau-eps').dispatchEvent(new w.Event('change'))
   assert.equal(el('acf-accept').disabled, false); checks++
   await click('acf-accept'); await tick(); await tick()

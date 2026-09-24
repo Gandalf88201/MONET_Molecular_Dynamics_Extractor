@@ -15,7 +15,7 @@ ATOM_KEYS = ('indices', 'groups', 'pairs', 'triplets', 'quads')
 ANALYSES = ('rmsd', 'rmsd_matrix', 'pdd', 'rdf', 'bonds', 'angles', 'dihedrals', 'msd', 'vdos', 'acf',
             'equilibration', 'fluctuations', 'mda_run', 'run_analysis', 'ase_structure', 'ase_coordination')
 DERIVED = {'subsample': 'uncorrelated.extxyz', 'mda_align': 'aligned.extxyz', 'unwrap': 'unwrapped.extxyz', 'wrap': 'wrapped.extxyz'}
-# MONET sends its atom IDs (and the bond cutoff scale) to these actions only, as renderer.js does.
+# MONET sends its atom IDs (and the bond cutoff scale) to these actions only, as the page (app-analysis.js runAse) does.
 NEEDS_IDS = ('mda_', 'topology', 'ase_', 'fluctuations', 'run_analysis')
 
 

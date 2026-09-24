@@ -137,13 +137,16 @@ Object.assign(w.monet, {
     return command.action === 'subsample' ? { ...result, filePath: 'derived/production.extxyz', output: 'production.extxyz', sha256: 'cd'.repeat(32) } : result
   }
 })
-// renderer.js runs in strict mode, so its top-level bindings (monetHistory, renderHistory, …) live
-// in a declarative environment private to this one eval call, not as window properties: a later,
+// The page scripts (app-*.js, index.html order) are evaluated together, in strict mode, so their
+// top-level bindings (monetHistory, renderHistory, …) live in a declarative environment private to
+// this one eval call, not as window properties: a later,
 // separate w.eval('...') cannot see them by name (only what this same call exposes on
 // window.testMonet can be reached from outside). __setRenderHistory/__getRenderHistory below let a
 // later check swap out renderHistory itself, which a plain identifier reference could not reach.
-for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'renderer.js']) {
-  w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, monetHistory, saveHistoryNow, runConsoleLine, __getRenderHistory: () => renderHistory, __setRenderHistory: fn => { renderHistory = fn } };' : ''))
+const appScript = () => [...fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/<script src="(app-[^"]+)"><\/script>/g)]
+  .map(match => fs.readFileSync(path.join(root, match[1]), 'utf8')).join('\n')
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'app']) {
+  w.eval((file === 'app' ? appScript() : fs.readFileSync(path.join(root, file), 'utf8')) + (file === 'app' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, monetHistory, saveHistoryNow, runConsoleLine, __getRenderHistory: () => renderHistory, __setRenderHistory: fn => { renderHistory = fn } };' : ''))
 }
 const el = id => w.document.getElementById(id)
 const tick = () => new Promise(resolve => setImmediate(resolve))

@@ -45,6 +45,7 @@ jobs:
           node tests/history-ui.cjs
           node tests/launcher.cjs
           node tests/registry.cjs
+          node tests/app-load.cjs
 
   lint:
     # Correctness linters: ruff (pyflakes rules, ruff.toml) and ESLint (recommended rules, eslint.config.js).

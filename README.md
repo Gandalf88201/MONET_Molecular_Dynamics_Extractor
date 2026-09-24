@@ -456,6 +456,22 @@ npm start
 
 Activate the Python environment before launching Electron: extraction, ASE and MDAnalysis run on the same Python engine as the launcher (persistent workers from `bridge-worker.js`), so `python3` with numpy, ASE and MDAnalysis must be on PATH. Desktop mode uses native dialogs and writes results to the selected directory. No packaged desktop installers are distributed, because the analyses need a Python environment anyway.
 
+## Source layout
+
+| Files | Role |
+| --- | --- |
+| `index.html`, `styles.css`, `theme.js` | page and themes |
+| `app-core.js` … `app-start.js` | page logic, loaded in order by `index.html`: state and navigation (`app-core`), workflow steps 1–6 (`app-workflow`), analysis workspace, charts and player (`app-analysis`), geometry and dynamics analyses (`app-geometry`), MDAnalysis and registered analyses (`app-mdanalysis`), structure, atom identity and fluctuations (`app-structure`), history, console and sessions (`app-history`), start-up (`app-start`) |
+| `analysis-forms.js` | forms and *More analyses* tabs built from the analysis registry |
+| `viewer.js`, `plot.js`, `xyz.js`, `pbc.js`, `fit.js`, `units.js`, `ase-model.js` | 3D viewer, charts, XYZ parser and numeric helpers |
+| `qm-*.js`, `monet_qm.py` | QM input generation (JavaScript and Python, kept in parity by tests) |
+| `provenance.js`, `console.js`, `report.js`, `replaygen.js`, `monet_replay.py` | analysis history, console, methods report and `replay.py` |
+| `browser-bridge.js`, `preload.js`, `main.js`, `bridge-worker.js` | browser and desktop bridges to Python |
+| `start_monet.py` | launcher: local server, sessions and the pool of Python workers |
+| `ase_bridge.py` | Python worker: one JSON command per line (`--serve`) |
+| `monet_registry.py`, `monet_analyses/`, `plugins/` | analysis registry, built-in MDAnalysis analyses, plugins ([docs/plugins.md](docs/plugins.md)) |
+| `monet_io.py`, `monet_analysis.py`, `monet_mda.py`, `monet_formats.py` | trajectory I/O, analysis numerics, MDAnalysis helpers, format import |
+
 ## Changes
 
 See [CHANGELOG.md](CHANGELOG.md).
