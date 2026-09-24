@@ -295,6 +295,8 @@
     onAseProgress: callback => { aseProgress.add(callback); return () => aseProgress.delete(callback) },
     aseCheck: () => request('/api/check', {}),
     listFormats: () => request('/api/formats', {}),
+    // Registered analyses (monet_registry.py) with their parameters.
+    listAnalyses: async () => server ? job({ action: 'list_analyses' }, 'ase', () => {}) : { ok: false, error: desktopOnly },
     aseSelectOutput: async name => name.split(/[\\/]/).pop(),
     aseRun: async command => {
       try {

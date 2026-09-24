@@ -26,6 +26,11 @@ const state = {
   }
 }
 
+// Registered analyses (monet_registry.py) outside the MDAnalysis tab: plugins of the ASE and MONET
+// Custom engines get a "More analyses" sub-tab, built before the sub-tabs are wired up.
+const REGISTRY_PANELS = { extase: 'ase', extcustom: 'custom' }
+for (const [kind, engine] of Object.entries(REGISTRY_PANELS)) MonetAnalysisForms.mountPanel(document, { kind, group: engine, title: 'More analyses' })
+
 // =============================================================================
 // ── Analysis history (provenance.js) ─────────────────────────────────────────
 // =============================================================================
@@ -1057,10 +1062,18 @@ $$('.ase-stab').forEach(btn => {
 $$('.ase-stab[data-group="custom"]').forEach(source => {
   const btn = document.createElement('button')
   btn.className = 'ase-stab-link' + (source.dataset.stab === 'view3d' ? ' active' : '')
+  btn.dataset.stab = source.dataset.stab
   btn.textContent = source.textContent
+  btn.hidden = source.classList.contains('registry-empty')
   btn.addEventListener('click', () => source.click())
   $('monet-subtabbar').appendChild(btn)
 })
+// "More analyses" is shown only when plugins are installed for the module.
+function syncMonetSubtabs () {
+  for (const btn of $('monet-subtabbar').children) {
+    btn.hidden = Boolean(document.querySelector(`.ase-stab[data-stab="${btn.dataset.stab}"]`)?.classList.contains('registry-empty'))
+  }
+}
 
 // =============================================================================
 // ── LineChart — canvas-based scientific line chart ───────────────────────────
@@ -1269,7 +1282,7 @@ var player = {
   cache: new Map(), cells: new Map(), raw: null, tree: null, treeKey: null, loading: null
 }
 const PLAYER_BUDGET = 3e7 // cached coordinates (numbers) kept in memory
-const CURSOR_KINDS = ['rmsd', 'bonds', 'angles', 'dihedrals', 'mda', 'coordination', 'fluctseries']
+const CURSOR_KINDS = ['rmsd', 'bonds', 'angles', 'dihedrals', 'mda', 'coordination', 'fluctseries', ...Object.keys(REGISTRY_PANELS)]
 
 function playerCount () {
   if (state.lastResult?.success) return state.lastResult.totalFrames || state.fileInfo?.configCount || 0
@@ -1641,9 +1654,13 @@ const charts = {
   fluct: new MonetLineChart('chart-fluct', 'chart-fluct-ph'),
   fluctseries: new MonetLineChart('chart-fluctseries', 'chart-fluctseries-ph'),
 }
+for (const kind of Object.keys(REGISTRY_PANELS)) {
+  charts[kind] = new MonetLineChart(`chart-${kind}`, `chart-${kind}-ph`)
+  charts[`${kind}matrix`] = new MonetHeatmapChart(`chart-${kind}matrix`, `chart-${kind}matrix-ph`)
+}
 bindPlayerCharts()
 for (const [kind, chart] of Object.entries(charts)) if (chart.enableZoom && !kind.endsWith('dist')) chart.enableZoom()
-const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf', 'equil', 'mda', 'structure', 'coordination', 'topology', 'fluct']
+const RUN_KINDS = ['rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'acf', 'equil', 'mda', 'structure', 'coordination', 'topology', 'fluct', ...Object.keys(REGISTRY_PANELS)]
 const lastResults = {}
 
 // Wire up ASE progress listener (once)
@@ -1730,7 +1747,8 @@ function updateAseControls () {
     $(`btn-run-${kind}`).disabled = !aseState.available || aseState.busy
   }
   $('btn-unwrap').disabled = !aseState.available || aseState.busy || !extractedTrajPath()
-  $('btn-run-mda').disabled ||= !aseState.mdanalysis
+  $('btn-run-mda').disabled ||= !aseState.mdanalysis || !registrySpec($('mda-analysis').value)?.available
+  for (const kind of Object.keys(REGISTRY_PANELS)) $(`btn-run-${kind}`).disabled ||= !registrySpec($(`${kind}-analysis`).value)?.available
   $('clear-structure').disabled = !$('structure-result').childElementCount
   $('mda-pick').disabled = !aseState.available || aseState.busy || !aseState.mdanalysis || !aseState.analysisAtoms.length
   updateConvBtn()
@@ -1760,7 +1778,7 @@ async function checkAseStatus () {
   $('mda-availability').textContent = aseState.mdanalysis
     ? `MDAnalysis ${aseState.mdanalysis} on the active trajectory, with the MONET atom IDs as MDAnalysis ids.`
     : 'MDAnalysis is not installed in the launcher Python (python -m pip install MDAnalysis); these analyses and XTC/TRR/DCD import are unavailable.'
-  updateMdaForm()
+  await loadRegistry()
   if (aseState.available && window.monet.listFormats) loadFormatList()
   $('ase-dot').className = `ase-dot ${aseState.available ? 'dot-ok' : 'dot-err'}`
   $('ase-badge-text').textContent = aseState.available ? `ASE ${r.ase_version}${aseState.mdanalysis ? ` · MDA ${aseState.mdanalysis}` : ''}` : 'ASE unavailable'
@@ -1797,12 +1815,13 @@ function clearAnalysis (kind, report = true) {
   if (kind === 'acfblock') $('acfblock-text').classList.add('hidden')
   if (kind === 'equil') $('equil-result').classList.add('hidden')
   if (charts[`${kind}dist`]) clearAnalysis(`${kind}dist`, false)
-  for (const id of { msd: ['msd-info'], vdos: ['vdos-info'], mda: ['mda-download', 'mda-activate'] }[kind] || []) $(id).classList.add('hidden')
-  if (kind === 'mda') {
-    $('mda-table').replaceChildren()
-    resetPca()
-    clearAnalysis('mdamatrix', false)
-    $('mda-matrix-block').classList.add('hidden')
+  for (const id of { msd: ['msd-info'], vdos: ['vdos-info'] }[kind] || []) $(id).classList.add('hidden')
+  if (kind === 'mda' || REGISTRY_PANELS[kind]) {
+    for (const id of [`${kind}-download`, `${kind}-activate`]) $(id).classList.add('hidden')
+    $(`${kind}-table`).replaceChildren()
+    if (kind === 'mda') resetPca()
+    clearAnalysis(`${kind}matrix`, false)
+    $(`${kind}-matrix-block`).classList.add('hidden')
   }
   if (kind === 'fluct') {
     fluct = null
@@ -2010,7 +2029,7 @@ async function runAse (kind, command) {
   if (kind === 'conv' && $('conv-apply-cell').checked && !aseState.cellParameters) return { ok: false, error: 'Apply a manual crystal cell first.' }
   const options = kind !== 'conv' || $('conv-apply-cell').checked ? cellOptions() : {}
   command = { ...command, ...options }
-  if (/^(mda_|topology$|ase_|fluctuations$)/.test(command.action || '')) {
+  if (/^(mda_|topology$|ase_|fluctuations$|run_analysis$)/.test(command.action || '')) {
     // Atom i of the analysed file is MONET ID atom_ids[i]: MDAnalysis gets the same numbering.
     const ids = []
     for (const atom of mapping) ids[atom.aseIndex] = atom.monetId
@@ -2483,7 +2502,7 @@ function matrixStyle (prefix, data) {
   const base = data.defaultTitle ?? data.title
   return { ...data, defaultTitle: base, title: $(`${prefix}-title`).value.trim() || base, colormap: $(`${prefix}-colormap`).value, origin: $(`${prefix}-origin`).value }
 }
-for (const [prefix, kind] of [['rmsdmatrix', 'rmsdmatrix'], ['mdamatrix', 'mdamatrix']]) {
+for (const [prefix, kind] of [['rmsdmatrix', 'rmsdmatrix'], ['mdamatrix', 'mdamatrix'], ...Object.keys(REGISTRY_PANELS).map(k => [`${k}matrix`, `${k}matrix`])]) {
   for (const id of ['colormap', 'origin', 'title']) {
     $(`${prefix}-${id}`).addEventListener('input', () => {
       if (charts[kind].data) charts[kind].setData(matrixStyle(prefix, charts[kind].data))
@@ -3133,125 +3152,63 @@ $('mda-pick').addEventListener('click', async () => {
   setStatus(`Selected ${r.n_atoms} atoms with "${selection}".`)
 })
 
-// Fields of each MDAnalysis analysis: [param, label, type, default, options].
-// type: sel (selection with "← picked"), text, number, check, select, quads (groups of four MONET IDs)
-const MDA_SPECS = {
-  rmsd: { text: 'rms.RMSD: RMSD of the fit selection after optimal superposition on the first analysed frame; extra groups are measured after the same fit.',
-    fields: [['selection', 'Fit selection', 'sel', 'all'], ['groups', 'Extra groups (one selection per line)', 'lines', '']] },
-  rmsd_matrix: { text: 'diffusionmap.DistanceMatrix: RMSD between every pair of analysed frames, after optimal superposition of each pair (rms.rmsd). Use the frame step or the uncorrelated trajectory to compare independent configurations; long runs are thinned to the maximum number of frames.',
-    fields: [['selection', 'Selection', 'sel', 'all'], ['superposition', 'Superimpose each pair (remove rotation and translation)', 'check', true], ['max_frames', 'Maximum frames', 'number', 500]] },
-  rmsf: { text: 'rms.RMSF: fluctuation of every selected atom around its average position.',
-    fields: [['selection', 'Selection', 'sel', 'all'], ['align', 'Align on the selection first', 'check', true]] },
-  rgyr: { text: 'Mass-weighted radius of gyration of the selection in every frame.', fields: [['selection', 'Selection', 'sel', 'all']] },
-  pca: { text: 'pca.PCA: principal components of the selected coordinates; projections of up to 10 components along the trajectory (tick them in the list), their distribution, and the configurations picked on them, written as a trajectory for the extraction.',
-    fields: [['selection', 'Selection', 'sel', 'all'], ['align', 'Align on the selection first', 'check', true], ['n_components', 'Components plotted at first (1–10)', 'number', 3]] },
-  msd: { text: 'msd.EinsteinMSD: windowed mean-squared displacement (set the time axis for a lag in fs). Use an unwrapped trajectory for periodic runs.',
-    fields: [['selection', 'Selection', 'sel', 'all'], ['msd_type', 'Dimensions', 'select', 'xyz', ['xyz', 'xy', 'yz', 'xz', 'x', 'y', 'z']]] },
-  gnm: { text: 'gnm.GNMAnalysis: lowest non-zero eigenvalue of the Kirchhoff matrix in every frame.',
-    fields: [['selection', 'Selection', 'sel', 'all'], ['cutoff', 'Cutoff (Å)', 'number', 7]] },
-  diffusionmap: { text: 'diffusionmap.DiffusionMap: eigenvalues of the frame-to-frame RMSD diffusion kernel (at most 1500 frames).',
-    fields: [['selection', 'Selection', 'sel', 'all'], ['epsilon', 'Kernel width ε (Å²)', 'number', 1]] },
-  align: { text: 'align.AlignTraj: superimpose every frame on the first one and write the aligned trajectory (same atoms, same MONET IDs).',
-    fields: [['selection', 'Fit selection', 'sel', 'all']] },
-  hbonds: { text: 'HydrogenBondAnalysis: donor–hydrogen···acceptor triplets by distance and angle; count per frame and occupancy table (MONET IDs).',
-    fields: [['donors', 'Donors', 'sel', 'element O N F'], ['hydrogens', 'Hydrogens', 'sel', 'element H'], ['acceptors', 'Acceptors', 'sel', 'element O N F'],
-      ['d_a_cutoff', 'D–A cutoff (Å)', 'number', 3], ['angle', 'D–H–A minimum angle (°)', 'number', 150]] },
-  contacts: { text: 'contacts.Contacts: fraction of the native contacts of the first frame kept along the trajectory.',
-    fields: [['group_a', 'Group A', 'sel', 'all'], ['group_b', 'Group B', 'sel', 'all'], ['radius', 'Contact radius (Å)', 'number', 4.5],
-      ['method', 'Method', 'select', 'hard_cut', ['hard_cut', 'soft_cut', 'radius_cut']]] },
-  interrdf: { text: 'rdf.InterRDF: radial distribution function between two groups with minimum-image distances (needs a cell).',
-    fields: [['group_a', 'Group A', 'sel', 'element O'], ['group_b', 'Group B', 'sel', 'element O'], ['rmax', 'r max (Å)', 'number', 8],
-      ['nbins', 'Bins', 'number', 150], ['exclude_same', 'Exclude pairs within the same', 'select', 'none', ['none', 'atom', 'residue']]] },
-  com_distance: { text: 'Distance between the centres of mass of two groups (minimum image when a cell is set).',
-    fields: [['group_a', 'Group A', 'sel', 'resid 1'], ['group_b', 'Group B', 'sel', 'resid 2']] },
-  min_distance: { text: 'Shortest distance between any atom of group A and any atom of group B (minimum image when a cell is set).',
-    fields: [['group_a', 'Group A', 'sel', 'resid 1'], ['group_b', 'Group B', 'sel', 'not resid 1']] },
-  atomic_distances: { text: 'atomicdistances.AtomicDistances: atom k of group A with atom k of group B (same size; the first 12 pairs are plotted).',
-    fields: [['group_a', 'Group A', 'sel', 'id 1'], ['group_b', 'Group B', 'sel', 'id 2']] },
-  dihedral_mda: { text: 'dihedrals.Dihedral: torsions of groups of four atoms with the IUPAC sign convention (−180…180°; the ASE tab uses 0–360°).',
-    fields: [['quads', 'Groups of four MONET IDs', 'quads', '']] },
-  lineardensity: { text: 'lineardensity.LinearDensity: mass-density profile along the cell axes, averaged over the analysed frames (needs a cell).',
-    fields: [['selection', 'Selection', 'sel', 'all'], ['grouping', 'Grouping', 'select', 'atoms', ['atoms', 'residues', 'segments', 'fragments']],
-      ['binsize', 'Bin size (Å)', 'number', 0.25], ['axes', 'Axes', 'select', 'xyz', ['xyz', 'x', 'y', 'z']]] },
-  density: { text: 'density.DensityAnalysis: 3D number-density grid of the selection, written as OpenDX for VMD, PyMOL or Chimera.',
-    fields: [['selection', 'Selection', 'sel', 'element O'], ['delta', 'Grid spacing (Å)', 'number', 1]] },
-  ramachandran: { text: 'dihedrals.Ramachandran: backbone φ/ψ of protein residues (needs a topology with standard atom names, e.g. PDB).',
-    fields: [['selection', 'Protein selection', 'sel', 'protein']] },
-  dssp: { text: 'dssp.DSSP: fraction of helix, strand and loop residues per frame (protein topology with backbone N, CA, C, O).', fields: [] }
+// ── Registered analyses (monet_registry.py): MDAnalysis tab and "More analyses" ──
+// Forms, menus and plots come from the list the Python side sends (list_analyses), so an analysis
+// or plugin added in Python appears here without any change to this file.
+aseState.analyses = []
+aseState.analysisErrors = []
+
+function registrySpec (id) { return aseState.analyses.find(entry => entry.id === id) || null }
+
+async function loadRegistry () {
+  let r = null
+  if (aseState.available && window.monet.listAnalyses) {
+    try { r = await window.monet.listAnalyses() } catch (error) { r = { ok: false, error: error.message } }
+  }
+  aseState.analyses = r?.ok ? r.analyses : []
+  aseState.analysisErrors = r?.ok ? r.errors : []
+  MonetAnalysisForms.fillSelect($('mda-analysis'), aseState.analyses.filter(entry => entry.engine === 'mdanalysis'))
+  updateMdaForm()
+  const failed = aseState.analysisErrors.map(e => `${e.source}: ${e.error}`)
+  for (const [kind, engine] of Object.entries(REGISTRY_PANELS)) {
+    const entries = aseState.analyses.filter(entry => entry.engine === engine)
+    MonetAnalysisForms.fillSelect($(`${kind}-analysis`), entries)
+    document.querySelector(`.ase-stab[data-stab="${kind}"]`).classList.toggle('registry-empty', !entries.length)
+    $(`${kind}-availability`).textContent = (entries.length
+      ? `${entries.length} analys${entries.length === 1 ? 'is' : 'es'} added as plugins. Put your own in the plugins folder of MONET or in ~/.monet/plugins (see docs/plugins.md), then restart the launcher.`
+      : 'No plugin analyses for this module.') + (failed.length ? ` Plugins that could not be loaded: ${failed.join('; ')}` : '')
+    updateRegistryForm(kind)
+  }
+  syncMonetSubtabs()
+}
+
+function buildRegistryForm (prefix, spec) {
+  MonetAnalysisForms.build($(`${prefix}-fields`), spec, {
+    prefix, picked: () => aseState.pickedIds, onMissingPick: () => setStatus('Select atoms in the viewer first.')
+  })
+  $(`${prefix}-description`).textContent = MonetAnalysisForms.describe(spec)
+}
+
+function readRegistryForm (prefix) {
+  return MonetAnalysisForms.read($(`${prefix}-fields`), {
+    indices: text => MonetASEModel.selectedIndices(text, aseState.analysisAtoms),
+    groups: (text, width) => MonetASEModel.groupsFromIds(text, width, aseState.analysisAtoms)
+  })
 }
 
 function updateMdaForm () {
-  const spec = MDA_SPECS[$('mda-analysis').value]
-  $('mda-description').textContent = spec.text
-  const box = $('mda-fields')
-  box.replaceChildren()
-  for (const [param, label, type, value, options] of spec.fields) {
-    const wrap = document.createElement('label')
-    wrap.textContent = label
-    let input
-    if (type === 'select') {
-      input = document.createElement('select')
-      for (const option of options) input.add(new Option(option, option))
-    } else if (type === 'lines') {
-      input = document.createElement('textarea')
-      input.rows = 2
-    } else {
-      input = document.createElement('input')
-      input.type = type === 'number' ? 'number' : type === 'check' ? 'checkbox' : 'text'
-      if (type === 'number') input.step = 'any'
-    }
-    input.id = `mda-p-${param}`
-    input.dataset.param = param
-    input.dataset.type = type
-    if (type === 'check') {
-      input.checked = value
-      wrap.prepend(input)
-    } else {
-      input.className = 'field-input'
-      input.value = value
-      if (type === 'quads') input.placeholder = 'e.g. 1 2 3 4  5 6 7 8'
-      if (type === 'sel' || type === 'quads') {
-        const row = document.createElement('div')
-        row.className = 'pick-row'
-        const pick = document.createElement('button')
-        pick.type = 'button'
-        pick.className = 'btn btn-sm'
-        pick.textContent = '← picked'
-        pick.title = 'Use the atoms selected in the viewer (MONET IDs)'
-        pick.addEventListener('click', () => {
-          if (!aseState.pickedIds.length) return setStatus('Select atoms in the viewer first.')
-          const ids = aseState.pickedIds.join(' ')
-          input.value = type === 'quads' && input.value.trim() ? `${input.value.trim()}  ${ids}` : type === 'quads' ? ids : `id ${ids}`
-        })
-        row.append(input, pick)
-        wrap.appendChild(row)
-      } else wrap.appendChild(input)
-    }
-    if (type === 'sel' || type === 'lines' || type === 'quads') wrap.classList.add('mda-wide')
-    box.appendChild(wrap)
-  }
+  const spec = registrySpec($('mda-analysis').value)
+  buildRegistryForm('mda', spec)
+  if (!spec) $('mda-description').textContent = aseState.available ? 'MDAnalysis analyses are unavailable.' : 'MDAnalysis analyses need the launcher (python3 start_monet.py).'
   clearAnalysis('mda', false)
+  if (typeof updateAseControls === 'function' && typeof charts !== 'undefined') updateAseControls()
 }
 $('mda-analysis').addEventListener('change', updateMdaForm)
 
-function mdaParams () {
-  const params = {}
-  for (const input of $('mda-fields').querySelectorAll('[data-param]')) {
-    const { param, type } = input.dataset
-    if (type === 'check') params[param] = input.checked
-    else if (type === 'number') {
-      const value = Number(input.value)
-      if (!input.value.trim() || !Number.isFinite(value) || value <= 0) throw new Error(`Enter a positive number for “${input.parentElement.firstChild.textContent}”.`)
-      params[param] = ['nbins', 'max_frames', 'n_components'].includes(param) ? Math.round(value) : value
-    } else if (type === 'lines') params[param] = input.value.split('\n').map(line => line.trim()).filter(Boolean)
-    else if (type === 'quads') {
-      // MONET IDs → positions in the analysed file.
-      params[param] = MonetASEModel.groupsFromIds(input.value, 4, aseState.analysisAtoms)
-    } else if (type === 'select') {
-      if (input.value !== 'none') params[param] = input.value
-    } else params[param] = input.value.trim()
-  }
-  return params
+function updateRegistryForm (kind) {
+  buildRegistryForm(kind, registrySpec($(`${kind}-analysis`).value))
+  clearAnalysis(kind, false)
+  updateAseControls()
 }
 
 // Atom indices (0-based, analysed file) → "MONET ID (element)".
@@ -3292,74 +3249,95 @@ function renderTable (container, table, { title, mapping, mismatch } = {}) {
 let mdaAlignedPath = null
 // The aligned file keeps only every frame_step-th frame: one of its frames spans that many of the active file.
 let mdaAlignedStep = 1
-$('btn-run-mda').addEventListener('click', async () => {
+
+// Command of a registered analysis. The built-in MDAnalysis analyses keep their own actions
+// (mda_run, mda_align) so that saved histories and replay scripts stay valid.
+async function registryCommand (spec, kind) {
   const filename = extractedTrajPath()
-  if (!filename) return setStatus('Load an XYZ file and click Next first.')
-  const analysis = $('mda-analysis').value
-  let params
-  try { params = mdaParams() } catch (error) { return setStatus(error.message) }
-  const command = { filename, frame_step: Number($('mda-step').value) || 1, params }
-  const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
-  if (analysis === 'align' || analysis === 'density') {
-    command.output = await window.monet.aseSelectOutput(analysis === 'align' ? `${stem}-aligned.extxyz` : `${stem}-density.dx`)
-    if (!command.output) return
+  if (!filename) throw new Error('Load an XYZ file and click Next first.')
+  if (!spec) throw new Error('Choose an analysis.')
+  const params = readRegistryForm(kind)
+  const command = { filename, frame_step: Number($(`${kind}-step`).value) || 1, params }
+  if (spec.output) {
+    const stem = filename.split(/[\\/]/).pop().replace(/\.[^.]*$/, '')
+    command.output = await window.monet.aseSelectOutput(`${stem}${spec.output.suffix}`)
+    if (!command.output) return null
   }
-  if (analysis === 'align') command.action = 'mda_align'
-  else {
-    Object.assign(command, { action: 'mda_run', analysis })
-    const axis = timeAxis()
-    if (axis) command.dt = axis.dt
-  }
-  clearAnalysis('mda', false)
-  const r = await runAse('mda', command)
-  if (!r.ok) return setStatus('MDAnalysis error: ' + (r.message || r.error))
-  const link = $('mda-download')
-  if (r.downloadURL) {
-    link.href = r.downloadURL
-    link.download = r.output || command.output.split(/[\\/]/).pop()
-    link.classList.remove('hidden')
-  }
-  if (analysis === 'align') {
-    mdaAlignedPath = r.filePath || command.output
-    mdaAlignedStep = command.frame_step
-    $('mda-activate').classList.remove('hidden')
-    renderTable($('mda-table'), { columns: ['Aligned trajectory', 'Value'], rows: [['Frames', r.n_frames], ['Fit selection', r.selection], ['File', link.download || command.output]] })
-    return setStatus(`Aligned ${r.n_frames} frames on "${r.selection}".`)
-  }
-  mdaAlignedPath = null
-  const spec = $('mda-analysis').selectedOptions[0].textContent
-  const notes = [...(r.notes || []), `${r.n_frames} analysed frames (step ${command.frame_step})`]
+  if (spec.id === 'mdanalysis.align') command.action = 'mda_align'
+  else if (spec.engine === 'mdanalysis' && spec.source === 'built-in') Object.assign(command, { action: 'mda_run', analysis: spec.name })
+  else Object.assign(command, { action: 'run_analysis', analysis: spec.id })
+  const axis = timeAxis()
+  if (axis && command.action !== 'mda_align') command.dt = axis.dt
+  return command
+}
+
+// Plot, map and table of a registered analysis result in the panel of `kind` (mda, extase, extcustom).
+function showRegistryResult (kind, r, { title, step, matrixTitle }) {
+  const notes = [...(r.notes || []), ...(r.n_frames ? [`${r.n_frames} analysed frames (step ${step})`] : [])]
   if (r.kind === 'matrix') {
-    $('mda-matrix-block').classList.remove('hidden')
-    charts.mdamatrix.source = charts.mda.source
-    charts.mdamatrix.setData(matrixStyle('mdamatrix', {
-      title: 'Pairwise RMSD (MDAnalysis)', source: charts.mda.source, xLabel: r.xLabel, yLabel: r.yLabel, colorLabel: r.colorLabel,
+    $(`${kind}-matrix-block`).classList.remove('hidden')
+    charts[`${kind}matrix`].source = charts[kind].source
+    charts[`${kind}matrix`].setData(matrixStyle(`${kind}matrix`, {
+      title: matrixTitle || title, source: charts[kind].source, xLabel: r.xLabel, yLabel: r.yLabel, colorLabel: r.colorLabel,
       labels: r.labels.map(String), matrix: r.matrix, notes: r.notes || []
     }))
-  } else if (r.pca) {
-    lastResults.mda = r
-    showPca(r, { title: spec, notes, filename, step: command.frame_step })
   } else if (r.kind !== 'table') {
     const frames = r.xLabel === 'Frame'
     let labels = frames ? r.x.map(String) : lineLabels(r.x)
     if (r.atoms) labels = r.atoms.map(index => String(r.atomMapping.find(a => a.aseIndex === index)?.monetId ?? index + 1))
-    charts.mda.setData({
-      title: spec, source: charts.mda.source, xLabel: r.xLabel, yLabel: r.yLabel, labels, notes,
+    charts[kind].setData({
+      title, source: charts[kind].source, xLabel: r.xLabel, yLabel: r.yLabel, labels, notes,
       datasets: r.series.map((entry, k) => {
         const stats = frames ? MonetASEModel.seriesStats(entry.data) : null
         return { label: stats ? `${entry.label} · mean ${fmt(stats.mean, 4)} ± ${fmt(stats.std, 3)}` : entry.label, data: entry.data, bars: Boolean(r.bars), colorIndex: k }
       })
     })
-    lastResults.mda = r
   }
-  if (r.table && !r.pca) renderTable($('mda-table'), r.table, { mapping: r.atomMapping, title: r.kind === 'table' ? spec : null })
+  lastResults[kind] = r
+  if (r.table && !r.pca) renderTable($(`${kind}-table`), r.table, { mapping: r.atomMapping, title: r.kind === 'table' ? title : null })
   if (r.kind === 'table' && notes.length) {
     const note = document.createElement('p')
     note.className = 'panel-desc'
     note.textContent = notes.join(' · ')
-    $('mda-table').appendChild(note)
+    $(`${kind}-table`).appendChild(note)
   }
-  setStatus(`MDAnalysis ${analysis} computed.`)
+}
+
+// Download link of a written file; a written trajectory can become the active one.
+function showRegistryOutput (kind, r, command) {
+  const link = $(`${kind}-download`)
+  if (r.downloadURL) {
+    link.href = r.downloadURL
+    link.download = r.output || command.output.split(/[\\/]/).pop()
+    link.classList.remove('hidden')
+  }
+  return r.filePath || command.output
+}
+
+$('btn-run-mda').addEventListener('click', async () => {
+  const spec = registrySpec($('mda-analysis').value)
+  let command
+  try { command = await registryCommand(spec, 'mda') } catch (error) { return setStatus(error.message) }
+  if (!command) return
+  clearAnalysis('mda', false)
+  const r = await runAse('mda', command)
+  if (!r.ok) return setStatus('MDAnalysis error: ' + (r.message || r.error))
+  const written = showRegistryOutput('mda', r, command)
+  if (spec.output?.trajectory) {
+    mdaAlignedPath = written
+    mdaAlignedStep = command.frame_step
+    $('mda-activate').classList.remove('hidden')
+    if (command.action === 'mda_align') {
+      renderTable($('mda-table'), { columns: ['Aligned trajectory', 'Value'], rows: [['Frames', r.n_frames], ['Fit selection', r.selection], ['File', $('mda-download').download || command.output]] })
+      return setStatus(`Aligned ${r.n_frames} frames on "${r.selection}".`)
+    }
+  } else mdaAlignedPath = null
+  const title = $('mda-analysis').selectedOptions[0].textContent
+  if (r.pca) {
+    lastResults.mda = r
+    showPca(r, { title, notes: [...(r.notes || []), `${r.n_frames} analysed frames (step ${command.frame_step})`], filename: command.filename, step: command.frame_step })
+  } else showRegistryResult('mda', r, { title, step: command.frame_step, matrixTitle: spec.id === 'mdanalysis.rmsd_matrix' ? 'Pairwise RMSD (MDAnalysis)' : title })
+  setStatus(`MDAnalysis ${spec.name} computed.`)
 })
 
 $('mda-activate').addEventListener('click', async () => {
@@ -3369,6 +3347,34 @@ $('mda-activate').addEventListener('click', async () => {
     setStatus('MONET now analyses and extracts the aligned trajectory (↩ Full trajectory to go back).')
   } catch (error) { setStatus('The aligned trajectory could not be loaded: ' + error.message) }
 })
+
+// "More analyses" of the ASE and MONET Custom modules: any registered analysis of that engine.
+const registryWritten = {}
+for (const kind of Object.keys(REGISTRY_PANELS)) {
+  $(`${kind}-analysis`).addEventListener('change', () => updateRegistryForm(kind))
+  $(`btn-run-${kind}`).addEventListener('click', async () => {
+    const spec = registrySpec($(`${kind}-analysis`).value)
+    let command
+    try { command = await registryCommand(spec, kind) } catch (error) { return setStatus(error.message) }
+    if (!command) return
+    clearAnalysis(kind, false)
+    const r = await runAse(kind, command)
+    if (!r.ok) return setStatus(`${spec.label}: ${r.message || r.error}`)
+    const written = showRegistryOutput(kind, r, command)
+    registryWritten[kind] = spec.output?.trajectory ? { path: written, step: command.frame_step, label: spec.label } : null
+    $(`${kind}-activate`).classList.toggle('hidden', !registryWritten[kind])
+    showRegistryResult(kind, r, { title: spec.label, step: command.frame_step })
+    setStatus(`${spec.label} computed.`)
+  })
+  $(`${kind}-activate`).addEventListener('click', async () => {
+    const written = registryWritten[kind]
+    if (!written) return
+    try {
+      await activateTrajectory(written.path, { label: written.label, strideFactor: written.step })
+      setStatus(`MONET now analyses and extracts the trajectory written by ${written.label} (↩ Full trajectory to go back).`)
+    } catch (error) { setStatus('The trajectory could not be loaded: ' + error.message) }
+  })
+}
 
 // =============================================================================
 // ── PCA: plotted components, distribution and picked configurations ──────────
@@ -4332,14 +4338,21 @@ function fillAcf (a) {
   setField('acf-range', a.angle_range)
   setField('acf-maxlag', a.max_lag, OPTIONAL)
 }
-function fillMda (a) {
-  if (a.analysis !== undefined) { $('mda-analysis').value = a.analysis; $('mda-analysis').dispatchEvent(new Event('change')) }
-  setField('mda-step', a.frame_step)
+// Form of a registered analysis from a logged call: mda_run names a built-in MDAnalysis analysis,
+// run_analysis gives the full id ("<engine>.<name>").
+function fillRegistry (kind, a) {
+  const id = String(a.analysis ?? '').includes('.') ? a.analysis : `mdanalysis.${a.analysis}`
+  if (!registrySpec(id)) throw new Error(`Analysis "${a.analysis}" is not available (is its plugin installed?).`)
+  $(`${kind}-analysis`).value = id
+  $(`${kind}-analysis`).dispatchEvent(new Event('change'))
+  setField(`${kind}-step`, a.frame_step)
   for (const [key, value] of Object.entries(a.params || {})) {
-    if (!$(`mda-p-${key}`)) throw new Error(`mda_run(analysis="${a.analysis}") has no parameter "${key}".`)
-    setField(`mda-p-${key}`, key === 'quads' ? value : Array.isArray(value) ? value.join('\n') : value)
+    const input = $(`${kind}-p-${key}`)
+    if (!input) throw new Error(`${a.analysis} has no parameter "${key}".`)
+    setField(`${kind}-p-${key}`, ['atoms', 'groups', 'bool'].includes(input.dataset.type) ? value : Array.isArray(value) ? value.join('\n') : value)
   }
 }
+function fillMda (a) { fillRegistry('mda', a) }
 // Console analysis → panel sub-tab, Run button and the controls its parameters go to.
 const CONSOLE_FORMS = {
   rmsd: { tab: 'rmsd', button: 'btn-run-rmsd', fill: a => { setField('rmsd-atoms', a.indices, OPTIONAL); setField('rmsd-step', a.frame_step); setField('rmsd-align', a.align); setField('rmsd-unwrap', a.unwrap); setField('rmsd-reference', a.reference_index, OPTIONAL) } },
@@ -4365,6 +4378,13 @@ const CONSOLE_FORMS = {
   mda_run: { tab: 'mda', button: 'btn-run-mda', fill: fillMda },
   ase_structure: { tab: 'structure', button: 'btn-run-structure', fill: a => { setField('structure-frame', a.frame); setField('structure-symprec', a.symprec) } },
   ase_coordination: { tab: 'coordination', button: 'btn-run-coordination', fill: a => { setField('coordination-atoms', a.indices, OPTIONAL); setField('coordination-step', a.frame_step) } }
+}
+
+// run_analysis goes to the panel of its engine: MDAnalysis › Analyses or a "More analyses" tab.
+function registryConsoleForm (args) {
+  const engine = String(args.analysis ?? '').split('.')[0]
+  const kind = engine === 'mdanalysis' ? 'mda' : Object.keys(REGISTRY_PANELS).find(k => REGISTRY_PANELS[k] === engine) || 'extcustom'
+  return { tab: kind, button: `btn-run-${kind}`, fill: a => fillRegistry(kind, a) }
 }
 
 function revealPanel (tab) {
@@ -4396,7 +4416,7 @@ async function runConsoleLine (text) {
   if (call.args.dt !== undefined && !(axis && Math.abs(call.args.dt - axis.dt) <= 1e-9 * Math.max(1, axis.dt))) {
     return consoleMessage(`dt comes from the time axis (now ${axis ? fmt(axis.dt, 6) + ' fs' : 'not set'}): change the MD time step or the MD steps per saved frame in the panel.`, true)
   }
-  const form = CONSOLE_FORMS[call.name]
+  const form = call.name === 'run_analysis' ? registryConsoleForm(call.args) : CONSOLE_FORMS[call.name]
   try { form.fill(call.args) } catch (error) { return consoleMessage(error.message, true) }
   revealPanel(form.tab)
   const rerun = monetHistory.consoleRerun

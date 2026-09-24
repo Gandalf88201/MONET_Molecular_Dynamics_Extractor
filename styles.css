@@ -915,7 +915,7 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .dist-chart-actions { margin-top: 14px; }
 
 /* Analysis groups: only the sub-tabs of the chosen module are shown */
-.ase-stab.group-hidden { display: none; }
+.ase-stab.group-hidden, .ase-stab.registry-empty { display: none; }
 .module-intro { margin: 2px 0 6px; }
 .result-tables table { border-collapse: collapse; margin: 6px 0 12px; font-size: .78rem; width: 100%; }
 .result-tables th, .result-tables td { border-bottom: 1px solid var(--border, rgba(127,127,127,.25)); padding: 3px 8px; text-align: left; vertical-align: top; }

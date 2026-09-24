@@ -21,6 +21,13 @@
 - Extraction from a derived trajectory (uncorrelated, cropped, PCA selection) writes `frame N source_frame=M` in FULL_TRAJECTORY_EXTRACTED.xyz and SAMPLED_CONFIGURATIONS.xyz, so every configuration can be traced to its frame in the original run. The Python, desktop and browser engines all do this; files without `source_frame=` are unchanged.
 - Fix: a cell applied by hand or read from a cell file (e.g. a CIF) was dropped when a derived trajectory (uncorrelated, cropped, aligned, PCA selection) became active. It now follows the derived trajectory and comes back with ↩ Full trajectory, so plane-wave inputs (QE, VASP, CP2K, Qbox) keep it.
 
+- Analysis registry and plugins (`monet_registry.py`, guide in `docs/plugins.md`):
+  - an analysis is a Python function decorated with `@analysis`; MONET builds its form from the declared parameters, checks the values (ranges, choices, atoms inside the trajectory, unknown names), runs it on the active trajectory, plots the result (series, profile, matrix or table, with PNG/CSV export), logs it in the history and replays it with `replay.py`. No JavaScript or launcher change is needed.
+  - plugins are loaded from `plugins/`, `~/.monet/plugins/`, the folders in `MONET_PLUGINS` and installed packages with the `monet.analyses` entry point; a plugin that fails to load is reported in the interface without stopping MONET.
+  - ASE and MONET Custom Functionalities get a *More analyses* sub-tab when plugins are installed; two examples ship in `plugins/`: cell volume, mass density and lattice lengths per frame (ASE), and radius of gyration (Custom).
+  - the MDAnalysis analyses moved into the registry (`monet_analyses/mdanalysis.py`); their form, menu and checks now come from Python, and MDAnalysis plugins join the same menu. Saved sessions and replay scripts using `mda_run` keep working.
+  - new bridge actions `list_analyses` and `run_analysis`; the console accepts `run_analysis(analysis="custom.radius_of_gyration", params={...})` with MONET IDs.
+  - analyses may write a file (e.g. the density grid) or a trajectory; the launcher offers it for download and, for trajectories, as the next active trajectory.
 - Launcher:
   - calculations run on persistent Python workers (`ase_bridge.py --serve`): libraries and trajectory indexes stay loaded, so after the first request a frame read takes about 1 ms instead of about 0.5 s. A worker starts in the background when the launcher starts; a cancelled calculation stops its worker.
   - session files are deleted as soon as nothing uses them: released trajectories, derived copies (unwrapped, aligned, uncorrelated) once their download is gone, and job folders that produced nothing. Only the 40 newest downloads are kept.

@@ -29,10 +29,13 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 STATIC = {'index.html', 'styles.css', 'theme.js', 'xyz.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'browser-bridge.js',
-          'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'renderer.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'examples/water.XYZ'}
+          'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'renderer.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'examples/water.XYZ'}
 FORMATS = {'xyz', 'extxyz', 'vasp', 'cif', 'espresso-in', 'lammps-data', 'aims', 'turbomole', 'gaussian-in', 'dftb', 'json'}
 ACTIONS = {'scan', 'frame', 'read_info', 'molecule', 'rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'convert', 'extract', 'import',
-           'rmsd_matrix', 'rdf', 'msd', 'vdos', 'unwrap', 'acf', 'equilibration', 'mda_select', 'mda_rmsf', 'mda_rgyr', 'mda_hbonds', 'cell_file', 'wrap', 'frames', 'subsample', 'mda_run', 'mda_align', 'topology', 'ase_structure', 'ase_coordination', 'fluctuations', 'select_atoms'}
+           'rmsd_matrix', 'rdf', 'msd', 'vdos', 'unwrap', 'acf', 'equilibration', 'mda_select', 'mda_rmsf', 'mda_rgyr', 'mda_hbonds', 'cell_file', 'wrap', 'frames', 'subsample', 'mda_run', 'mda_align', 'topology', 'ase_structure', 'ase_coordination', 'fluctuations', 'select_atoms',
+           'run_analysis', 'list_analyses'}
+# Actions that need no trajectory file.
+NO_FILE = {'list_analyses'}
 ALLOWED = {'indices', 'quantity', 'groups', 'center', 'atom_ids', 'stride', 'start', 'fit_model', 'analysis', 'params', 'frame', 'symprec', 'frame_step', 'nbins', 'rmax', 'elements', 'pairs', 'triplets', 'quads', 'format',
            'first_frame_only', 'cell', 'pbc', 'mic', 'angle_range', 'angle_normal', 'seed', 'bond_scale',
            'index', 'selected', 'frequency', 'compute_average', 'generate_gaussian', 'atom_count', 'history', 'qm', 'source_name', 'cell_vectors',
@@ -450,10 +453,13 @@ class Session:
             fmt = command.get('format') or 'extxyz'
             if fmt not in FORMATS:
                 raise ValueError('Choose a supported output format.')
+        elif action in NO_FILE:
+            source = None
         else:
             source = self.file(request.get('file_id'))
         workdir = self.new_dir('job-')
-        command['filename'] = str(source['path'])
+        if source:
+            command['filename'] = str(source['path'])
         if action == 'convert':
             command.update(input=str(source['path']), output=str(workdir / 'converted.out'), format=fmt)
         if action == 'extract':
@@ -466,8 +472,11 @@ class Session:
             command['output'] = str(workdir / 'uncorrelated.extxyz')
         if action == 'mda_align':
             command['output'] = str(workdir / 'aligned.extxyz')
-        if action == 'mda_run' and command.get('analysis') == 'density':
-            command['output'] = str(workdir / 'density.dx')
+        # A registered analysis that writes a file (monet_registry output=...) gets a path in its job folder.
+        analysis_file = None
+        if action in ('mda_run', 'run_analysis') and request.get('output'):
+            analysis_file = safe_name(request['output'], 'analysis-output')
+            command['output'] = str(workdir / analysis_file)
         if action == 'import':
             command['output'] = str(workdir / 'imported.extxyz')
             for key, field in (('reference_id', 'reference'), ('cell_id', 'cell_file')):
@@ -489,9 +498,11 @@ class Session:
                 result['output'] = f'{stem}.extxyz' if stem.endswith('aligned') else f'{stem}-aligned.extxyz'
                 result['download_id'] = self.add_download(workdir / 'aligned.extxyz', result['output'])
                 result['file_id'] = self.add_file(workdir / 'aligned.extxyz', result['output'])
-            elif action == 'mda_run' and command.get('analysis') == 'density':
-                result['output'] = 'density.dx'
-                result['download_id'] = self.add_download(workdir / 'density.dx', 'density.dx')
+            elif analysis_file and result.get('output_file') and (workdir / analysis_file).is_file():
+                result['output'] = analysis_file
+                result['download_id'] = self.add_download(workdir / analysis_file, analysis_file)
+                if result.get('trajectory'):
+                    result['file_id'] = self.add_file(workdir / analysis_file, analysis_file)
             elif action == 'subsample':
                 stem = Path(safe_name(request.get('output') or 'trajectory')).stem
                 suffix = 'selected' if command.get('frames') is not None else 'uncorrelated'

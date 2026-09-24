@@ -21,6 +21,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import monet_io
 import monet_analysis
 import monet_mda
+import monet_registry
 
 try:
     import numpy as np
@@ -343,43 +344,55 @@ def action_mda_select(cmd):
     ok(indices=group.indices.tolist(), n_atoms=len(group), residues=residues[:50], n_residues=len(residues))
 
 
-MDA_ANALYSES = {'rmsd', 'rmsd_matrix', 'rmsf', 'rgyr', 'hbonds', 'contacts', 'interrdf', 'msd', 'lineardensity', 'pca',
-                'com_distance', 'min_distance', 'atomic_distances', 'dihedral_mda', 'ramachandran', 'dssp',
-                'gnm', 'diffusionmap', 'density'}
+# ── registered analyses (monet_registry: built-in MDAnalysis collection and plugins) ──
+
+class _Loader:
+    """What monet_registry.Context reads through the bridge (same cell, PBC and ID handling as every action)."""
+
+    @staticmethod
+    def frame_data(cmd, indices, need_cell=False):
+        return _frame_data(cmd, indices, need_cell=need_cell)
+
+    @staticmethod
+    def first_atoms(filename, cmd):
+        return _first_atoms(filename, cmd)
+
+    @staticmethod
+    def universe(cmd):
+        return _universe(cmd)
+
+    @staticmethod
+    def atom_properties(filename):
+        traj = _trajectory(filename)
+        return traj.atom_properties() if traj else {}
+
+
+def action_list_analyses(_):
+    """Registered analyses with their parameters, for the forms of the interface."""
+    ok(**monet_registry.specs())
+
+
+def action_run_analysis(cmd):
+    """Run one registered analysis (`analysis` = "<engine>.<name>") on the active trajectory."""
+    entry = monet_registry.get(cmd['analysis'])
+    prog(f'Running {entry.label} …', 5)
+    ctx = monet_registry.Context(cmd, _Loader, prog)
+    result = monet_registry.run(entry.id, ctx, cmd.get('params'))
+    prog('Done', 100)
+    ok(analysis=entry.id, **result)
 
 
 def action_mda_run(cmd):
-    """Any analysis of monet_mda.run_analysis on the active trajectory (same atom order as MONET)."""
-    frames, universe = _universe(cmd)
-    name = cmd['analysis']
-    prog(f'Running MDAnalysis {name} …', 55)
-    dt = cmd.get('dt')
-    result = monet_mda.run_analysis(universe, name, cmd.get('params') or {}, frames,
-                                    dt=dt * cmd.get('frame_step', 1) if dt else None, output=cmd.get('output'))
-    prog('Done', 100)
-    ok(analysis=name, frame_indices=frames, n_frames=len(frames), **result)
+    """The MDAnalysis tab: `analysis` names a built-in MDAnalysis analysis (kept for saved sessions)."""
+    action_run_analysis({**cmd, 'analysis': f"mdanalysis.{cmd['analysis']}"})
 
 
 def action_mda_align(cmd):
     """Write the trajectory after optimal superposition of a selection on the first frame."""
-    frames, universe = _universe(cmd)
-    selection = (cmd.get('params') or {}).get('selection') or 'all'
-    prog('Aligning …', 50)
-    positions = monet_mda.aligned_positions(universe, selection)
-    symbols = [str(e) for e in universe.atoms.elements]
-    # Topology columns of the source (atom names, residues) are kept so selections still work.
-    traj = _trajectory(cmd['filename'])
-    properties = traj.atom_properties() if traj else {}
-    extra = [(name, kind) for name, kind in (('resname', 'S'), ('resid', 'I'), ('atomname', 'S')) if name in properties]
-    columns = 'species:S:1:pos:R:3' + ''.join(f':{name}:{kind}:1' for name, kind in extra)
-    row = ''.join(f'{s} %.8f %.8f %.8f' + ''.join(f' {properties[name][i]}' for name, _ in extra) + '\n'
-                  for i, s in enumerate(symbols))
-    with open(cmd['output'], 'w') as fh:
-        for k, frame in enumerate(frames):
-            fh.write(f'{len(symbols)}\nProperties={columns} frame={frame} source_frame={frame} aligned_on="{selection}"\n')
-            fh.write(row % tuple((positions[k] + 0.0).ravel()))
+    ctx = monet_registry.Context(cmd, _Loader, prog)
+    result = monet_registry.run('mdanalysis.align', ctx, cmd.get('params'))
     prog('Done', 100)
-    ok(n_frames=len(frames), selection=selection)
+    ok(n_frames=result['n_frames'], selection=result['selection'])
 
 
 def action_topology(cmd):
@@ -1298,28 +1311,10 @@ def validate_command(cmd):
         if type(value) not in kind or not math.isfinite(value) or value <= 0 or (maximum and value > maximum):
             raise ValueError(f'{name} must be a positive {"integer" if integer else "number"}' + (f' up to {maximum}.' if maximum else '.'))
     action = cmd.get('action')
-    if action == 'mda_run':
-        if cmd.get('analysis') not in MDA_ANALYSES:
-            raise ValueError('Unknown MDAnalysis analysis.')
-        params = cmd.get('params') or {}
-        if not isinstance(params, dict) or len(params) > 20:
-            raise ValueError('Analysis parameters must be a small object.')
-        for key, value in params.items():
-            if isinstance(value, str):
-                if len(value) > 2000:
-                    raise ValueError(f'{key} is too long.')
-            elif isinstance(value, bool) or value is None:
-                continue
-            elif isinstance(value, (int, float)):
-                if not math.isfinite(value) or value < 0:
-                    raise ValueError(f'{key} must be a non-negative number.')
-            elif isinstance(value, list):
-                if key == 'quads':
-                    _validate_groups(value, 4, 10 ** 9)
-                elif not all(isinstance(v, str) and len(v) <= 2000 for v in value) or len(value) > 20:
-                    raise ValueError(f'{key} must be a list of selections.')
-            else:
-                raise ValueError(f'Unsupported value for {key}.')
+    if action in ('mda_run', 'run_analysis'):
+        # Parameters are checked against the declared ones by monet_registry.run.
+        if not isinstance(cmd.get('analysis'), str) or not isinstance(cmd.get('params') or {}, dict):
+            raise ValueError('Name the analysis and give its parameters as an object.')
     if action == 'select_atoms':
         mode = cmd.get('mode')
         if mode not in SELECT_MODES:
@@ -1342,11 +1337,11 @@ def validate_command(cmd):
             if (not isinstance(pattern, list) or len(pattern) != PATTERN_WIDTH[mode]
                     or any(not isinstance(p, str) or not p or len(p) > 3 for p in pattern)):
                 raise ValueError(f'Enter {PATTERN_WIDTH[mode]} element symbols (or *) for {mode}.')
-    if action in ('ase_structure', 'ase_coordination', 'topology', 'mda_run', 'mda_align', 'molecule', 'fluctuations', 'select_atoms'):
+    if action in ('ase_structure', 'ase_coordination', 'topology', 'mda_run', 'mda_align', 'run_analysis', 'molecule', 'fluctuations', 'select_atoms'):
         scale = cmd.get('bond_scale', 1.2)
         if type(scale) not in (int, float) or not 0.5 <= scale <= 2.0:
             raise ValueError('The bond cutoff scale must be between 0.5 and 2.')
-    if action and action.startswith('mda_'):
+    if action and (action.startswith('mda_') or action == 'run_analysis'):
         for name in ('selection', 'donors', 'hydrogens', 'acceptors'):
             if name in cmd and cmd[name] is not None and (not isinstance(cmd[name], str) or len(cmd[name]) > 2000):
                 raise ValueError(f'{name} must be an MDAnalysis selection string.')
@@ -1470,6 +1465,8 @@ ACTIONS = {
     "wrap":      action_wrap,
     "frames":    action_frames,
     "mda_run":   action_mda_run,
+    "run_analysis": action_run_analysis,
+    "list_analyses": action_list_analyses,
     "mda_align": action_mda_align,
     "topology":  action_topology,
     "ase_structure": action_ase_structure,

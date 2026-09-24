@@ -43,7 +43,10 @@ let frameCount = 2
 const framesCommands = []
 const topologyCommands = []
 let topologyBreak = false
+// Registered analyses as the Python side lists them (monet_registry.py: MDAnalysis and the example plugins).
+const REGISTRY = JSON.parse(require('node:child_process').execFileSync(process.env.PYTHON || 'python3', [path.join(root, 'ase_bridge.py')], { input: '{"action": "list_analyses"}', encoding: 'utf8' }).trim().split('\n').pop())
 w.monet = {
+  listAnalyses: async () => REGISTRY,
   isBrowser: true, selectFile: async () => nextFile,
   canImport: true,
   importFile: async (name, options) => { importCalls.push([name, options]); return { filePath: 'imported/' + name + '.extxyz', sourceLabel: 'VASP XDATCAR', frames: 2, warning: name.endsWith('.dcd') ? 'No topology was given: every atom is imported as element X.' : undefined } },
@@ -104,6 +107,7 @@ w.monet = {
     if (command.action === 'mda_run' && command.analysis === 'hbonds') return { ok: true, kind: 'series', x: [0, 1], xLabel: 'Frame', yLabel: 'Hydrogen bonds', series: [{ label: 'H-bond count', data: [2, 4] }], n_frames: 2, frame_indices: [0, 1], table: { columns: ['Donor', 'Hydrogen', 'Acceptor', 'Occupancy (%)'], rows: [[0, 3, 2, 50]], atom_columns: [0, 1, 2] } }
     if (command.action === 'mda_run' && command.analysis === 'interrdf') return { ok: true, kind: 'profile', x: [0.5, 1.5], xLabel: 'r (Å)', yLabel: 'g(r)', series: [{ label: 'g(r)', data: [0, 1.2] }], n_frames: 2, notes: ['InterRDF'] }
     if (command.action === 'mda_run' && command.analysis === 'density') return { ok: true, kind: 'table', download: true, table: { columns: ['Quantity', 'Value'], rows: [['Grid points', '2 × 2 × 2']] }, notes: ['OpenDX grid'], n_frames: 2, output: 'density.dx', download_id: 'd1', downloadURL: '/api/download/d1' }
+    if (command.action === 'run_analysis') return { ok: true, analysis: command.analysis, kind: 'series', x: [0, 1], xLabel: 'Frame', yLabel: 'Radius of gyration (Å)', series: [{ label: 'Rg', data: [1, 1.2] }], n_frames: 2, frame_indices: [0, 1] }
     if (command.action === 'mda_align') return { ok: true, n_frames: 2, selection: command.params.selection, output: 'torsion-aligned.extxyz', downloadURL: '/api/download/a1', filePath: 'derived/torsion-aligned.extxyz' }
     if (command.action === 'mda_run' && command.analysis === 'rmsd_matrix') return { ok: true, kind: 'matrix', matrix: [[0, 0.3], [0.3, 0]], labels: [0, 10], xLabel: 'Frame', yLabel: 'Frame', colorLabel: 'RMSD (Å)', notes: ['2 frames'], n_frames: 2, table: { columns: ['Quantity', 'Value (Å)'], rows: [['Mean off-diagonal RMSD', 0.3]] } }
     if (command.action === 'fluctuations') {
@@ -139,7 +143,7 @@ Object.assign(w.monet, {
 // separate w.eval('...') cannot see them by name (only what this same call exposes on
 // window.testMonet can be reached from outside). __setRenderHistory/__getRenderHistory below let a
 // later check swap out renderHistory itself, which a plain identifier reference could not reach.
-for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) {
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'renderer.js']) {
   w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, monetHistory, saveHistoryNow, runConsoleLine, __getRenderHistory: () => renderHistory, __setRenderHistory: fn => { renderHistory = fn } };' : ''))
 }
 const el = id => w.document.getElementById(id)
@@ -249,10 +253,16 @@ async function run () {
   count = steps().length
   await w.testMonet.runConsoleLine('bonds(pairs=[[1, 99]], frame_step=1)'); await settle()
   assert.match(el('console-output').textContent, /MONET atom 99/); assert.equal(steps().length, count); checks++
+  // A plugin analysis runs from the console like any other: MONET IDs in, file indices to Python, logged as a step.
+  await w.testMonet.runConsoleLine('run_analysis(analysis="custom.radius_of_gyration", params={"indices": [1, 2], "mass_weighted": False})'); await settle()
+  assert.equal(latestCommand.action, 'run_analysis'); assert.equal(latestCommand.params.mass_weighted, false); checks++
+  assert.deepEqual([...latestCommand.params.indices], [1, 2].map(id => w.testMonet.aseState.analysisAtoms.find(a => a.monetId === id).aseIndex)); checks++
+  assert.equal(steps().at(-1).action, 'run_analysis'); assert.match(steps().at(-1).call, /^run_analysis\(analysis="custom\.radius_of_gyration", params=\{"indices": \[1, 2\], "mass_weighted": False\}/); checks++
+  assert.ok(el('ase-sub-extcustom').classList.contains('active')); checks++
   // ↑ recalls the previous input.
   el('console-input').value = ''
   el('console-input').dispatchEvent(new w.KeyboardEvent('keydown', { key: 'ArrowUp' }))
-  assert.equal(el('console-input').value, 'bonds(pairs=[[1, 99]], frame_step=1)'); checks++
+  assert.match(el('console-input').value, /^run_analysis\(/); checks++
   // Pause and resume from the drawer.
   await click('history-pause')
   assert.equal(el('history-pause').textContent, 'History: paused'); assert.equal(H.session.data.paused, true); checks++

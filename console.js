@@ -22,6 +22,8 @@
     equilibration: ['quantity', 'groups', 'dt', 'frame_step', 'mode', 'fit_until', 'fit_model', 'tau_int_method', 'angle_range', 'max_lag'],
     fluctuations: ['quantity', 'indices', 'groups', 'frame_step', 'align', 'dt'],
     mda_run: ['analysis', 'params', 'frame_step', 'dt'],
+    // Any registered analysis (monet_registry.py), e.g. run_analysis(analysis="custom.radius_of_gyration", params={...}).
+    run_analysis: ['analysis', 'params', 'frame_step', 'dt'],
     ase_structure: ['frame', 'symprec'],
     ase_coordination: ['indices', 'frame_step']
   }

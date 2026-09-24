@@ -13,10 +13,10 @@ import sys
 
 ATOM_KEYS = ('indices', 'groups', 'pairs', 'triplets', 'quads')
 ANALYSES = ('rmsd', 'rmsd_matrix', 'pdd', 'rdf', 'bonds', 'angles', 'dihedrals', 'msd', 'vdos', 'acf',
-            'equilibration', 'fluctuations', 'mda_run', 'ase_structure', 'ase_coordination')
+            'equilibration', 'fluctuations', 'mda_run', 'run_analysis', 'ase_structure', 'ase_coordination')
 DERIVED = {'subsample': 'uncorrelated.extxyz', 'mda_align': 'aligned.extxyz', 'unwrap': 'unwrapped.extxyz', 'wrap': 'wrapped.extxyz'}
 # MONET sends its atom IDs (and the bond cutoff scale) to these actions only, as renderer.js does.
-NEEDS_IDS = ('mda_', 'topology', 'ase_', 'fluctuations')
+NEEDS_IDS = ('mda_', 'topology', 'ase_', 'fluctuations', 'run_analysis')
 
 
 def sha256_file(path):
@@ -131,8 +131,9 @@ class Session:
             if command.get(key) is not None:
                 command[key] = _to_indices(command[key], source)
         params = command.get('params')
-        if isinstance(params, dict) and params.get('quads') is not None:
-            command['params'] = {**params, 'quads': _to_indices(params['quads'], source)}
+        if isinstance(params, dict):
+            command['params'] = {key: _to_indices(value, source) if key in ATOM_KEYS and value is not None else value
+                                 for key, value in params.items()}
         command.update(self.opts)
         if action.startswith(NEEDS_IDS):
             command['atom_ids'] = source.ids()
@@ -179,6 +180,9 @@ class Session:
             command = self._command(action, source, args)
         except ValueError as error:
             return self._fail(label, str(error))
+        if action in ('mda_run', 'run_analysis'):
+            # Analyses that write a file (e.g. a density grid) write it next to the step result.
+            command['output'] = str(self.out / f'{name}_output')
         return self._check(label, name, self._bridge(command), expect)
 
     def __getattr__(self, name):

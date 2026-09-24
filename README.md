@@ -64,6 +64,10 @@ After loading, the files are shared by three tabs, in the order of a typical stu
 
 The viewer, atom table, cell and time axis are common to all analysis sub-tabs.
 
+### Adding analyses (plugins)
+
+Every module can be extended with Python-only plugins: a function decorated with `@analysis` declares its parameters, and MONET builds its form, checks the values, runs it in the Python worker, plots the result and logs it in the history and in `replay.py`. ASE and MONET Custom plugins appear in a **More analyses** sub-tab; MDAnalysis plugins join the menu of *MDAnalysis › Analyses*, whose built-in analyses use the same mechanism (`monet_analyses/mdanalysis.py`). Plugins are read from `plugins/` (two examples: cell volume/density, radius of gyration), `~/.monet/plugins/`, the folders in `MONET_PLUGINS` and installed packages with the `monet.analyses` entry point. See [docs/plugins.md](docs/plugins.md).
+
 Not included, because they need data an MD trajectory in XYZ form does not carry or tools that are not installed: ASE calculators, optimisers, MD engines and NEB (energies/forces); MDAnalysis modules that need charges, external programs, membranes or are deprecated (dielectric, HOLE2, leaflet finder, water dynamics, ENCORE/PSA, BAT, persistence length, helix and nucleic-acid analyses). Symmetry needs `spglib` (`python -m pip install spglib`).
 
 ### Atom identity across modules
