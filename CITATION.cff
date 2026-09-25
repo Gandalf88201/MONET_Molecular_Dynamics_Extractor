@@ -14,7 +14,7 @@ authors:
   - family-names: Francese
     given-names: Tommaso
     affiliation: University of Chicago
-version: 2.3.1
+version: 2.4.0
 doi: "10.5281/zenodo.22816521"
 identifiers:
   - type: doi

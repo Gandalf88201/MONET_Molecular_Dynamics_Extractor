@@ -4,6 +4,8 @@
 
 MONET extracts configurations every N frames from molecular-dynamics trajectories, writes quantum-chemistry inputs for each sampled configuration and analyses the trajectory with ASE, MDAnalysis and MONET's own methods. It runs in a browser (with a local Python launcher) or as an Electron desktop app, in day or night mode (☀/☾ button in the title bar).
 
+AI assistants that speak the Model Context Protocol (Claude Desktop, Claude Code, Gemini CLI) can also drive MONET through its MCP server: ask in plain language to open a trajectory, run any analysis or write a derived trajectory. See [AI assistants (MCP server)](#ai-assistants-mcp-server).
+
 ## Start MONET
 
 MONET runs in your browser, with a small Python service on your own computer that provides ASE and MDAnalysis. There are no installers: download the code and start it with Python.
