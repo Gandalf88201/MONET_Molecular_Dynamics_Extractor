@@ -1,14 +1,20 @@
 # Changelog
 
-## Unreleased
+## 2.5.0 (2026-09-28)
 
-- Thermal ellipsoids (*More analyses › Thermal ellipsoids (ADP) → PDB* and *… in crystal axes → CIF*): the ellipsoids are now drawn on the structure in the ASE viewer, not only written to the file. They are coloured by U<sub>eq</sub> (or in element colours), with 50, 90 or 99 % probability and a magnification, and come back when you return to the tab. Plugins can do the same by returning `ellipsoids` (see `docs/plugins.md`).
-- Polar plot (angles and dihedrals): the *custom values…* radius is removed, with its text box and *Radial label* (default ΔEST (eV)). ΔE<sub>ST</sub> is a quantum-chemical result that MONET does not compute or use; the radius is now the count per bin (stacked dots) or the frame index.
-- The crystal cell (CIF or other cell file, manual cell, or the lattice of an extended XYZ) is now drawn in the 3D view of *MONET Custom Functionalities*, as in the ASE viewer. Before, only the ASE viewer showed it.
-- Atom groups from the selection: bonded atoms can be picked in any order. When the picks are not already bonded groups, **Use selection** writes every bond, angle or dihedral among the selected atoms, so a carbon and its three hydrogens give the three C–H bonds instead of C–H plus H–H. Non-bonded picks (an O···H contact) still form groups in pick order. This applies to Fluctuations & trends, the ASE bond, angle and dihedral panels, and the autocorrelation groups.
-- Fluctuations & trends:
-  - Fix: with *only the groups entered below*, a selection whose size was not a multiple of the group size (a carbon and two hydrogens for bonds, say) was rejected and nothing was computed. An empty groups field now takes the selected atoms, grouped by their bonds. Errors in the groups are shown next to the plot, not only in the status bar.
-  - Vibration arrows on the structure: double-headed arrows along the main displacement axis (atoms), along the bond (bonds), in the angle plane (angles) or across the torsion plane (dihedrals), with length ± the amplitude shared between the moving atoms by mass, coloured like the map. Arrow length is automatic (largest 1 Å) or a fixed magnification.
+Motion on the structure: vibration arrows and thermal ellipsoids are drawn on the molecule in the ASE viewer, and atom groups picked in the viewer follow the bonds.
+
+- New:
+  - Vibration arrows (*Fluctuations & trends*): double-headed arrows on the structure show how the analysed items move, coloured like the map. Atoms: ± RMSF along the main displacement axis. Bonds: along the bond at both atoms, the SD shared in inverse proportion to the masses (for C–H mostly on the H). Angles: at the end atoms, in the angle plane (bending). Dihedrals: at the outer atoms, across the torsion plane. Arrow length is automatic (largest 1 Å) or a fixed magnification, and the arrows follow the atoms during playback.
+  - Thermal ellipsoids on the structure (*More analyses › Thermal ellipsoids (ADP) → PDB* and *… in crystal axes → CIF*): the ellipsoids are drawn in the ASE viewer, not only written to the file, coloured by U<sub>eq</sub> or in element colours, with 50, 90 or 99 % probability and a magnification. They come back when you return to the tab.
+  - Plugin API: a result can carry `ellipsoids` (atom index and Cartesian U in Å²), which MONET draws on the structure; the registry checks their shape. See `docs/plugins.md`. The thermal ellipsoids plugin still runs on older MONET releases.
+- Changed:
+  - Atom groups from the selection follow the bonds. When the picked atoms are not already bonded groups, **Use selection** writes every bond, angle or dihedral among them (first-frame connectivity, molecule bond cutoff, minimum image), so a carbon and its three hydrogens give the three C–H bonds instead of C–H plus H–H. Picks with no bond between them (an O···H contact) still form groups in pick order. Applies to *Fluctuations & trends*, the ASE bond, angle and dihedral panels and the autocorrelation groups.
+- Fixes:
+  - The crystal cell (CIF or other cell file, manual cell, or extended XYZ lattice) is drawn in the 3D view of *MONET Custom Functionalities* too; before, only the ASE viewer showed it.
+  - *Fluctuations & trends* with *only the groups entered below*: a selection whose size was not a multiple of the group size (a carbon and two hydrogens for bonds) was rejected and nothing was computed. An empty groups field now takes the selected atoms, grouped by their bonds, and errors in the groups are shown next to the plot as well as in the status bar.
+- Removed:
+  - Polar plot (angles and dihedrals): the *custom values…* radius, with its text box and *Radial label* (default ΔEST (eV)). ΔE<sub>ST</sub> is a quantum-chemical result that MONET does not compute or use; the radius is the count per bin (stacked dots) or the frame index.
 
 ## 2.4.0 (2026-09-25)
 
