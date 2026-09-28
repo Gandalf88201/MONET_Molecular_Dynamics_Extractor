@@ -33,7 +33,7 @@ if errorlevel 1 (
 :requirements
 fc /b requirements.txt .venv\monet-requirements.txt >nul 2>&1
 if not errorlevel 1 goto start
-echo Installing ASE and MDAnalysis ^(first run or updated requirements^) ...
+echo Installing ASE, MDAnalysis and spglib ^(first run or updated requirements^) ...
 "%VENV_PY%" -m pip install --upgrade pip >nul 2>&1
 "%VENV_PY%" -m pip install -r requirements.txt
 if errorlevel 1 (
@@ -44,7 +44,7 @@ copy /y requirements.txt .venv\monet-requirements.txt >nul
 
 :start
 if not "%MONET_SETUP_ONLY%"=="1" goto launch
-"%VENV_PY%" -c "import ase, MDAnalysis; print(f'MONET environment ready: ASE {ase.__version__}, MDAnalysis {MDAnalysis.__version__}')"
+"%VENV_PY%" -c "import ase, MDAnalysis, spglib; print(f'MONET environment ready: ASE {ase.__version__}, MDAnalysis {MDAnalysis.__version__}, spglib {spglib.__version__}')"
 exit /b %errorlevel%
 
 :launch

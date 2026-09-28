@@ -12,6 +12,7 @@ The ASE analysis modules join MONET: *ASE › More analyses* now holds thirteen 
   - Total or partial RDF (`ase.geometry.rdf.get_rdf`), space group along the trajectory (`ase.spacegroup.symmetrize`, spglib), dimensionality of the bonded network (`ase.geometry.dimensionality`), atomic layers (`ase.geometry.get_layers`).
   - Powder XRD and SAXS averaged over the frames with the Debye formula of `ase.utils.xrdebye`, computed from a distance histogram (it matches `XrDebye` to 0.1 %, and runs fast for thousands of atoms).
   - Bravais lattice and Niggli-reduced cell per frame (`ase.cell`), supercell trajectory (`ase.build.make_supercell`).
+- `spglib` is now in `requirements.txt`, so the space group (structure summary and *Space group along the trajectory*) works without a separate install. The launchers install it at the next start.
 - Plugin API: `ctx.images()` returns every analysed frame as `ase.Atoms` with the values stored in the file (energy, forces, stress, momenta, comment values).
 - Changed: the *More analyses* tabs count built-in and plugin analyses separately.
 - Not included, with the reason in README.md: ASE calculators, optimisers, MD engines, NEB, vibrations, phonons, thermochemistry, EOS, GA, the database and `utils.structure_comparator`. The structure comparator finds thermally displaced MD frames all different, so it cannot group them.

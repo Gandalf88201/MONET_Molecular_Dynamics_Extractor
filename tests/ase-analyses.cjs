@@ -161,13 +161,9 @@ cubes = [bulk('Cu', 'fcc', a=3.61, cubic=True) * (2, 2, 2) for _ in range(2)]
 shaken.rattle(0.2, seed=1)
 ase.io.write(folder / 'copper.extxyz', cubes + [shaken], format='extxyz')
 ase.io.write(folder / 'primitive.extxyz', [copper, copper], format='extxyz')
-try:
-    import spglib  # noqa: F401
-    r = good('space_group', folder / 'copper.extxyz', {'symprec': 0.01})
-    assert curve(r, 'Space group number').tolist() == [225, 225, 1] and r['table']['rows'][0][:3] == ['Fm-3m', 225, 2]
-    checks += 1
-except ImportError:
-    assert 'spglib' in run('space_group', folder / 'copper.extxyz')['message']
+r = good('space_group', folder / 'copper.extxyz', {'symprec': 0.01})
+assert curve(r, 'Space group number').tolist() == [225, 225, 1] and r['table']['rows'][0][:3] == ['Fm-3m', 225, 2]
+checks += 1
 r = good('lattice', folder / 'primitive.extxyz')
 assert r['table']['rows'][0][0].startswith('FCC') and np.allclose(curve(r, 'a'), 3.61 / np.sqrt(2)), r
 r = good('lattice', folder / 'primitive.extxyz', {'quantity': 'reduced angles'})
