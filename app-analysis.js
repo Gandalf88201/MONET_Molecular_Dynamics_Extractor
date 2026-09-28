@@ -1229,10 +1229,6 @@ function drawGeometry (kind) {
     const radialMode = polar ? $(`${kind}-radial`).value : 'dots'
     if (radialMode === 'frame') {
       radial = { label: 'Frame', values: entry.series.map(() => entry.labels.map(Number)) }
-    } else if (radialMode === 'custom') {
-      const parsed = parseRadialValues($(`${kind}-custom`).value, entry.labels)
-      radial = { label: $(`${kind}-custom-label`).value.trim() || 'Value', values: entry.series.map(() => parsed.values) }
-      if (parsed.message) notes.push(parsed.message)
     }
     const title = entry.title.replace(/ vs .*$/, '')
     charts[kind].setData({
@@ -1263,27 +1259,6 @@ function parseReferences (kind) {
   })
 }
 
-// Radial values for the polar plot: "value" per computed frame, or "frame value" pairs.
-function parseRadialValues (text, frameLabels) {
-  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !/^[#!]/.test(line))
-  const values = new Array(frameLabels.length).fill(NaN)
-  if (!lines.length) return { values, message: 'Paste the radial values to draw the points.' }
-  const rows = lines.map(line => line.split(/[\s,;]+/).map(Number))
-  if (rows.every(row => row.length >= 2 && row.slice(0, 2).every(Number.isFinite))) {
-    const position = new Map(frameLabels.map((frame, k) => [Number(frame), k]))
-    let unmatched = 0
-    for (const [frame, value] of rows) {
-      if (position.has(frame)) values[position.get(frame)] = value
-      else unmatched++
-    }
-    return { values, message: unmatched ? `${unmatched} radial value(s) refer to frames that were not computed.` : '' }
-  }
-  const single = rows.map(row => row[0])
-  single.slice(0, values.length).forEach((value, k) => { values[k] = value })
-  const message = single.length !== values.length ? `${single.length} radial values for ${values.length} computed frames; extra frames are not drawn.` : ''
-  return { values, message }
-}
-
 function updateDistributionOptions (kind) {
   const view = $(`${kind}-view`).value
   const shown = view === 'dots' || view === 'polar'
@@ -1291,11 +1266,10 @@ function updateDistributionOptions (kind) {
   const radial = $(`${kind}-radial`)
   if (!radial) return
   radial.closest('label').classList.toggle('hidden', view !== 'polar')
-  $(`${kind}-custom-row`).classList.toggle('hidden', !(view === 'polar' && radial.value === 'custom'))
 }
 
 for (const kind of ['rmsd', 'bonds', 'angles', 'dihedrals']) {
-  for (const id of [`${kind}-view`, `${kind}-bins`, `${kind}dist-bins`, `${kind}-fit`, `${kind}-fit-range`, `${kind}-radial`, `${kind}-ref`, `${kind}-ref-label`, `${kind}-custom`, `${kind}-custom-label`]) {
+  for (const id of [`${kind}-view`, `${kind}-bins`, `${kind}dist-bins`, `${kind}-fit`, `${kind}-fit-range`, `${kind}-radial`, `${kind}-ref`, `${kind}-ref-label`]) {
     const element = $(id)
     if (!element) continue
     element.addEventListener(element.tagName === 'SELECT' ? 'change' : 'input', () => {

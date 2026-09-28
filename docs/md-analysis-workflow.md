@@ -268,14 +268,14 @@ Report the populations with block-based errors. Lyman and Zuckerman [35] define 
 - **Folded ranges.** Some groups are symmetric, such as phenyl rings or the two faces of a planar donor. For them, θ and θ + 180° are equivalent, so analyse modulo 180°. The distribution and the ACF must then use the same period.
 - **Error of the mean.** Use the g-corrected SEM (§4.1), not the error from the covariance matrix of a histogram fit. The fit error treats bins as independent and ignores time correlation, so it is too small.
 - **Convergence of a distribution.** Compare the histograms of the two halves of the run, or of blocks. Report an overlap or a Jensen–Shannon divergence. **[open]** Choose one metric for MONET and a pass threshold, with a reference.
-- **Polar plots** are the natural display for torsions. They can carry a second quantity as the radius, for example ΔE_ST against the torsion, as in [16].
+- **Polar plots** are the natural display for torsions. With the frame index as the radius they also show how the torsion evolves along the run.
 
 **MONET.**
 - Circular mean and SD in the legends (Mardia).
 - Distribution plots with Gaussian, Lorentzian, pseudo-Voigt, von Mises and two-Gaussian fits (`fit.js`).
 - The g-corrected SEM in the plot notes.
 - Folded 0–180° and −90…90° ranges.
-- Polar and dot-histogram views, with custom radial values.
+- Polar and dot-histogram views; the polar radius is the count per bin or the frame index.
 
 **[gap]** A convergence metric for distributions (halves or blocks).
 

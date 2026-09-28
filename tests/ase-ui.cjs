@@ -1142,7 +1142,7 @@ async function run () {
   el('dihedrals-range').value = '360'; el('dihedrals-range').dispatchEvent(new w.Event('change'))
   el('dihedrals-quads').value = '1 2 3 4'; await click('btn-run-dihedrals')
   assert.match(w.testMonet.charts.dihedrals.data.datasets[0].label, /\(circular\)$/); checks++
-  // Polar and dot-histogram views: stacked dots, custom radial values, reference angles.
+  // Polar and dot-histogram views: stacked dots, frame index as radius, reference angles.
   const setView = (kind, value) => { el(`${kind}-view`).value = value; el(`${kind}-view`).dispatchEvent(new w.Event('change')) }
   const input = (id, value) => { el(id).value = value; el(id).dispatchEvent(new w.Event(el(id).tagName === 'SELECT' ? 'change' : 'input')) }
   setView('dihedrals', 'polar')
@@ -1151,16 +1151,13 @@ async function run () {
   assert.ok(Number.isFinite(polar.series[0].mean)); assert.equal(el('dihedrals-dist-options').classList.contains('hidden'), false); checks++
   input('dihedrals-ref', '84.3'); input('dihedrals-ref-label', 'θExp')
   assert.deepEqual(JSON.parse(JSON.stringify(w.testMonet.charts.dihedrals.data.references)), [{ value: 84.3, short: 'θExp', label: 'θExp = 84.3' }]); checks++
-  input('dihedrals-radial', 'custom')
-  assert.equal(el('dihedrals-custom-row').classList.contains('hidden'), false); checks++
-  const frames = [...w.testMonet.charts.dihedrals.data.frames]
-  input('dihedrals-custom', `${frames[0]} 0.15\n# comment\n${frames[frames.length - 1]} 0.30\n999999 1`)
-  polar = w.testMonet.charts.dihedrals.data
-  assert.equal(polar.radial.label, 'ΔEST (eV)'); assert.equal(polar.radial.values[0][0], 0.15); assert.equal(polar.radial.values[0][frames.length - 1], 0.3); checks++
-  assert.match(polar.notes.join(' '), /1 radial value\(s\) refer to frames that were not computed/); checks++
-  assert.match(w.testMonet.charts.dihedrals.toCSV(), /^frame,.*ΔEST \(eV\)/m); assert.deepEqual([...w.testMonet.charts.dihedrals.exportSize()], [1200, 1150]); checks++
+  // The radius is the counts or the frame index only (no pasted values such as ΔEST).
+  assert.deepEqual([...el('dihedrals-radial').options].map(o => o.value), ['dots', 'frame']); assert.equal(el('dihedrals-custom-row'), null); assert.equal(el('angles-custom-row'), null); checks++
   input('dihedrals-radial', 'frame')
-  assert.equal(w.testMonet.charts.dihedrals.data.radial.label, 'Frame'); assert.equal(el('dihedrals-custom-row').classList.contains('hidden'), true); checks++
+  polar = w.testMonet.charts.dihedrals.data
+  const frames = [...polar.frames]
+  assert.equal(polar.radial.label, 'Frame'); assert.equal(polar.radial.values[0][frames.length - 1], Number(frames[frames.length - 1])); checks++
+  assert.match(w.testMonet.charts.dihedrals.toCSV(), /^frame,.*Frame · /m); assert.deepEqual([...w.testMonet.charts.dihedrals.exportSize()], [1200, 1150]); checks++
   setView('dihedrals', 'series')
   assert.equal(el('dihedrals-dist-options').classList.contains('hidden'), true); checks++
   setView('bonds', 'dots')

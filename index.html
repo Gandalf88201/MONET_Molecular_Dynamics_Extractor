@@ -791,14 +791,9 @@
         </div>
         <div class="ase-plot-actions dist-options hidden" id="angles-dist-options">
           <label class="plot-view">Bins <input class="field-input field-input-sm" id="angles-bins" type="number" min="2" max="500" value="60" /></label>
-          <label class="plot-view polar-only">Radius <select class="field-input field-input-sm" id="angles-radial"><option value="dots">stacked dots (counts)</option><option value="frame">frame index</option><option value="custom">custom values…</option></select></label>
+          <label class="plot-view polar-only">Radius <select class="field-input field-input-sm" id="angles-radial"><option value="dots">stacked dots (counts)</option><option value="frame">frame index</option></select></label>
           <label class="plot-view">Reference ° <input class="field-input field-input-sm" id="angles-ref" type="text" placeholder="84.3" title="One or more values separated by spaces" /></label>
           <label class="plot-view">Label <input class="field-input field-input-sm" id="angles-ref-label" type="text" placeholder="θExp" /></label>
-        </div>
-        <div class="dist-options hidden" id="angles-custom-row">
-          <label class="field-label" for="angles-custom">Radial values, one per computed frame in order, or “frame value” pairs (e.g. ΔE<sub>ST</sub> of each sampled configuration)</label>
-          <textarea class="field-input" id="angles-custom" rows="3" placeholder="0 0.152&#10;90 0.148&#10;…"></textarea>
-          <label class="plot-view">Radial label <input class="field-input field-input-sm" id="angles-custom-label" type="text" value="ΔEST (eV)" /></label>
         </div>
         <canvas class="chart-canvas" id="chart-angles"></canvas>
         <div class="chart-placeholder" id="chart-angles-ph">
@@ -841,14 +836,9 @@
         </div>
         <div class="ase-plot-actions dist-options hidden" id="dihedrals-dist-options">
           <label class="plot-view">Bins <input class="field-input field-input-sm" id="dihedrals-bins" type="number" min="2" max="500" value="60" /></label>
-          <label class="plot-view polar-only">Radius <select class="field-input field-input-sm" id="dihedrals-radial"><option value="dots">stacked dots (counts)</option><option value="frame">frame index</option><option value="custom">custom values…</option></select></label>
+          <label class="plot-view polar-only">Radius <select class="field-input field-input-sm" id="dihedrals-radial"><option value="dots">stacked dots (counts)</option><option value="frame">frame index</option></select></label>
           <label class="plot-view">Reference ° <input class="field-input field-input-sm" id="dihedrals-ref" type="text" placeholder="84.3" title="One or more values separated by spaces" /></label>
           <label class="plot-view">Label <input class="field-input field-input-sm" id="dihedrals-ref-label" type="text" placeholder="θExp" /></label>
-        </div>
-        <div class="dist-options hidden" id="dihedrals-custom-row">
-          <label class="field-label" for="dihedrals-custom">Radial values, one per computed frame in order, or “frame value” pairs (e.g. ΔE<sub>ST</sub> of each sampled configuration)</label>
-          <textarea class="field-input" id="dihedrals-custom" rows="3" placeholder="0 0.152&#10;90 0.148&#10;…"></textarea>
-          <label class="plot-view">Radial label <input class="field-input field-input-sm" id="dihedrals-custom-label" type="text" value="ΔEST (eV)" /></label>
         </div>
         <canvas class="chart-canvas" id="chart-dihedrals"></canvas>
         <div class="chart-placeholder" id="chart-dihedrals-ph">Dihedral-angle evolution over the active trajectory</div>

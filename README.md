@@ -308,8 +308,7 @@ Two further views show every frame as a dot:
 - **Show → dot histogram** (RMSD, bonds, angles, dihedrals): the frames of each bin are stacked as dots, and a dashed line marks the mean of each series. When a column is too tall, one dot stands for several frames; the y-axis label says how many.
 - **Show → polar plot** (angles and dihedrals) is the PCCP-style figure. It uses a half circle for 0–180° and for the folded ranges, and a full circle for 0–360°. The radius can be:
   - *stacked dots*: counts per angular bin;
-  - *frame index*;
-  - *custom values*: pasted as one value per computed frame, or as `frame value` pairs. An example is the ΔE<sub>ST</sub> of each sampled configuration, which gives the ΔE<sub>ST</sub>-vs-torsion plot of the paper.
+  - *frame index*.
 
   Dashed rays mark the circular mean of each series. **Reference** adds one or more marked directions with a label, e.g. `84.3` with the label `θExp`.
 
