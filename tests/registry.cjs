@@ -22,7 +22,7 @@ def bridge(command, env=None):
 listed = bridge({'action': 'list_analyses'})
 ids = [a['id'] for a in listed['analyses']]
 assert listed['ok'] and not listed['errors'], listed['errors']
-assert len([i for i in ids if i.startswith('mdanalysis.')]) == 20 and 'ase.cell_volume' in ids and 'custom.radius_of_gyration' in ids, ids
+assert len([i for i in ids if i.startswith('mdanalysis.')]) == 34 and 'ase.cell_volume' in ids and 'custom.radius_of_gyration' in ids, ids
 rg = next(a for a in listed['analyses'] if a['id'] == 'custom.radius_of_gyration')
 assert rg['source'] == 'plugins/radius_of_gyration.py' and [p['type'] for p in rg['params']] == ['atoms', 'bool'], rg
 checks += 1

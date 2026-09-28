@@ -1,6 +1,6 @@
 'use strict'
 
-// MONET page script, part 3 of 8: Analysis workspace shared by the modules: tabs, charts, ASE connection, runAse, the trajectory player and time-series views.
+// MONET page script, part 3 of 9: Analysis workspace shared by the modules: tabs, charts, ASE connection, runAse, the trajectory player and time-series views.
 // The app-*.js files are classic scripts sharing one global scope; index.html loads them in this order.
 
 // =============================================================================

@@ -26,12 +26,13 @@
     if (analyses.some(entry => entry.id === previous)) select.value = previous
   }
 
-  // Description shown above the fields: the analysis text, where it comes from, and its reference.
+  // Description shown above the fields: the analysis text and where it comes from. The references
+  // are behind the "ⓘ Cite" button (references.js); a plugin's own citation text is also shown here.
   function describe (spec) {
     if (!spec) return ''
     const parts = [spec.description || spec.label]
     if (spec.source && spec.source !== 'built-in') parts.push(`Plugin: ${spec.source}.`)
-    if (spec.citation) parts.push(`Cite: ${spec.citation}`)
+    if (spec.citation && spec.source !== 'built-in') parts.push(`Cite: ${spec.citation}`)
     if (!spec.available) parts.push(`Needs ${spec.missing.join(', ')} (python -m pip install ${spec.missing.join(' ')}).`)
     return parts.join(' ')
   }
@@ -156,6 +157,7 @@
         <label class="field-label" for="${kind}-step">Frame step</label>
         <input class="field-input field-input-sm" type="number" id="${kind}-step" value="1" min="1" />
         <button class="btn btn-sm btn-accent" id="btn-run-${kind}">Compute</button>
+        <button class="btn btn-sm" id="${kind}-cite" type="button" title="References to cite for this analysis">ⓘ Cite</button>
       </div>
       <p class="panel-desc" id="${kind}-description"></p>
       <div class="mda-fields" id="${kind}-fields"></div>

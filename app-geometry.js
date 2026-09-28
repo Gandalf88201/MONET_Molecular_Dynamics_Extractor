@@ -1,6 +1,6 @@
 'use strict'
 
-// MONET page script, part 4 of 8: Geometry and dynamics analyses: RMSD, pair distances, bonds, angles, dihedrals, time axis, RMSD matrix, RDF, MSD, VDOS, autocorrelation.
+// MONET page script, part 4 of 9: Geometry and dynamics analyses: RMSD, pair distances, bonds, angles, dihedrals, time axis, RMSD matrix, RDF, MSD, VDOS, autocorrelation.
 // The app-*.js files are classic scripts sharing one global scope; index.html loads them in this order.
 
 // =============================================================================

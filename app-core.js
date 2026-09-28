@@ -1,6 +1,6 @@
 'use strict'
 
-// MONET page script, part 1 of 8: App state, analysis-history core, DOM helpers, workflow navigation and the main 3D viewer.
+// MONET page script, part 1 of 9: App state, analysis-history core, DOM helpers, workflow navigation and the main 3D viewer.
 // The app-*.js files are classic scripts sharing one global scope; index.html loads them in this order.
 
 // =============================================================================

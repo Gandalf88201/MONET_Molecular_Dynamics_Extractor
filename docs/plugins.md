@@ -71,7 +71,7 @@ Plugins are ordinary Python code run with your user rights, like any package you
 | `category` | menu group (`<optgroup>`); default *Plugins* |
 | `requires` | extra Python modules, e.g. `('scipy',)`; a missing one disables the entry and tells the user what to install |
 | `output` | the analysis writes a file: `{'suffix': '.dx'}`; add `'trajectory': True` for an extended XYZ that MONET can analyse next |
-| `citation` | shown under the description and useful for the methods report |
+| `citation` | reference text for the analysis: shown under the description and in the ⓘ Cite dialog (built-in analyses keep their references in `references.js`) |
 
 ## Parameters
 

@@ -1,6 +1,6 @@
 'use strict'
 
-// MONET page script, part 7 of 8: Analysis history drawer, console (a call fills a panel and runs it) and sessions (save, export, open, resume).
+// MONET page script, part 7 of 9: Analysis history drawer, console (a call fills a panel and runs it) and sessions (save, export, open, resume).
 // The app-*.js files are classic scripts sharing one global scope; index.html loads them in this order.
 
 // =============================================================================

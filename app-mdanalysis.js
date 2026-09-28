@@ -1,6 +1,6 @@
 'use strict'
 
-// MONET page script, part 5 of 8: MDAnalysis module and registered analyses (monet_registry.py): formats, selections, generic forms and plots, PCA.
+// MONET page script, part 5 of 9: MDAnalysis module and registered analyses (monet_registry.py): formats, selections, generic forms and plots, PCA.
 // The app-*.js files are classic scripts sharing one global scope; index.html loads them in this order.
 
 // =============================================================================
@@ -563,6 +563,7 @@ function showPca (r, { title, notes, filename }) {
     stats: r.series.map(series => MonetASEModel.seriesStats(series.data)),
     variance: r.table.rows.map(row => row[1]),
     cumulated: r.table.rows.map(row => row[2]),
+    cosine: r.table.rows.map(row => row[3] ?? null),
     ratio: r.pca.variance_ratio,
     shown: new Set(Array.from({ length: r.pca.shown }, (_, k) => k)),
     selected: [], sides: null, component: null, written: null
@@ -587,7 +588,7 @@ function renderPcaComponents () {
   const table = document.createElement('table')
   table.className = 'atom-table pca-components-table'
   const head = table.createTHead().insertRow()
-  for (const column of ['Plot', 'Component', 'Variance (Å²)', 'Explained (%)', 'Cumulated (%)', 'Mean ± std (Å)']) {
+  for (const column of ['Plot', 'Component', 'Variance (Å²)', 'Explained (%)', 'Cumulated (%)', 'Cosine content', 'Mean ± std (Å)']) {
     const th = document.createElement('th')
     th.textContent = column
     head.appendChild(th)
@@ -610,7 +611,8 @@ function renderPcaComponents () {
     })
     row.insertCell().appendChild(box)
     const stats = pca.stats[k]
-    for (const value of [label, pca.variance[k], fmt(100 * pca.ratio[k], 3), pca.cumulated[k], `${fmt(stats.mean, 3)} ± ${fmt(stats.std, 3)}`]) row.insertCell().textContent = value
+    const cosine = pca.cosine[k] === null || pca.cosine[k] === undefined ? '—' : fmt(pca.cosine[k], 3)
+    for (const value of [label, pca.variance[k], fmt(100 * pca.ratio[k], 3), pca.cumulated[k], cosine, `${fmt(stats.mean, 3)} ± ${fmt(stats.std, 3)}`]) row.insertCell().textContent = value
   })
   const scroll = document.createElement('div')
   scroll.className = 'ase-atom-scroll'

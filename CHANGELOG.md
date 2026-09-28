@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.7.0 (2026-09-28)
+
+The remaining MDAnalysis analysis modules join the *MDAnalysis › Analyses* menu, and MONET now tells you what to cite: a References dialog (Chicago or BibTeX) for MONET, ASE, MDAnalysis and each analysis.
+
+- New MDAnalysis analyses (`monet_analyses/mdanalysis.py`):
+  - Structure: average structure and RMSD from it (`align.AverageStructure`, written as extended XYZ); bond–angle–torsion internal coordinates of one molecule (`bat.BAT`).
+  - Interactions: site-specific RDF with the coordination number of each site (`rdf.InterRDF_s`); hydrogen-bond lifetime (`HydrogenBondAnalysis.lifetime`, continuous or intermittent) and autocorrelation with a multi-exponential fit (`HydrogenBondAutoCorrel`); water bridges between two selections (`WaterBridgeAnalysis`); contact maps (`distances.contact_matrix`).
+  - Membranes, polymers and dielectrics (new category): leaflets and bilayer thickness (`leaflet.LeafletFinder`), persistence length (`polymer.PersistenceLength`), static dielectric constant (`dielectric.DielectricConstant`).
+  - Proteins: Janin χ1/χ2 (`dihedrals.Janin`), helix geometry (`helix_analysis.HELANAL`).
+  - Nucleic acids (new category): base-pair distances (`nucleicacids`: Watson–Crick, minor and major groove) and backbone torsions with the sugar pucker (`nuclinfo`). PDB and AMBER names such as `DA` or `RG3` are accepted.
+  - PCA reports the cosine content of each component (`pca.cosine_content`); GNM offers `closeContactGNMAnalysis`.
+- New: **ⓘ References** in the title bar and **ⓘ Cite** next to each analysis menu. They list the references to cite, separated into MONET, ASE and MDAnalysis, with the method references of each analysis as the libraries declare them. They are shown in Chicago (author-date) or BibTeX with `\cite{…}` keys, and can be copied or downloaded as `.bib`. The methods report lists the references of the steps it contains. The references live in `references.js`; the ASE analyses no longer repeat them as text.
+- Partial charges: an extended XYZ `charge`, `charges` or `initial_charges` column, or the charges of an imported topology, reach MDAnalysis (they were zero before). The dielectric constant also accepts charges typed by element.
+- `networkx` is now in `requirements.txt` (needed by `LeafletFinder`); the launchers install it at the next start.
+- Not included: `encore`, `psa` and `waterdynamics` (deprecated since MDAnalysis 2.8 and removed in 3.0 in favour of MDAKits), `hole2` and `legacy.x3dna` (need the external HOLE and X3DNA programs).
+- Tests: `tests/mda-analyses.cjs` compares every new analysis with MDAnalysis called directly or with a known answer (ideal helix, planar bilayer, rigid torsion, paired bases); `tests/references.cjs` checks that every built-in analysis has references and that the Chicago and BibTeX forms are well formed.
+
 ## 2.6.0 (2026-09-28)
 
 The ASE analysis modules join MONET: *ASE › More analyses* now holds thirteen built-in analyses from ASE, chosen for molecular-dynamics trajectories.

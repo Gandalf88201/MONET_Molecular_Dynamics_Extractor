@@ -180,6 +180,9 @@ def frames(path, fmt, topology=None):
         'resid': [int(r) for r in getattr(atoms, 'resids', [1] * len(atoms))],
         'atomname': [_clean(n, symbols[i]) for i, n in enumerate(getattr(atoms, 'names', symbols))],
     }
+    charges = getattr(atoms, 'charges', None)
+    if charges is not None and np.any(np.asarray(charges, dtype=float) != 0):
+        extra['charge'] = [f'{float(q):.6f}' for q in charges]
     for ts in universe.trajectory:
         yield symbols, atoms.positions.astype(float), _lattice(ts.dimensions), None, int(ts.frame), extra
 
@@ -240,8 +243,9 @@ def build_universe(symbols, positions, cells=None, pbc=None, properties=None, bo
     universe.add_TopologyAttr('elements', symbols)
     universe.add_TopologyAttr('types', symbols)
     universe.add_TopologyAttr('masses', [atomic_masses[atomic_numbers[sym]] for sym in symbols])
-    # XYZ files carry no charges; zeros keep charge-aware analyses (e.g. LinearDensity) usable.
-    universe.add_TopologyAttr('charges', np.zeros(n))
+    # Partial charges come from a charge column of the file; otherwise zeros keep charge-aware
+    # analyses (e.g. LinearDensity) usable.
+    universe.add_TopologyAttr('charges', np.asarray(properties['charge'], dtype=float) if 'charge' in properties else np.zeros(n))
     universe.add_TopologyAttr('resids', [key[0] for key in residues])
     universe.add_TopologyAttr('resnames', [key[1] for key in residues])
     universe.add_TopologyAttr('segids', ['SYSTEM'])

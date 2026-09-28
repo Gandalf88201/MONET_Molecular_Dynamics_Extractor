@@ -42,7 +42,7 @@ ase_ids = [a['id'] for a in listed['analyses'] if a['engine'] == 'ase' and a['so
 expected = ['diffusion', 'stored_properties', 'bond_types', 'molecules', 'bond_events', 'rdf', 'space_group',
             'dimensionality', 'layers', 'xrd', 'saxs', 'lattice', 'supercell']
 assert ase_ids == [f'ase.{n}' for n in expected], ase_ids
-assert all(a['category'] and a['citation'] for a in listed['analyses'] if a['id'] in ase_ids)
+assert all(a['category'] for a in listed['analyses'] if a['id'] in ase_ids)
 checks += 1
 
 # Diffusion: a random walk with step σ per axis has D = σ² / (2 Δt); a subset of one element gives the same D.
