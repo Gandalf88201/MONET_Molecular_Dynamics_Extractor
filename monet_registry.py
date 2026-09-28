@@ -34,7 +34,7 @@ ROOT = Path(__file__).resolve().parent
 ENGINES = {'ase': 'ASE', 'mdanalysis': 'MDAnalysis', 'custom': 'MONET Custom Functionalities'}
 # Python modules each engine needs; an analysis may declare more with requires=(...).
 ENGINE_REQUIRES = {'ase': ('ase',), 'mdanalysis': ('MDAnalysis',), 'custom': ()}
-BUILTIN = ('monet_analyses.mdanalysis',)
+BUILTIN = ('monet_analyses.ase', 'monet_analyses.mdanalysis')
 ENTRY_POINT_GROUP = 'monet.analyses'
 KINDS = ('series', 'profile', 'matrix', 'table')
 PARAM_TYPES = ('number', 'integer', 'bool', 'choice', 'text', 'selection', 'lines', 'atoms', 'groups')
@@ -322,6 +322,13 @@ class Context:
         if self._atoms is None:
             self._atoms = self._loader.first_atoms(self.filename, self._cmd)
         return self._atoms.copy()
+
+    def images(self):
+        """Analysed frames as ase.Atoms with what the file stores for each frame (energy, forces, stress,
+        momenta and comment-line values in atoms.info), with the crystal cell and PBC settings applied."""
+        frames, images = self._loader.images(self._cmd)
+        self.analysed_frames = frames
+        return frames, images
 
     @property
     def symbols(self):

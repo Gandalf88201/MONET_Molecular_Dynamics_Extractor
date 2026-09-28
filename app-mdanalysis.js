@@ -264,8 +264,11 @@ async function loadRegistry () {
     const entries = aseState.analyses.filter(entry => entry.engine === engine)
     MonetAnalysisForms.fillSelect($(`${kind}-analysis`), entries)
     document.querySelector(`.ase-stab[data-stab="${kind}"]`).classList.toggle('registry-empty', !entries.length)
+    const builtIn = entries.filter(entry => entry.source === 'built-in').length
+    const plugins = entries.length - builtIn
+    const counted = [builtIn && `${builtIn} built-in`, plugins && `${plugins} from plugins`].filter(Boolean).join(', ')
     $(`${kind}-availability`).textContent = (entries.length
-      ? `${entries.length} analys${entries.length === 1 ? 'is' : 'es'} added as plugins. Put your own in the plugins folder of MONET or in ~/.monet/plugins (see docs/plugins.md), then restart the launcher.`
+      ? `${entries.length} analys${entries.length === 1 ? 'is' : 'es'} (${counted}). Add your own in the plugins folder of MONET or in ~/.monet/plugins (see docs/plugins.md), then restart the launcher.`
       : 'No plugin analyses for this module.') + (failed.length ? ` Plugins that could not be loaded: ${failed.join('; ')}` : '')
     updateRegistryForm(kind)
   }

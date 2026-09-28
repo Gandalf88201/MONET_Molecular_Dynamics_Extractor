@@ -481,6 +481,31 @@ class XYZTrajectory:
                 atoms.set_pbc(pbc)
             yield frame, atoms
 
+    def full_atoms(self, frames):
+        """Yield (frame_index, ase.Atoms) read by ASE's extended XYZ reader, so that what the file stores
+        (energy, forces, stress and momenta as calculator results or arrays, comment values in atoms.info)
+        is kept; plain XYZ and CP2K/CPMD comment lines are read too. Coordinates are checked as in atoms()."""
+        import io
+        from ase.io.extxyz import read_xyz
+        symbols = self.symbols_list()
+        with open(self.path, 'rb') as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            for frame in frames:
+                if not 0 <= frame < self.nframes:
+                    raise ValueError('Frame index is outside the trajectory.')
+                positions, comment = self._parse(frame, None, mm)
+                block = self._block(mm, frame).decode('utf-8', 'replace')
+                try:
+                    atoms = next(read_xyz(io.StringIO(block), 0))
+                except Exception:
+                    # A comment line the extended XYZ reader rejects: keep the checked coordinates only.
+                    atoms = next(self.atoms([frame]))[1]
+                atoms.set_chemical_symbols(symbols)
+                atoms.positions = positions
+                lattice, pbc = self.cell(comment)
+                atoms.set_cell(lattice if lattice is not None else np.zeros((3, 3)))
+                atoms.set_pbc(pbc if pbc is not None else False)
+                yield frame, atoms
+
 
 # ── extraction ───────────────────────────────────────────────────────────────
 

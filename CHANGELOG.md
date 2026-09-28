@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.6.0 (2026-09-28)
+
+The ASE analysis modules join MONET: *ASE › More analyses* now holds thirteen built-in analyses from ASE, chosen for molecular-dynamics trajectories.
+
+- New (*ASE › More analyses*, `monet_analyses/ase.py`):
+  - Self-diffusion coefficient per element or for the centre of mass of chosen atoms (`ase.md.analysis.DiffusionCoefficient`), with the spread between segments and the MSD curves. Periodic runs are unwrapped first. For a subset of atoms, MONET divides by the chosen atoms only; ASE divides by every atom of the element.
+  - Energy, forces, kinetic temperature and pressure written in the file (extended XYZ calculator results, momenta and stress; CP2K `E =` in hartree), read with `ase.io`. Nothing is recomputed.
+  - Every bond, angle or dihedral by element type (`ase.geometry.analysis.Analysis` on the first frame, values in every frame): distribution or mean per frame.
+  - Molecules and species per frame, and bonds formed and broken between frames with a minimum lifetime, so that bonds flickering at the cutoff are not counted (`ase.neighborlist`, MONET bond cutoff).
+  - Total or partial RDF (`ase.geometry.rdf.get_rdf`), space group along the trajectory (`ase.spacegroup.symmetrize`, spglib), dimensionality of the bonded network (`ase.geometry.dimensionality`), atomic layers (`ase.geometry.get_layers`).
+  - Powder XRD and SAXS averaged over the frames with the Debye formula of `ase.utils.xrdebye`, computed from a distance histogram (it matches `XrDebye` to 0.1 %, and runs fast for thousands of atoms).
+  - Bravais lattice and Niggli-reduced cell per frame (`ase.cell`), supercell trajectory (`ase.build.make_supercell`).
+- Plugin API: `ctx.images()` returns every analysed frame as `ase.Atoms` with the values stored in the file (energy, forces, stress, momenta, comment values).
+- Changed: the *More analyses* tabs count built-in and plugin analyses separately.
+- Not included, with the reason in README.md: ASE calculators, optimisers, MD engines, NEB, vibrations, phonons, thermochemistry, EOS, GA, the database and `utils.structure_comparator`. The structure comparator finds thermally displaced MD frames all different, so it cannot group them.
+- Tests: `tests/ase-analyses.cjs` compares every analysis with ASE called directly or with a known answer.
+
 ## 2.5.0 (2026-09-28)
 
 Motion on the structure: vibration arrows and thermal ellipsoids are drawn on the molecule in the ASE viewer, and atom groups picked in the viewer follow the bonds.
