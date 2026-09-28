@@ -137,7 +137,7 @@
     tab.dataset.group = group
     tab.dataset.stab = kind
     tab.textContent = title
-    tab.title = 'Analyses added as plugins (see docs/plugins.md)'
+    tab.title = 'Further analyses of this module, built in or added as plugins (see docs/plugins.md)'
     const last = [...bar.querySelectorAll(`.ase-stab[data-group="${group}"]`)].pop()
     if (last) last.after(tab)
     else bar.appendChild(tab)
@@ -149,7 +149,7 @@
     panel.className = 'ase-subpanel'
     panel.id = `ase-sub-${kind}`
     panel.innerHTML = `
-      <p class="panel-desc" id="${kind}-availability">Analyses added as plugins appear here.</p>
+      <p class="panel-desc" id="${kind}-availability">Further analyses of this module, built in or added as plugins, appear here.</p>
       <div class="ase-ctrl-row">
         <label class="field-label" for="${kind}-analysis">Analysis</label>
         <select class="field-input acf-select" id="${kind}-analysis"></select>

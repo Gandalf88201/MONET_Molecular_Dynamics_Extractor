@@ -10,7 +10,7 @@ The same mechanism serves every module:
 | `mdanalysis` | **MDAnalysis › Analyses** (in the same menu as the built-in ones) | MDAnalysis |
 | `custom` | **MONET Custom Functionalities › More analyses** | numpy only |
 
-The *More analyses* tab is shown only when at least one analysis is installed for that module. The built-in MDAnalysis analyses are written this way too: see `monet_analyses/mdanalysis.py`.
+The *More analyses* tab is shown only when at least one analysis is installed for that module. The built-in analyses are written this way too: see `monet_analyses/ase.py` (ASE › More analyses) and `monet_analyses/mdanalysis.py`.
 
 ## A first plugin
 
@@ -99,6 +99,7 @@ Everything follows the MONET settings (frame step, crystal cell, periodic bounda
 | --- | --- |
 | `ctx.frames(atoms=None, need_cell=False)` | `Frames(frames, positions, cells, pbc)`: frame indices, positions `(F, n, 3)` in Å, cells `(F, 3, 3)` or `None`, PBC flags. `need_cell=True` asks the user for a cell when there is none |
 | `ctx.atoms()` | first frame as an `ase.Atoms` (cell and PBC applied) |
+| `ctx.images()` | `(frames, [ase.Atoms])`: every analysed frame as read by ASE, with what the file stores (energy, forces, stress and momenta as calculator results or arrays, comment-line values in `atoms.info`); slower than `ctx.frames()`, use it only for those values |
 | `ctx.symbols`, `ctx.natoms` | element symbols, number of atoms |
 | `ctx.atom_ids` | MONET ID of every atom (index → ID), for labels in the files you write |
 | `ctx.universe()` | `(frames, Universe)`: in-memory MDAnalysis Universe; atom `id` = MONET ID, residues from the topology or from bonded molecules |

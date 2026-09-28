@@ -365,6 +365,30 @@ class _Loader:
         traj = _trajectory(filename)
         return traj.atom_properties() if traj else {}
 
+    @staticmethod
+    def images(cmd):
+        """(frame indices, [ase.Atoms]) of the analysed frames with the values the file stores."""
+        filename = cmd['filename']
+        step = cmd.get('frame_step', 1)
+        if not isinstance(step, int) or step < 1:
+            raise ValueError('Frame step must be a positive integer.')
+        traj = _trajectory(filename)
+        if traj is not None:
+            source = traj.full_atoms(traj.frame_indices(step))
+            total = max(len(traj.frame_indices(step)), 1)
+        else:
+            source = ((i, atoms) for i, atoms in enumerate(ase.io.iread(filename)) if i % step == 0)
+            total = None
+        frames, images = [], []
+        for k, (i, atoms) in enumerate(source):
+            frames.append(i)
+            images.append(_apply_geometry(atoms, cmd))
+            if k % 250 == 249:
+                prog(f'Reading frame {i:,} …', None if total is None else 10 + 80 * (k + 1) / total)
+        if not frames:
+            raise ValueError('No frames found.')
+        return frames, images
+
 
 def action_list_analyses(_):
     """Registered analyses with their parameters, for the forms of the interface."""

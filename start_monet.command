@@ -33,14 +33,14 @@ fi
 
 STAMP=.venv/monet-requirements.txt
 if ! cmp -s requirements.txt "$STAMP"; then
-  echo "Installing ASE and MDAnalysis (first run or updated requirements) …"
+  echo "Installing ASE, MDAnalysis and spglib (first run or updated requirements) …"
   "$VENV_PY" -m pip install --upgrade pip >/dev/null || true
   "$VENV_PY" -m pip install -r requirements.txt || fail "Installing the requirements failed; check the internet connection and the messages above."
   cp requirements.txt "$STAMP"
 fi
 
 if [ "${MONET_SETUP_ONLY:-}" = "1" ]; then
-  "$VENV_PY" -c 'import ase, MDAnalysis; print(f"MONET environment ready: ASE {ase.__version__}, MDAnalysis {MDAnalysis.__version__}")'
+  "$VENV_PY" -c 'import ase, MDAnalysis, spglib; print(f"MONET environment ready: ASE {ase.__version__}, MDAnalysis {MDAnalysis.__version__}, spglib {spglib.__version__}")'
   exit 0
 fi
 
