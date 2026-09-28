@@ -224,11 +224,12 @@ function drawFluct () {
     yLabel: column[1], labels: names, notes: [fluct.summary], yMin: values.every(v => !Number.isFinite(v) || v >= 0) ? 0 : undefined,
     datasets: [{ label: `${column[1]} of ${r.items.length} ${r.quantity}`, data: values.map(v => (Number.isFinite(v) ? v : null)), bars: true, colorIndex: 0 }]
   })
-  // Colour map and displacement ellipsoids on the molecule.
+  // Colour map, displacement ellipsoids and vibration arrows on the molecule.
   const finite = values.filter(Number.isFinite)
   const mapped = $('fluct-map').checked && finite.length > 0
   const ellipsoids = r.quantity === 'atoms' && $('fluct-ellipsoids').checked && r.statistics.some(st => st.u)
-  if (!mapped && !ellipsoids) return aseViewer.setOverlay(null)
+  const arrows = $('fluct-arrows').checked ? fluctArrows(r) : []
+  if (!mapped && !ellipsoids && !arrows.length) return aseViewer.setOverlay(null)
   const low = Math.min(...finite), high = Math.max(...finite)
   const name = $('fluct-colormap').value
   const color = value => {
@@ -257,10 +258,74 @@ function drawFluct () {
     if (overlay.legend) overlay.legend.title += ` · ${note}`
     else overlay.caption = `Displacement ${note}`
   }
+  if (arrows.length) {
+    const largest = Math.max(...arrows.map(a => a.amplitude))
+    const choice = $('fluct-arrow-scale').value
+    overlay.arrowScale = choice === 'auto' ? 1 / largest : Number(choice)
+    overlay.arrows = arrows.map(a => ({ ...a, color: mapped && Number.isFinite(values[a.item]) ? color(values[a.item]) : null }))
+    const note = `arrows ± amplitude ×${fmt(overlay.arrowScale, 3)}`
+    if (overlay.legend) overlay.legend.title += ` · ${note}`
+    else overlay.caption = overlay.caption ? `${overlay.caption} · ${note}` : `Vibration ${note}`
+  }
   aseViewer.setOverlay(overlay)
 }
 for (const id of ['fluct-metric', 'fluct-colormap', 'fluct-map']) $(id).addEventListener('change', () => { drawFluct(); renderFluctTable() })
-for (const id of ['fluct-ellipsoids', 'fluct-ellipsoid-prob', 'fluct-ellipsoid-scale']) $(id).addEventListener('change', () => drawFluct())
+for (const id of ['fluct-ellipsoids', 'fluct-ellipsoid-prob', 'fluct-ellipsoid-scale', 'fluct-arrows', 'fluct-arrow-scale']) $(id).addEventListener('change', () => drawFluct())
+
+// Vibration arrows of the analysed items (see MolecularViewer._arrowDirection), amplitudes in Å on the first frame:
+//   atoms      ± RMSF along the main axis of the displacement tensor
+//   bonds      the bond SD shared by the two atoms in inverse proportion to their masses (C–H: mostly the H)
+//   angles     arc of the SD at each end atom, shared by their moments of inertia about the vertex
+//   dihedrals  arc of the SD at the two outer atoms, shared by their moments of inertia about the axis
+function fluctArrows (r) {
+  const byIndex = new Map(r.atomMapping.map(atom => [atom.aseIndex, atom]))
+  const mass = atom => Number(MonetQM.MASSES[atom.element]) || 1
+  const cell = aseState.mic ? displayCell() : null
+  const inv = cell ? MonetPBC.inverse(cell) : null
+  const vec = (p, q) => {
+    const d = [q.x - p.x, q.y - p.y, q.z - p.z]
+    return inv ? MonetPBC.minimumImage(d[0], d[1], d[2], cell, inv) : d
+  }
+  const norm = p => Math.hypot(p[0], p[1], p[2])
+  const cross = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]]
+  const arrows = []
+  r.items.forEach((item, k) => {
+    const st = r.statistics[k]
+    const atoms = item.map(index => byIndex.get(index))
+    if (atoms.some(atom => !atom)) return
+    const ids = atoms.map(atom => atom.monetId)
+    const add = (id, amplitude, spec) => { if (amplitude > 0 && Number.isFinite(amplitude)) arrows.push({ id, amplitude, item: k, ...spec }) }
+    if (r.quantity === 'atoms') {
+      if (!st.u?.every(Number.isFinite)) return
+      add(ids[0], st.rmsf, { kind: 'axis', vector: MonetASEModel.principalAxis(st.u).vector })
+    } else if (r.quantity === 'bonds') {
+      const [m0, m1] = atoms.map(mass)
+      add(ids[0], st.std * m1 / (m0 + m1), { kind: 'bond', other: ids[1] })
+      add(ids[1], st.std * m0 / (m0 + m1), { kind: 'bond', other: ids[0] })
+    } else if (r.quantity === 'angles') {
+      const sd = st.std * Math.PI / 180
+      const arm = [norm(vec(atoms[1], atoms[0])), norm(vec(atoms[1], atoms[2]))]
+      const inertia = [mass(atoms[0]) * arm[0] ** 2, mass(atoms[2]) * arm[1] ** 2]
+      const total = inertia[0] + inertia[1]
+      if (!(total > 0)) return
+      add(ids[0], arm[0] * sd * inertia[1] / total, { kind: 'bend', vertex: ids[1], other: ids[2] })
+      add(ids[2], arm[1] * sd * inertia[0] / total, { kind: 'bend', vertex: ids[1], other: ids[0] })
+    } else {
+      const sd = st.std * Math.PI / 180
+      const axis = vec(atoms[1], atoms[2])
+      const length = norm(axis)
+      if (!(length > 0)) return
+      // Distance of each outer atom from the j–k axis.
+      const lever = [norm(cross(vec(atoms[1], atoms[0]), axis)) / length, norm(cross(vec(atoms[2], atoms[3]), axis)) / length]
+      const inertia = [mass(atoms[0]) * lever[0] ** 2, mass(atoms[3]) * lever[1] ** 2]
+      const total = inertia[0] + inertia[1]
+      if (!(total > 0)) return
+      add(ids[0], lever[0] * sd * inertia[1] / total, { kind: 'torsion', a: ids[1], b: ids[2] })
+      add(ids[3], lever[1] * sd * inertia[0] / total, { kind: 'torsion', a: ids[2], b: ids[1] })
+    }
+  })
+  return arrows
+}
 
 function renderFluctTable () {
   const box = $('fluct-table')
@@ -372,25 +437,34 @@ $('btn-run-fluct').addEventListener('click', async () => {
   if (!filename) return setStatus('Load an XYZ file and click Next first.')
   const quantity = $('fluct-quantity').value
   const command = { action: 'fluctuations', filename, quantity, frame_step: Number($('fluct-step').value) || 1 }
+  // Shown next to the plot too: the status bar alone is easily missed.
+  const fail = message => {
+    $('fluct-summary').textContent = message
+    $('fluct-summary').classList.remove('hidden')
+    setStatus(message)
+  }
   try {
-    if ($('fluct-scope').value === 'groups') command.groups = MonetASEModel.groupsFromIds($('fluct-groups').value, FLUCT_WIDTH[quantity], aseState.analysisAtoms)
-    else {
+    if ($('fluct-scope').value === 'groups') {
+      const width = FLUCT_WIDTH[quantity]
+      // No groups typed: the atoms selected in the viewer, grouped by their bonds.
+      if (!$('fluct-groups').value.trim() && aseState.pickedIds.length) {
+        $('fluct-groups').value = width > 1 ? groupsTextFromPicks(width) : aseState.pickedIds.join(' ')
+      }
+      command.groups = MonetASEModel.groupsFromIds($('fluct-groups').value, width, aseState.analysisAtoms)
+    } else {
       const indices = MonetASEModel.selectedIndices($('fluct-atoms').value, aseState.analysisAtoms)
       if (indices) command.indices = indices
     }
-  } catch (error) { return setStatus(error.message) }
+  } catch (error) {
+    clearAnalysis('fluct', false)
+    return fail(error.message)
+  }
   if (quantity === 'atoms') command.align = $('fluct-align').checked
   const axis = timeAxis()
   if (axis) command.dt = axis.dt
   clearAnalysis('fluct', false)
   const r = await runAse('fluct', command)
-  if (!r.ok) {
-    // Shown next to the plot too: the status bar alone is easily missed.
-    const message = 'Fluctuation error: ' + (r.message || r.error)
-    $('fluct-summary').textContent = message
-    $('fluct-summary').classList.remove('hidden')
-    return setStatus(message)
-  }
+  if (!r.ok) return fail('Fluctuation error: ' + (r.message || r.error))
   const spreads = r.statistics.map(st => (quantity === 'atoms' ? st.rmsf : st.std))
   let top = 0
   spreads.forEach((v, k) => { if (v > spreads[top]) top = k })

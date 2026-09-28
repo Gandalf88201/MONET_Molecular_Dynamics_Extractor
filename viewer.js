@@ -380,6 +380,8 @@
         }
       }
 
+      if (overlay?.arrows?.length && !light) this._drawArrows(overlay)
+
       if (overlay?.legend) this._drawLegend(overlay.legend)
       else if (overlay?.caption) {
         ctx.save(); ctx.fillStyle = themeColor('--plot-label', '#c0c0d8'); ctx.font = '11px sans-serif'
@@ -442,6 +444,75 @@
         ctx.moveTo(x[i] - Math.cos(angle) * major * k, y[i] - Math.sin(angle) * major * k)
         ctx.lineTo(x[i] + Math.cos(angle) * major * k, y[i] + Math.sin(angle) * major * k)
         ctx.stroke()
+      }
+      ctx.restore()
+    }
+
+    // Unit direction of a vibration arrow in the shown frame (null when an atom is missing):
+    //   axis    { vector }       fixed direction (main axis of an atom's displacement tensor)
+    //   bond    { other }        along the bond to `other` (stretching)
+    //   bend    { vertex, other } in the angle plane, perpendicular to the bond to `vertex` (bending)
+    //   torsion { a, b }         perpendicular to the plane of the atom and the axis a–b (torsion)
+    // `periodic` is { cell, inv } for minimum-image vectors, or null.
+    _arrowDirection (arrow, periodic) {
+      const at = id => this.atoms[this._index?.get(id)]
+      const vec = (p, q) => {
+        const d = [q.x - p.x, q.y - p.y, q.z - p.z]
+        return periodic ? root.MonetPBC.minimumImage(d[0], d[1], d[2], periodic.cell, periodic.inv) : d
+      }
+      const dot = (p, q) => p[0] * q[0] + p[1] * q[1] + p[2] * q[2]
+      const cross = (p, q) => [p[1] * q[2] - p[2] * q[1], p[2] * q[0] - p[0] * q[2], p[0] * q[1] - p[1] * q[0]]
+      const unit = p => { const n = Math.sqrt(dot(p, p)); return n > 1e-9 ? p.map(v => v / n) : null }
+      const self = at(arrow.id)
+      if (!self) return null
+      if (arrow.kind === 'axis') return unit(arrow.vector)
+      if (arrow.kind === 'bond') { const other = at(arrow.other); return other ? unit(vec(other, self)) : null }
+      if (arrow.kind === 'bend') {
+        const vertex = at(arrow.vertex), other = at(arrow.other)
+        if (!vertex || !other) return null
+        const bond = unit(vec(vertex, self)), toOther = vec(vertex, other)
+        if (!bond) return null
+        const along = dot(toOther, bond)
+        return unit(toOther.map((v, k) => v - along * bond[k]))
+      }
+      if (arrow.kind === 'torsion') {
+        const a = at(arrow.a), b = at(arrow.b)
+        return a && b ? unit(cross(vec(a, self), vec(a, b))) : null
+      }
+      return null
+    }
+
+    // Double-headed arrows centred on atoms: ± amplitude (Å) × overlay.arrowScale along each direction.
+    _drawArrows ({ arrows, arrowScale = 1 }) {
+      const { ctx } = this
+      const fallback = themeColor('--gold', '#ffd700')
+      const contrast = themeColor('--canvas-bg', '#0d0d1a')
+      const periodic = this.cell && root.MonetPBC ? { cell: this.cell, inv: root.MonetPBC.inverse(this.cell) } : null
+      ctx.save()
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+      for (const arrow of arrows) {
+        const direction = this._arrowDirection(arrow, periodic)
+        const atom = this.atoms[this._index?.get(arrow.id)]
+        const half = arrow.amplitude * arrowScale
+        if (!direction || !atom || !(half > 0)) continue
+        const p = this._project(atom.x - direction[0] * half, atom.y - direction[1] * half, atom.z - direction[2] * half)
+        const q = this._project(atom.x + direction[0] * half, atom.y + direction[1] * half, atom.z + direction[2] * half)
+        const dx = q.sx - p.sx, dy = q.sy - p.sy
+        const length = Math.hypot(dx, dy)
+        if (length < 3) continue
+        const ux = dx / length, uy = dy / length
+        const head = Math.min(9, 0.35 * length)
+        const path = () => {
+          ctx.beginPath()
+          ctx.moveTo(p.sx, p.sy); ctx.lineTo(q.sx, q.sy)
+          for (const [tip, sign] of [[q, 1], [p, -1]]) {
+            const bx = tip.sx - sign * ux * head, by = tip.sy - sign * uy * head
+            ctx.moveTo(bx - uy * head * 0.55, by + ux * head * 0.55); ctx.lineTo(tip.sx, tip.sy); ctx.lineTo(bx + uy * head * 0.55, by - ux * head * 0.55)
+          }
+        }
+        // A dark halo keeps the arrow visible over atoms of the same colour.
+        path(); ctx.globalAlpha = 0.8; ctx.lineWidth = 4.5; ctx.strokeStyle = contrast; ctx.stroke()
+        path(); ctx.globalAlpha = 1; ctx.lineWidth = 2.2; ctx.strokeStyle = arrow.color || fallback; ctx.stroke()
       }
       ctx.restore()
     }

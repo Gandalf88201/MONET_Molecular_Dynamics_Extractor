@@ -57,6 +57,7 @@ function selectSubtab (id) {
   if (charts[id]?.data) charts[id]._render()
   // The fluctuation colour map belongs to its own tab.
   if (id === 'fluct') drawFluct()
+  else if (REGISTRY_PANELS[id]) drawResultEllipsoids(id)
   else aseViewer.setOverlay(null)
   if (selectionTargets[id]) { $('ase-selection-target').value = id; updateSelectionTarget() }
 }
@@ -128,6 +129,15 @@ aseViewer.showAllLabels = true
 aseViewer.showSelectionOrder = true
 let aseViewerNeedsFit = true
 
+// Cell shown by both viewers: the ASE workspace and the 3D view of MONET Custom Functionalities.
+function setViewerCell (cell, { fit = false } = {}) {
+  // The 3D view is refitted when a cell appears, so the whole cell is in view.
+  if (fit || (cell && !viewer.cell)) viewerNeedsFit = true
+  aseViewer.cell = cell
+  viewer.cell = cell
+  resizeCanvas()
+}
+
 function resizeAseViewer () {
   if (!$('ase-mol-canvas').clientWidth || !$('ase-mol-canvas').clientHeight) return
   aseViewer.resize()
@@ -190,7 +200,7 @@ for (const field of cellFields) $(`cell-${field}`).addEventListener('input', upd
 function invalidateCellAnalyses () {
   aseState.sourceRevision++
   clearAllAnalyses(false)
-  aseViewer.cell = aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null
+  setViewerCell(aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, { fit: true })
   aseViewerNeedsFit = true
   resizeAseViewer()
   $('cell-status').textContent = aseState.cellParameters
@@ -246,7 +256,7 @@ $('cell-read').addEventListener('click', async () => {
     aseState.cellSourceName = null
     aseState.sourceRevision++; clearAllAnalyses(false)
     // Preserve the source vectors' orientation, rather than rebuilding from metrics.
-    aseViewer.cell = info.cell
+    setViewerCell(info.cell, { fit: true })
     aseViewerNeedsFit = true; resizeAseViewer()
     $('cell-status').textContent = `Using source cell (${info.cellpar.map(v => Number(v.toFixed(5))).join(', ')}); original vector orientation retained. Apply cell would replace it with the standard orientation.`
     historyRecord({ kind: 'cell', action: 'source', params: { cellpar: info.cellpar, pbc: info.pbc } })
@@ -428,7 +438,7 @@ function showFrame (frame) {
   const cell = displayCell()
   if (!aseState.cellParameters) {
     const lattice = player.cells.get(frame)
-    if (lattice) aseViewer.cell = lattice
+    if (lattice) setViewerCell(lattice)
   }
   applyDisplay({ rebond: !player.playing || aseState.analysisAtoms.length < 3000, cell })
   $('player-slider').value = frame
@@ -622,15 +632,40 @@ function updateSelectionTarget () {
   const target = selectionTargets[$('ase-selection-target').value]
   $('ase-append-group').disabled = !target.width
   $('ase-selection-hint').textContent = target.width
-    ? `Select atoms in groups of ${target.width}, in order. Use selection to fill the IDs; then click Compute.`
+    ? `Select bonded atoms (e.g. a carbon and its hydrogens: one group per ${{ 2: 'bond', 3: 'angle', 4: 'dihedral' }[target.width] || 'atom'}), or atoms in groups of ${target.width}, in order. Use selection to fill the IDs; then click Compute.`
     : `Select at least ${target.minimum} atom${target.minimum > 1 ? 's' : ''}. Use selection to restrict this analysis to those atoms.`
 }
 $('ase-selection-target').addEventListener('change', updateSelectionTarget)
+
+// Bond test between MONET IDs on the first frame: covalent radii × the molecule bond cutoff,
+// minimum image when periodic distances are on (the connectivity the ASE analyses use).
+function firstFrameBonded () {
+  const byId = new Map(aseState.analysisAtoms.map(atom => [atom.monetId, atom]))
+  const scale = Number($('ase-bond-scale').value) || 1.2
+  const cell = aseState.mic ? displayCell() : null
+  const inv = cell ? MonetPBC.inverse(cell) : null
+  return (a, b) => {
+    const p = byId.get(a), q = byId.get(b)
+    if (!p || !q || p.element === 'X' || q.element === 'X') return false
+    let d = [q.x - p.x, q.y - p.y, q.z - p.z]
+    if (inv) d = MonetPBC.minimumImage(d[0], d[1], d[2], cell, inv)
+    const limit = (MonetViewer.covalentRadius(p.element) + MonetViewer.covalentRadius(q.element)) * scale
+    const d2 = d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+    return d2 > 0.16 && d2 < limit * limit
+  }
+}
+
+// Picked atoms as groups for an input of `width` IDs per group (text of MONET IDs, groups separated by two spaces).
+function groupsTextFromPicks (width) {
+  return MonetASEModel.groupsFromPicks(aseState.pickedIds, width, firstFrameBonded()).map(group => group.join(' ')).join('  ')
+}
+
 $('ase-use-selection').addEventListener('click', () => {
   const kind = $('ase-selection-target').value
   const target = selectionTargets[kind]
-  const raw = aseState.pickedIds.join(' ')
+  let raw = aseState.pickedIds.join(' ')
   try {
+    if (target.width > 1) raw = groupsTextFromPicks(target.width)
     if (target.width) MonetASEModel.groupsFromIds(raw, target.width, aseState.analysisAtoms)
     else MonetASEModel.selectedIndices(raw, aseState.analysisAtoms, target.minimum)
     const input = $(target.input)
@@ -705,9 +740,9 @@ function updateAnalysisSource () {
     aseState.cellParameters = null
     aseState.cellSourceName = null
     aseState.cellSource = state.filePath
-    aseViewer.cell = null
+    setViewerCell(null)
     $('cell-status').textContent = 'No manual cell. Source lattice/PBC are used when present.'
-  } else if (!aseState.cellParameters) aseViewer.cell = null
+  } else if (!aseState.cellParameters) setViewerCell(null)
   hideAtomMenu()
   const extracted = Boolean(state.lastResult?.success)
   aseState.centreIds = $('ase-center').checked ? [] : null
@@ -831,7 +866,9 @@ function clearAnalysis (kind, report = true) {
   if (charts[`${kind}dist`]) clearAnalysis(`${kind}dist`, false)
   for (const id of { msd: ['msd-info'], vdos: ['vdos-info'] }[kind] || []) $(id).classList.add('hidden')
   if (kind === 'mda' || REGISTRY_PANELS[kind]) {
-    for (const id of [`${kind}-download`, `${kind}-activate`, `${kind}-error`]) $(id).classList.add('hidden')
+    for (const id of [`${kind}-download`, `${kind}-activate`, `${kind}-error`, `${kind}-ellipsoid-row`]) $(id)?.classList.add('hidden')
+    // Thermal ellipsoids of a cleared result leave the structure.
+    if (REGISTRY_PANELS[kind] && $(`ase-sub-${kind}`).classList.contains('active')) aseViewer.setOverlay(null)
     $(`${kind}-table`).replaceChildren()
     if (kind === 'mda') resetPca()
     clearAnalysis(`${kind}matrix`, false)
@@ -1195,10 +1232,6 @@ function drawGeometry (kind) {
     const radialMode = polar ? $(`${kind}-radial`).value : 'dots'
     if (radialMode === 'frame') {
       radial = { label: 'Frame', values: entry.series.map(() => entry.labels.map(Number)) }
-    } else if (radialMode === 'custom') {
-      const parsed = parseRadialValues($(`${kind}-custom`).value, entry.labels)
-      radial = { label: $(`${kind}-custom-label`).value.trim() || 'Value', values: entry.series.map(() => parsed.values) }
-      if (parsed.message) notes.push(parsed.message)
     }
     const title = entry.title.replace(/ vs .*$/, '')
     charts[kind].setData({
@@ -1229,27 +1262,6 @@ function parseReferences (kind) {
   })
 }
 
-// Radial values for the polar plot: "value" per computed frame, or "frame value" pairs.
-function parseRadialValues (text, frameLabels) {
-  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(line => line && !/^[#!]/.test(line))
-  const values = new Array(frameLabels.length).fill(NaN)
-  if (!lines.length) return { values, message: 'Paste the radial values to draw the points.' }
-  const rows = lines.map(line => line.split(/[\s,;]+/).map(Number))
-  if (rows.every(row => row.length >= 2 && row.slice(0, 2).every(Number.isFinite))) {
-    const position = new Map(frameLabels.map((frame, k) => [Number(frame), k]))
-    let unmatched = 0
-    for (const [frame, value] of rows) {
-      if (position.has(frame)) values[position.get(frame)] = value
-      else unmatched++
-    }
-    return { values, message: unmatched ? `${unmatched} radial value(s) refer to frames that were not computed.` : '' }
-  }
-  const single = rows.map(row => row[0])
-  single.slice(0, values.length).forEach((value, k) => { values[k] = value })
-  const message = single.length !== values.length ? `${single.length} radial values for ${values.length} computed frames; extra frames are not drawn.` : ''
-  return { values, message }
-}
-
 function updateDistributionOptions (kind) {
   const view = $(`${kind}-view`).value
   const shown = view === 'dots' || view === 'polar'
@@ -1257,11 +1269,10 @@ function updateDistributionOptions (kind) {
   const radial = $(`${kind}-radial`)
   if (!radial) return
   radial.closest('label').classList.toggle('hidden', view !== 'polar')
-  $(`${kind}-custom-row`).classList.toggle('hidden', !(view === 'polar' && radial.value === 'custom'))
 }
 
 for (const kind of ['rmsd', 'bonds', 'angles', 'dihedrals']) {
-  for (const id of [`${kind}-view`, `${kind}-bins`, `${kind}dist-bins`, `${kind}-fit`, `${kind}-fit-range`, `${kind}-radial`, `${kind}-ref`, `${kind}-ref-label`, `${kind}-custom`, `${kind}-custom-label`]) {
+  for (const id of [`${kind}-view`, `${kind}-bins`, `${kind}dist-bins`, `${kind}-fit`, `${kind}-fit-range`, `${kind}-radial`, `${kind}-ref`, `${kind}-ref-label`]) {
     const element = $(id)
     if (!element) continue
     element.addEventListener(element.tagName === 'SELECT' ? 'change' : 'input', () => {

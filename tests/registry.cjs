@@ -53,6 +53,9 @@ def nan_series(ctx, p):
 @analysis('bad_length', engine='custom', label='Bad length')
 def bad_length(ctx, p):
     return {'kind': 'series', 'x': [0, 1], 'series': [{'label': 'v', 'data': [1.0]}]}
+@analysis('bad_ellipsoids', engine='custom', label='Bad ellipsoids')
+def bad_ellipsoids(ctx, p):
+    return {**table(['x'], [[1]]), 'ellipsoids': [{'atom': 0, 'u': [0.01, 0.01]}]}
 ''')
 (folder / 'broken.py').write_text('def oops(:\n')
 (folder / 'duplicate.py').write_text('''
@@ -96,6 +99,8 @@ r = bridge({'action': 'run_analysis', 'analysis': 'custom.nan_series', 'filename
 assert r['ok'] and r['series'][0]['data'] == [1.0, None], r
 r = bridge({'action': 'run_analysis', 'analysis': 'custom.bad_length', 'filename': water}, env)
 assert not r['ok'] and 'as many values as x' in r['message'], r
+r = bridge({'action': 'run_analysis', 'analysis': 'custom.bad_ellipsoids', 'filename': water}, env)
+assert not r['ok'] and 'ellipsoids must be a list' in r['message'], r
 r = bridge({'action': 'run_analysis', 'analysis': 'ase.writes_file', 'filename': water}, env)
 assert not r['ok'] and 'choose where to save it' in r['message'], r
 checks += 1
@@ -136,6 +141,10 @@ assert pdb['ok'] and cif['ok'] and pdb['atoms'] == [0, 1, 2, 3] and pdb['bars'],
 u_cart = np.array([[[r[2], r[5], r[6]], [r[5], r[3], r[7]], [r[6], r[7], r[4]]] for r in pdb['table']['rows']])
 assert np.allclose([r[1] for r in pdb['table']['rows']], np.trace(u_cart, axis1=1, axis2=2) / 3, atol=1e-6)
 assert np.allclose(pdb['series'][0]['data'], [r[1] for r in cif['table']['rows']], rtol=0, atol=1e-6), 'same U_eq in both files'
+# Both give the Cartesian tensors (first-frame axes) that the page draws as ellipsoids on the structure.
+for result in (pdb, cif):
+    assert [e['atom'] for e in result['ellipsoids']] == [0, 1, 2, 3], result['ellipsoids']
+    assert np.allclose([e['u'] for e in result['ellipsoids']], [[u[0, 0], u[1, 1], u[2, 2], u[0, 1], u[0, 2], u[1, 2]] for u in u_cart], atol=5e-6)
 # Fixed PDB columns: serial = MONET ID, ANISOU = 10⁴ U in columns 29–70.
 anisou = [l for l in pdb_path.read_text().splitlines() if l.startswith('ANISOU')]
 assert [int(l[6:11]) for l in anisou] == [11, 12, 13, 14] and all(len(l) == 78 for l in anisou), anisou

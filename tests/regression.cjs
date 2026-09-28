@@ -43,6 +43,22 @@ assert.equal(stat([NaN]), null); checks++
 const hist = model.histogram([0.5, 1.5, 1.6], 2, 0, 2)
 assert.deepEqual(hist.density, [1 / 3, 2 / 3]); checks++
 
+// Groups from picked atoms: a carbon and its hydrogens give C–H bonds (never H–H); ordered bonded picks are kept.
+{
+  const bondList = new Set(['1-2', '1-3', '1-4', '1-5', '1-6', '6-7', '6-8', '6-9'])
+  const bonded = (a, b) => bondList.has(`${a}-${b}`) || bondList.has(`${b}-${a}`)
+  const picks = (ids, width) => model.groupsFromPicks(ids, width, bonded)
+  assert.deepEqual(picks([1, 2, 3, 4], 2), [[1, 2], [1, 3], [1, 4]]); assert.deepEqual(picks([1, 2, 3], 2), [[1, 2], [1, 3]]); checks++
+  assert.deepEqual(picks([1, 2, 6, 7], 2), [[1, 2], [6, 7]]); assert.deepEqual(picks([2, 10], 2), [[2, 10]]); checks++
+  assert.throws(() => picks([2, 10, 3], 2), /No bonds among the selected atoms/); checks++
+  assert.deepEqual(picks([2, 1, 3], 3), [[2, 1, 3]]); assert.deepEqual(picks([1, 2, 3, 4], 3), [[2, 1, 3], [2, 1, 4], [3, 1, 4]]); checks++
+  assert.deepEqual(picks([2, 1, 6, 7], 4), [[2, 1, 6, 7]]); assert.deepEqual(picks([1, 2, 3, 4, 6, 7], 4), [[2, 1, 6, 7], [3, 1, 6, 7], [4, 1, 6, 7]]); checks++
+  // Main axis of a displacement tensor (vibration arrows of atoms).
+  const axis = model.principalAxis([1, 1, 1, 0.9, 0.9, 0.9])
+  assert.ok(Math.abs(axis.value - 2.8) < 1e-12 && axis.vector.every(v => Math.abs(Math.abs(v) - 1 / Math.sqrt(3)) < 1e-12)); checks++
+  assert.ok(Math.abs(Math.abs(model.principalAxis([0.01, 0.02, 0.005, 0, 0, 0]).vector[1]) - 1) < 1e-12); checks++
+}
+
 // Sokal τ_int (same value as monet_analysis.integrated_time) and g of configurations taken every s lags.
 const expAcf = Array.from({ length: 2000 }, (_, k) => Math.exp(-k / 40))
 assert.ok(Math.abs(model.tauFromAcf(expAcf) - 39.7292) < 1e-3); checks++

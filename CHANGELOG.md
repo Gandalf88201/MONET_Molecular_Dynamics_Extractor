@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Thermal ellipsoids (*More analyses › Thermal ellipsoids (ADP) → PDB* and *… in crystal axes → CIF*): the ellipsoids are now drawn on the structure in the ASE viewer, not only written to the file. They are coloured by U<sub>eq</sub> (or in element colours), with 50, 90 or 99 % probability and a magnification, and come back when you return to the tab. Plugins can do the same by returning `ellipsoids` (see `docs/plugins.md`).
+- Polar plot (angles and dihedrals): the *custom values…* radius is removed, with its text box and *Radial label* (default ΔEST (eV)). ΔE<sub>ST</sub> is a quantum-chemical result that MONET does not compute or use; the radius is now the count per bin (stacked dots) or the frame index.
+- The crystal cell (CIF or other cell file, manual cell, or the lattice of an extended XYZ) is now drawn in the 3D view of *MONET Custom Functionalities*, as in the ASE viewer. Before, only the ASE viewer showed it.
+- Atom groups from the selection: bonded atoms can be picked in any order. When the picks are not already bonded groups, **Use selection** writes every bond, angle or dihedral among the selected atoms, so a carbon and its three hydrogens give the three C–H bonds instead of C–H plus H–H. Non-bonded picks (an O···H contact) still form groups in pick order. This applies to Fluctuations & trends, the ASE bond, angle and dihedral panels, and the autocorrelation groups.
+- Fluctuations & trends:
+  - Fix: with *only the groups entered below*, a selection whose size was not a multiple of the group size (a carbon and two hydrogens for bonds, say) was rejected and nothing was computed. An empty groups field now takes the selected atoms, grouped by their bonds. Errors in the groups are shown next to the plot, not only in the status bar.
+  - Vibration arrows on the structure: double-headed arrows along the main displacement axis (atoms), along the bond (bonds), in the angle plane (angles) or across the torsion plane (dihedrals), with length ± the amplitude shared between the moving atoms by mass, coloured like the map. Arrow length is automatic (largest 1 Å) or a fixed magnification.
+
 ## 2.4.0 (2026-09-25)
 
 - MCP server `monet_mcp.py` for AI assistants (Claude Desktop, Claude Code, Gemini CLI): open trajectories (with import of other formats), list and run every MONET, MDAnalysis and plugin analysis, select atoms, find bonded groups and derive trajectories, with atoms as MONET IDs, compact results (full data on request) and progress. It runs headless on files; reads only below `--data` folders and writes only into `--output`. Needs the optional `mcp` Python SDK (1.x or 2.x). Guide: `docs/mcp.md`.
