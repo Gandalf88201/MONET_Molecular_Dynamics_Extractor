@@ -36,6 +36,80 @@
     return ids
   }
 
+  // Bonds, angles or dihedrals (width 2, 3, 4) among the picked MONET IDs, each once, in pick order.
+  // bonded(a, b) tells whether two picked atoms are bonded in the first frame.
+  function bondedChains (ids, width, bonded) {
+    const neighbours = new Map(ids.map(a => [a, ids.filter(b => b !== a && bonded(a, b))]))
+    const chains = []
+    const seen = new Set()
+    const emit = chain => {
+      const key = Math.min(chain[0], chain[chain.length - 1]) === chain[0] ? chain.join(' ') : [...chain].reverse().join(' ')
+      if (!seen.has(key)) { seen.add(key); chains.push(chain) }
+    }
+    ids.forEach((j, x) => {
+      const near = neighbours.get(j)
+      if (width === 2) near.forEach(k => { if (ids.indexOf(k) > x) emit([j, k]) })
+      else if (width === 3) near.forEach((i, y) => near.slice(y + 1).forEach(k => emit([i, j, k])))
+      else {
+        near.forEach(k => {
+          if (ids.indexOf(k) < x) return
+          for (const i of near) {
+            if (i === k) continue
+            for (const l of neighbours.get(k)) if (l !== j && l !== i) emit([i, j, k, l])
+          }
+        })
+      }
+    })
+    return chains
+  }
+
+  // Groups of `width` MONET IDs from atoms picked in the viewer. Picks already made group by group
+  // (every chunk of `width` a bonded chain) are kept; otherwise the bonded items among the picked atoms
+  // are used, so C, H, H, H gives the three C–H bonds and not C–H plus H–H. Picks with no bond between
+  // them (an O···H contact, say) stay groups in pick order.
+  function groupsFromPicks (ids, width, bonded) {
+    const chunks = []
+    if (ids.length % width === 0) for (let i = 0; i < ids.length; i += width) chunks.push(ids.slice(i, i + width))
+    const chain = group => new Set(group).size === width && group.every((a, k) => k === 0 || bonded(group[k - 1], a))
+    if (chunks.length && chunks.every(chain)) return chunks
+    const chains = bondedChains(ids, width, bonded)
+    if (chains.length) return chains
+    if (chunks.length && chunks.every(group => new Set(group).size === width)) return chunks
+    const kind = { 2: 'bonds', 3: 'angles', 4: 'dihedrals' }[width]
+    throw new Error(`No ${kind} among the selected atoms: select bonded atoms, or groups of ${width} atoms in order.`)
+  }
+
+  // Largest principal axis of a displacement tensor U11 U22 U33 U12 U13 U23 (Å²): { value (Å²), vector (unit) }.
+  function principalAxis (u) {
+    const a = [[u[0], u[3], u[4]], [u[3], u[1], u[5]], [u[4], u[5], u[2]]]
+    const v = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    // Cyclic Jacobi rotations: a few sweeps diagonalise a 3 × 3 symmetric matrix to machine precision.
+    for (let sweep = 0; sweep < 20; sweep++) {
+      if (Math.abs(a[0][1]) + Math.abs(a[0][2]) + Math.abs(a[1][2]) < 1e-15 * (Math.abs(a[0][0]) + Math.abs(a[1][1]) + Math.abs(a[2][2]) || 1)) break
+      for (const [p, q] of [[0, 1], [0, 2], [1, 2]]) {
+        if (a[p][q] === 0) continue
+        const theta = (a[q][q] - a[p][p]) / (2 * a[p][q])
+        const t = Math.sign(theta || 1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1))
+        const c = 1 / Math.sqrt(t * t + 1), s = t * c
+        for (let k = 0; k < 3; k++) {
+          const akp = a[k][p], akq = a[k][q]
+          a[k][p] = c * akp - s * akq; a[k][q] = s * akp + c * akq
+        }
+        for (let k = 0; k < 3; k++) {
+          const apk = a[p][k], aqk = a[q][k]
+          a[p][k] = c * apk - s * aqk; a[q][k] = s * apk + c * aqk
+        }
+        for (let k = 0; k < 3; k++) {
+          const vkp = v[k][p], vkq = v[k][q]
+          v[k][p] = c * vkp - s * vkq; v[k][q] = s * vkp + c * vkq
+        }
+      }
+    }
+    let best = 0
+    for (let k = 1; k < 3; k++) if (a[k][k] > a[best][best]) best = k
+    return { value: a[best][best], vector: [v[0][best], v[1][best], v[2][best]] }
+  }
+
   function cellParameters (system, values) {
     let [a, b, c, alpha, beta, gamma] = values.map(Number)
     if (system === 'cubic') { b = c = a; alpha = beta = gamma = 90 }
@@ -254,7 +328,7 @@
     return { low: take(order), high: take([...order].reverse()) }
   }
 
-  const api = { atomMap, groupsFromIds, selectedIndices, cellParameters, cellVectors, verifyAtoms, seriesLabel, seriesStats, histogram, ANGLE_PERIODS, tauFromAcf, subsampleInefficiency,
+  const api = { atomMap, groupsFromIds, selectedIndices, bondedChains, groupsFromPicks, principalAxis, cellParameters, cellVectors, verifyAtoms, seriesLabel, seriesStats, histogram, ANGLE_PERIODS, tauFromAcf, subsampleInefficiency,
     parseFrameList, framesInWindows, thinFrames, extremeFrames }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.MonetASEModel = api

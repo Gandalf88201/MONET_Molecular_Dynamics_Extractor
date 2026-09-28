@@ -145,7 +145,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'app']) w.eval((file === 'app' ? appScript() : fs.readFileSync(path.join(root, file), 'utf8')) + (file === 'app' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'app']) w.eval((file === 'app' ? appScript() : fs.readFileSync(path.join(root, file), 'utf8')) + (file === 'app' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness, syncAsePicks };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -345,6 +345,10 @@ async function fluctChecks () {
   const overlay = w.testMonet.aseViewer.overlay
   assert.equal(overlay.segments.length, 2); assert.equal(overlay.dimAtoms, true); assert.equal(overlay.legend.min, 0.02); assert.equal(overlay.legend.max, 0.04); checks++
   assert.deepEqual([...overlay.segments[0].ids], [0, 1].map(i => atomsNow.find(a => a.aseIndex === i).monetId)); assert.match(overlay.segments[0].color, /^rgb\(13,8,135\)$/); checks++
+  // Vibration arrows along each bond on both atoms (equal masses: half the SD each), largest drawn as 1 Å.
+  assert.equal(JSON.stringify(overlay.arrows.map(a => [a.kind, a.amplitude])), '[["bond",0.01],["bond",0.01],["bond",0.02],["bond",0.02]]'); checks++
+  assert.equal(overlay.arrows[0].other, overlay.segments[0].ids[1]); assert.equal(overlay.arrowScale, 50); assert.match(overlay.legend.title, /arrows ± amplitude ×50/); checks++
+  w.testMonet.aseViewer.render()
   const rows = () => [...el('fluct-table').querySelectorAll('tbody tr')]
   assert.equal(rows().length, 2); assert.equal(rows()[1].lastElementChild.textContent, 'yes'); assert.match(el('fluct-summary').textContent, /1 with a significant trend/); checks++
   // Sorting by SD (descending first) and selecting a row.
@@ -362,7 +366,12 @@ async function fluctChecks () {
   w.document.querySelector('.ase-stab[data-stab="fluct"]').click(); await tick()
   assert.equal(w.testMonet.aseViewer.overlay.segments.length, 2); checks++
   el('fluct-map').checked = false; el('fluct-map').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.aseViewer.overlay.segments.length, 0); assert.ok(w.testMonet.aseViewer.overlay.arrows.every(a => a.color === null)); assert.match(w.testMonet.aseViewer.overlay.caption, /^Vibration arrows/); checks++
+  el('fluct-arrow-scale').value = '10'; el('fluct-arrow-scale').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.aseViewer.overlay.arrowScale, 10); checks++
+  el('fluct-arrows').checked = false; el('fluct-arrows').dispatchEvent(new w.Event('change'))
   assert.equal(w.testMonet.aseViewer.overlay, null); checks++
+  el('fluct-arrows').checked = true; el('fluct-arrow-scale').value = 'auto'
   // Atoms: RMSF coloured per atom; explicit groups; time axis converts units.
   el('fluct-metric').value = 'frequency'; el('fluct-map').checked = true
   el('fluct-quantity').value = 'atoms'; el('fluct-quantity').dispatchEvent(new w.Event('change'))
@@ -384,7 +393,12 @@ async function fluctChecks () {
   assert.equal(ellipsoids[0].color, null); assert.equal(w.testMonet.aseViewer.overlay.atomColors.size, 0); assert.equal(w.testMonet.aseViewer.overlay.legend, undefined); assert.match(w.testMonet.aseViewer.overlay.caption, /Displacement ellipsoids 90 %/); checks++
   w.testMonet.aseViewer.render()
   el('fluct-ellipsoids').checked = false; el('fluct-ellipsoids').dispatchEvent(new w.Event('change'))
+  // Atoms: one arrow of ± RMSF along the main axis of the displacement tensor.
+  const atomArrow = w.testMonet.aseViewer.overlay.arrows[0]
+  assert.equal(w.testMonet.aseViewer.overlay.ellipsoids, undefined); assert.equal(atomArrow.kind, 'axis'); assert.equal(atomArrow.amplitude, 0.02); assert.ok(Math.abs(Math.abs(atomArrow.vector[0]) - 0.987) < 1e-3); checks++
+  el('fluct-arrows').checked = false; el('fluct-arrows').dispatchEvent(new w.Event('change'))
   assert.equal(w.testMonet.aseViewer.overlay, null); checks++
+  el('fluct-arrows').checked = true
   el('fluct-map').checked = true; el('fluct-ellipsoids').checked = true; el('fluct-ellipsoid-prob').value = '50'; el('fluct-ellipsoid-scale').value = '1'
   el('fluct-map').dispatchEvent(new w.Event('change'))
   near(w.testMonet.charts.fluct.data.datasets[0].data[0], 0.03 * 1e15 / 2.99792458e10, 1e-6); checks++
@@ -403,6 +417,21 @@ async function fluctChecks () {
   assert.equal(latestCommand.groups.length, 1); assert.equal(el('fluct-summary').textContent.includes('loaded when a row is clicked'), false); checks++
   await click('clear-fluct')
   assert.equal(w.testMonet.aseViewer.overlay, null); assert.equal(el('fluct-table').childElementCount, 0); assert.equal(el('fluct-table-csv').disabled, true); checks++
+  // Bonds picked as a centre and its neighbours: one group per bond, none between the neighbours.
+  el('fluct-quantity').value = 'bonds'; el('fluct-quantity').dispatchEvent(new w.Event('change'))
+  const idOf = index => atomsNow.find(a => a.aseIndex === index).monetId
+  w.testMonet.syncAsePicks([idOf(2), idOf(3), idOf(1)])
+  await click('ase-use-selection')
+  assert.equal(el('fluct-groups').value, `${idOf(2)} ${idOf(3)}  ${idOf(2)} ${idOf(1)}`); checks++
+  // An empty groups field takes the selection, grouped the same way.
+  el('fluct-groups').value = ''
+  await click('btn-run-fluct')
+  assert.equal(JSON.stringify(latestCommand.groups), '[[2,3],[2,1]]'); assert.equal(el('fluct-groups').value, `${idOf(2)} ${idOf(3)}  ${idOf(2)} ${idOf(1)}`); checks++
+  // Groups that cannot be read are reported next to the plot.
+  el('fluct-groups').value = '1 2 3'
+  await click('btn-run-fluct')
+  assert.equal(el('fluct-summary').classList.contains('hidden'), false); assert.match(el('fluct-summary').textContent, /groups of 2/); checks++
+  w.testMonet.syncAsePicks([])
   el('fluct-scope').value = 'auto'; el('fluct-scope').dispatchEvent(new w.Event('change'))
 }
 const near = (a, b, tol) => assert.ok(Math.abs(a - b) <= tol, `${a} vs ${b}`)
@@ -681,6 +710,8 @@ async function run () {
   assert.equal(el('cell-b').value, '8'); assert.equal(el('cell-gamma').value, '120'); assert.equal(el('cell-b').disabled, true); checks++
   await click('cell-apply')
   assert.equal(w.testMonet.aseViewer.cell.length, 3); checks++
+  // The 3D view of MONET Custom Functionalities draws the same cell.
+  assert.deepEqual(w.testMonet.viewer.cell, w.testMonet.aseViewer.cell); checks++
   // Centre selection: the centred atoms are fixed when ticked; later picks must not move the structure.
   if (!el('ase-center').disabled) {
     const coordsOf = () => JSON.stringify(w.testMonet.aseViewer.atoms.map(atom => [atom.x, atom.y, atom.z]))
@@ -727,7 +758,7 @@ async function run () {
   assert.equal(latestCommand.angle_range, 'fold180'); checks++
   el('angles-range').value = '360'; el('angles-range').dispatchEvent(new w.Event('change'))
   assert.equal(el('angles-normal-row').classList.contains('hidden'), false); checks++
-  await click('cell-reset'); assert.equal(w.testMonet.aseViewer.cell, null); checks++
+  await click('cell-reset'); assert.equal(w.testMonet.aseViewer.cell, null); assert.equal(w.testMonet.viewer.cell, null); checks++
   await click('ase-clear-selection')
   // Extraction ordering comes from the original file, not the order entered by the user.
   el('inp-atom-ids').value = '4 1 3'; await click('btn-apply-ids')

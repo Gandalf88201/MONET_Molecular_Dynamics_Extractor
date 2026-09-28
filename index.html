@@ -614,6 +614,15 @@
           <label class="field-label" for="fluct-ellipsoid-scale">Magnify ×</label>
           <input class="field-input field-input-sm" type="number" id="fluct-ellipsoid-scale" value="1" min="1" max="50" step="1" />
         </div>
+        <div class="ase-ctrl-row" id="fluct-arrow-row">
+          <label title="Double-headed arrows on the structure: along the main displacement axis (atoms), the bond (bonds), perpendicular to the bond in the angle plane (angles) or to the torsion plane (dihedrals); length ± the amplitude, shared between the moving atoms by mass"><input type="checkbox" id="fluct-arrows" checked /> vibration arrows</label>
+          <label class="field-label" for="fluct-arrow-scale">Arrow length</label>
+          <select class="field-input field-input-sm" id="fluct-arrow-scale">
+            <option value="auto" selected>auto (largest 1 Å)</option>
+            <option value="1">× 1 (true amplitude)</option><option value="5">× 5</option><option value="10">× 10</option>
+            <option value="20">× 20</option><option value="50">× 50</option><option value="100">× 100</option>
+          </select>
+        </div>
         <div class="ase-plot-actions">
           <button class="btn btn-sm" id="clear-fluct" disabled>Clear analysis</button>
           <button class="btn btn-sm" id="download-fluct" disabled>Download plot PNG</button>
