@@ -57,6 +57,7 @@ function selectSubtab (id) {
   if (charts[id]?.data) charts[id]._render()
   // The fluctuation colour map belongs to its own tab.
   if (id === 'fluct') drawFluct()
+  else if (REGISTRY_PANELS[id]) drawResultEllipsoids(id)
   else aseViewer.setOverlay(null)
   if (selectionTargets[id]) { $('ase-selection-target').value = id; updateSelectionTarget() }
 }
@@ -865,7 +866,9 @@ function clearAnalysis (kind, report = true) {
   if (charts[`${kind}dist`]) clearAnalysis(`${kind}dist`, false)
   for (const id of { msd: ['msd-info'], vdos: ['vdos-info'] }[kind] || []) $(id).classList.add('hidden')
   if (kind === 'mda' || REGISTRY_PANELS[kind]) {
-    for (const id of [`${kind}-download`, `${kind}-activate`, `${kind}-error`]) $(id).classList.add('hidden')
+    for (const id of [`${kind}-download`, `${kind}-activate`, `${kind}-error`, `${kind}-ellipsoid-row`]) $(id)?.classList.add('hidden')
+    // Thermal ellipsoids of a cleared result leave the structure.
+    if (REGISTRY_PANELS[kind] && $(`ase-sub-${kind}`).classList.contains('active')) aseViewer.setOverlay(null)
     $(`${kind}-table`).replaceChildren()
     if (kind === 'mda') resetPca()
     clearAnalysis(`${kind}matrix`, false)

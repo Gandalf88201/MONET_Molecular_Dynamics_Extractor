@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Thermal ellipsoids (*More analyses › Thermal ellipsoids (ADP) → PDB* and *… in crystal axes → CIF*): the ellipsoids are now drawn on the structure in the ASE viewer, not only written to the file. They are coloured by U<sub>eq</sub> (or in element colours), with 50, 90 or 99 % probability and a magnification, and come back when you return to the tab. Plugins can do the same by returning `ellipsoids` (see `docs/plugins.md`).
 - Polar plot (angles and dihedrals): the *custom values…* radius is removed, with its text box and *Radial label* (default ΔEST (eV)). ΔE<sub>ST</sub> is a quantum-chemical result that MONET does not compute or use; the radius is now the count per bin (stacked dots) or the frame index.
 - The crystal cell (CIF or other cell file, manual cell, or the lattice of an extended XYZ) is now drawn in the 3D view of *MONET Custom Functionalities*, as in the ASE viewer. Before, only the ASE viewer showed it.
 - Atom groups from the selection: bonded atoms can be picked in any order. When the picks are not already bonded groups, **Use selection** writes every bond, angle or dihedral among the selected atoms, so a carbon and its three hydrogens give the three C–H bonds instead of C–H plus H–H. Non-bonded picks (an O···H contact) still form groups in pick order. This applies to Fluctuations & trends, the ASE bond, angle and dihedral panels, and the autocorrelation groups.

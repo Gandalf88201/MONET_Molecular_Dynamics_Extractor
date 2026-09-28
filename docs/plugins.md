@@ -121,6 +121,8 @@ Return one of these (all in `monet_registry`); numpy arrays are accepted and NaN
 
 `y` is `{label: values}` (or a list of `(label, values)`); each series needs as many values as `x`. `table=` adds a table under a plot. Every plot has **Download plot PNG** and **Download data CSV**.
 
+**Ellipsoids on the structure.** Set `result['ellipsoids'] = [{'atom': index, 'u': [U11, U22, U33, U12, U13, U23]}, …]` (0-based atom indices; Cartesian tensors in Å², axes of the first frame) on any result, and MONET draws them as thermal ellipsoids on the structure in the ASE viewer, with probability (50/90/99 %), magnification and colour by U<sub>eq</sub>. Setting the key on the returned dict, rather than passing it to a helper, keeps the plugin running on MONET releases that ignore it. `plugins/displacement_ellipsoids.py` is the example.
+
 ## Testing a plugin without the interface
 
 The bridge reads one JSON command; atom inputs are file indices here:

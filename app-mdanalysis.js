@@ -384,6 +384,7 @@ function showRegistryResult (kind, r, { title, step, matrixTitle }) {
     })
   }
   lastResults[kind] = r
+  drawResultEllipsoids(kind)
   if (r.table && !r.pca) renderTable($(`${kind}-table`), r.table, { mapping: r.atomMapping, title: r.kind === 'table' ? title : null })
   if (r.kind === 'table' && notes.length) {
     const note = document.createElement('p')
@@ -391,6 +392,43 @@ function showRegistryResult (kind, r, { title, step, matrixTitle }) {
     note.textContent = notes.join(' · ')
     $(`${kind}-table`).appendChild(note)
   }
+}
+
+// Thermal ellipsoids returned by an analysis ({ atom: index, u: [U11 U22 U33 U12 U13 U23] } in Å², Cartesian
+// axes of the first frame) drawn on the structure in the ASE viewer, coloured by U_eq = trace(U) / 3.
+function drawResultEllipsoids (kind) {
+  const row = $(`${kind}-ellipsoid-row`)
+  if (!row) return
+  const r = lastResults[kind]
+  const list = (r?.ellipsoids || []).filter(e => e.u?.length === 6 && e.u.every(Number.isFinite))
+  row.classList.toggle('hidden', !list.length)
+  if (!list.length || !$(`${kind}-ellipsoids`).checked) return aseViewer.setOverlay(null)
+  const probability = $(`${kind}-ellipsoid-prob`).value
+  const magnify = Math.min(50, Math.max(1, Number($(`${kind}-ellipsoid-scale`).value) || 1))
+  const map = $(`${kind}-ellipsoid-colormap`).value
+  const ueq = list.map(e => (e.u[0] + e.u[1] + e.u[2]) / 3)
+  const low = Math.min(...ueq), high = Math.max(...ueq)
+  const color = value => {
+    const [red, green, blue] = MonetLineChart.colormap(map, high > low ? (value - low) / (high - low) : 0.5)
+    return `rgb(${red},${green},${blue})`
+  }
+  const monetId = index => r.atomMapping.find(a => a.aseIndex === index)?.monetId
+  const note = `thermal ellipsoids ${probability} %${magnify > 1 ? ` ×${fmt(magnify, 3)}` : ''}`
+  const overlay = {
+    atomColors: new Map(),
+    // sqrt of the χ²(3) quantile: semi-axes, in standard deviations, of the ellipsoid holding that probability.
+    ellipsoidScale: FLUCT_PROBABILITY[probability] * magnify,
+    ellipsoids: list.map((e, k) => ({ id: monetId(e.atom), u: e.u, color: map === 'none' ? null : color(ueq[k]) })).filter(e => e.id !== undefined)
+  }
+  if (map === 'none') overlay.caption = note[0].toUpperCase() + note.slice(1)
+  else {
+    overlay.ellipsoids.forEach(e => overlay.atomColors.set(e.id, e.color))
+    overlay.legend = { title: `U_eq (Å²) · ${note}`, min: low, max: high, colors: Array.from({ length: 9 }, (_, k) => color(low + (k / 8) * (high - low))), format: v => fmt(v, 3) }
+  }
+  aseViewer.setOverlay(overlay)
+}
+for (const kind of Object.keys(REGISTRY_PANELS)) {
+  for (const id of ['ellipsoids', 'ellipsoid-prob', 'ellipsoid-scale', 'ellipsoid-colormap']) $(`${kind}-${id}`).addEventListener('change', () => drawResultEllipsoids(kind))
 }
 
 // Download link of a written file; a written trajectory can become the active one.

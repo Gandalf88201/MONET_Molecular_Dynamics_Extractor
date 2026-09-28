@@ -115,6 +115,11 @@ w.monet = {
     if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, tau_int_error: 5, tau_int_window: 3, tau_int_converged: true, tau_int_method: command.tau_int_method, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), frame_step: command.frame_step || 1, n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3], blocking: { sizes: [1, 2], times: [command.dt, 2 * command.dt], sem: [0.5, 0.7], sem_error: [0.01, 0.05], plateau_index: null, plateau_sem: null, g: null } }
     if (command.action === 'equilibration') { latestCommand = command; return { ok: true, starts: [0, 1, 2], times: [0, command.dt, 2 * command.dt], g: [4, 2, 2], n_effective: [1, 1.5, 0.5], t0: equilT0, t0_time: equilT0 * command.dt, t0_frame: equilT0, group: command.groups.length - 1, per_group_t0: command.groups.map((_, k) => k + 1), n_frames: 4, frame_step: 1, dt: command.dt, g_t0: 2, n_effective_t0: 1.5, n_effective_full: 1 } }
     if (command.action === 'run_analysis' && command.params.mass_weighted === false) return { ok: false, message: 'Traceback (most recent call last):\n  File "/x/plugins/radius_of_gyration.py", line 3, in radius_of_gyration\n    rg = monet_analysis.missing()\nAttributeError: module \'monet_analysis\' has no attribute \'missing\'\n' }
+    if (command.action === 'run_analysis' && command.analysis === 'custom.displacement_ellipsoids') {
+      const atoms = command.params.indices || [0, 1]
+      return { ok: true, analysis: command.analysis, kind: 'profile', x: atoms, atoms, bars: true, xLabel: 'Atom (MONET ID)', yLabel: 'U_eq (Å²)', series: [{ label: 'U_eq', data: atoms.map((_, k) => 0.01 * (k + 1)) }], n_frames: 3,
+        ellipsoids: atoms.map((atom, k) => ({ atom, u: [0.01 * (k + 1), 0.01 * (k + 1), 0.01 * (k + 1), 0, 0, 0] })), output: 'x-adp.pdb', downloadURL: '/api/download/adp' }
+    }
     if (command.action === 'run_analysis') return { ok: true, analysis: command.analysis, kind: 'series', x: [0, 1], xLabel: 'Frame', yLabel: 'Radius of gyration (Å)', series: [{ label: 'Rg (mass-weighted, 2 atoms)', data: [1, 1.2] }], n_frames: 2, frame_indices: [0, 1], table: { columns: ['Quantity', 'Mean'], rows: [['Rg', 1.1]] } }
     if (command.action === 'rmsd_matrix') return { ok: true, matrix: [[0, 1], [1, 0]], frame_indices: [0, 10], aligned: true, truncated: false }
     if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
@@ -322,8 +327,32 @@ async function registryChecks () {
   el('extcustom-p-mass_weighted').checked = true
   await click('btn-run-extcustom')
   assert.equal(el('extcustom-error').classList.contains('hidden'), true); checks++
+  assert.equal(el('extcustom-ellipsoid-row').classList.contains('hidden'), true); checks++
+  // Thermal ellipsoids from the plugin are drawn on the structure in the ASE viewer, coloured by U_eq.
+  el('extcustom-analysis').value = 'custom.displacement_ellipsoids'; el('extcustom-analysis').dispatchEvent(new w.Event('change'))
+  el('extcustom-p-indices').value = two.map(a => a.monetId).join(' ')
+  await click('btn-run-extcustom')
+  let adp = w.testMonet.aseViewer.overlay
+  assert.equal(el('extcustom-ellipsoid-row').classList.contains('hidden'), false); assert.equal(adp.ellipsoids.length, 2); checks++
+  assert.equal(adp.ellipsoids[1].id, two[1].monetId); assert.equal(adp.ellipsoids[1].u[0], 0.02); assert.match(adp.ellipsoids[0].color, /^rgb\(13,8,135\)$/); checks++
+  assert.ok(Math.abs(adp.ellipsoidScale - 1.5382) < 1e-9); assert.match(adp.legend.title, /U_eq .* thermal ellipsoids 50 %/); assert.equal(adp.atomColors.get(two[0].monetId), adp.ellipsoids[0].color); checks++
+  el('extcustom-ellipsoid-prob').value = '99'; el('extcustom-ellipsoid-scale').value = '3'; el('extcustom-ellipsoid-colormap').value = 'none'
+  el('extcustom-ellipsoid-colormap').dispatchEvent(new w.Event('change'))
+  adp = w.testMonet.aseViewer.overlay
+  assert.ok(Math.abs(adp.ellipsoidScale - 3.3682 * 3) < 1e-9); assert.equal(adp.ellipsoids[0].color, null); assert.equal(adp.legend, undefined); assert.match(adp.caption, /^Thermal ellipsoids 99 % ×3/); checks++
+  w.testMonet.aseViewer.render()
+  // Other tabs take the structure; coming back shows the ellipsoids again. Unticked or cleared: none.
+  w.document.querySelector('.ase-stab[data-stab="rdf"]').click(); await tick()
+  assert.equal(w.testMonet.aseViewer.overlay, null)
+  w.document.querySelector('.ase-stab[data-stab="extcustom"]').click(); await tick()
+  assert.equal(w.testMonet.aseViewer.overlay.ellipsoids.length, 2); checks++
+  el('extcustom-ellipsoids').checked = false; el('extcustom-ellipsoids').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.aseViewer.overlay, null); checks++
+  el('extcustom-ellipsoids').checked = true; el('extcustom-ellipsoids').dispatchEvent(new w.Event('change'))
+  el('extcustom-ellipsoid-prob').value = '50'; el('extcustom-ellipsoid-scale').value = '1'; el('extcustom-ellipsoid-colormap').value = 'plasma'
   await click('clear-extcustom')
   assert.equal(w.testMonet.charts.extcustom.data, null); assert.equal(el('extcustom-table').textContent, ''); checks++
+  assert.equal(w.testMonet.aseViewer.overlay, null); assert.equal(el('extcustom-ellipsoid-row').classList.contains('hidden'), true); checks++
   // The ASE module lists its own plugins; a choice parameter becomes a menu.
   el('extase-analysis').value = 'ase.cell_volume'; el('extase-analysis').dispatchEvent(new w.Event('change'))
   assert.deepEqual([...el('extase-p-quantity').options].map(o => o.value), ['volume', 'density', 'lengths']); checks++

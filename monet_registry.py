@@ -268,6 +268,13 @@ def check_result(result, name):
         raise ValueError(f'Analysis {name}: a table needs columns and rows.')
     if kind == 'table' and table_ is None:
         raise ValueError(f'Analysis {name}: a table result needs a table.')
+    ellipsoids = result.get('ellipsoids')
+    if ellipsoids is not None and (
+            not isinstance(ellipsoids, list)
+            or any(not isinstance(e, dict) or type(e.get('atom')) is not int or e['atom'] < 0
+                   or not isinstance(e.get('u'), list) or len(e['u']) != 6
+                   or any(type(v) not in (int, float) for v in e['u']) for e in ellipsoids)):
+        raise ValueError(f'Analysis {name}: ellipsoids must be a list of {{"atom": index, "u": [U11, U22, U33, U12, U13, U23]}} (Å²).')
     return result
 
 

@@ -168,6 +168,20 @@
         <button class="btn btn-sm hidden" id="${kind}-activate">Analyse this trajectory in MONET</button>
       </div>
       <div class="analysis-error hidden" id="${kind}-error" role="alert"></div>
+      <div class="ase-ctrl-row hidden" id="${kind}-ellipsoid-row" title="Displacement tensors returned by the analysis (thermal ellipsoids), drawn on the structure in the ASE viewer">
+        <label><input type="checkbox" id="${kind}-ellipsoids" checked /> thermal ellipsoids on the structure</label>
+        <label class="field-label" for="${kind}-ellipsoid-prob">Probability</label>
+        <select class="field-input field-input-sm" id="${kind}-ellipsoid-prob">
+          <option value="50" selected>50 %</option><option value="90">90 %</option><option value="99">99 %</option>
+        </select>
+        <label class="field-label" for="${kind}-ellipsoid-scale">Magnify ×</label>
+        <input class="field-input field-input-sm" type="number" id="${kind}-ellipsoid-scale" value="1" min="1" max="50" step="1" />
+        <label class="field-label" for="${kind}-ellipsoid-colormap">Colour by U<sub>eq</sub></label>
+        <select class="field-input field-input-sm colormap-select" id="${kind}-ellipsoid-colormap">
+          <option value="plasma" selected>plasma</option><option value="viridis">viridis</option><option value="inferno">inferno</option>
+          <option value="magma">magma</option><option value="coolwarm">coolwarm</option><option value="none">element colours</option>
+        </select>
+      </div>
       <canvas class="chart-canvas" id="chart-${kind}"></canvas>
       <div class="chart-placeholder" id="chart-${kind}-ph">Results of the chosen analysis</div>
       <div class="hidden" id="${kind}-matrix-block">

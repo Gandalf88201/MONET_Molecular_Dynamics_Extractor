@@ -95,6 +95,14 @@ def _summary(u_cart, chosen, u_file, header):
     return ueq, {'columns': columns, 'rows': rows, 'atom_columns': [0]}
 
 
+def _with_ellipsoids(result, u_cart, chosen):
+    """Adds the Cartesian tensors (first-frame axes) so MONET draws the ellipsoids on the structure.
+    Set on the result dict rather than passed to profile(), so the plugin still runs on older MONET."""
+    result['ellipsoids'] = [{'atom': int(index), 'u': [float(u_cart[k][i, j]) for i, j in ((0, 0), (1, 1), (2, 2), (0, 1), (0, 2), (1, 2))]}
+                            for k, index in enumerate(chosen)]
+    return result
+
+
 def _labels(ctx, chosen, symbols):
     # ctx.atom_ids exists from MONET 2.3.2; older releases number the atoms of the file from 1.
     ids = getattr(ctx, 'atom_ids', None) or list(range(1, len(symbols) + 1))
@@ -125,9 +133,9 @@ def displacement_ellipsoids(ctx, p):
     with open(ctx.output(), 'w') as fh:
         fh.write('\n'.join(lines + ['END']) + '\n')
     ueq, table = _summary(u_cart, chosen, u_cart, 'U')
-    return profile(chosen, {'U_eq': ueq}, 'Atom (MONET ID)', 'U_eq (Å²)', bars=True, atoms=chosen, table=table,
-                   notes=[f'{len(chosen)} atoms · {n_frames} frames · U in the Cartesian axes of the first frame (Å²).',
-                          'B = 8π² U_eq in the PDB B-factor column.'])
+    return _with_ellipsoids(profile(chosen, {'U_eq': ueq}, 'Atom (MONET ID)', 'U_eq (Å²)', bars=True, atoms=chosen, table=table,
+                                    notes=[f'{len(chosen)} atoms · {n_frames} frames · U in the Cartesian axes of the first frame (Å²).',
+                                           'B = 8π² U_eq in the PDB B-factor column.']), u_cart, chosen)
 
 
 @analysis('displacement_ellipsoids_cif', engine='custom', label='Thermal ellipsoids (ADP) in crystal axes → CIF',
@@ -163,6 +171,6 @@ def displacement_ellipsoids_cif(ctx, p):
     with open(ctx.output(), 'w') as fh:
         fh.write('\n'.join(lines) + '\n')
     ueq, table = _summary(u_cart, chosen, u_cif, 'U^')
-    return profile(chosen, {'U_eq': ueq}, 'Atom (MONET ID)', 'U_eq (Å²)', bars=True, atoms=chosen, table=table,
-                   notes=[f'{len(chosen)} atoms · {n_frames} frames · U^ij in the crystal axes (CIF convention, Å²).',
-                          'U_eq = trace of the Cartesian tensor / 3.'])
+    return _with_ellipsoids(profile(chosen, {'U_eq': ueq}, 'Atom (MONET ID)', 'U_eq (Å²)', bars=True, atoms=chosen, table=table,
+                                    notes=[f'{len(chosen)} atoms · {n_frames} frames · U^ij in the crystal axes (CIF convention, Å²).',
+                                           'U_eq = trace of the Cartesian tensor / 3.']), u_cart, chosen)
