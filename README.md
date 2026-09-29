@@ -11,7 +11,7 @@ AI assistants that speak the Model Context Protocol (Claude Desktop, Claude Code
 MONET runs in your browser, with a small Python service on your own computer that provides ASE and MDAnalysis. There are no installers: download the code and start it with Python.
 
 1. Install **Python 3.10 or newer** (<https://www.python.org/downloads/>; on Windows tick *Add python.exe to PATH*), or use conda (below).
-2. Download MONET: on GitHub, **Code › Download ZIP** (or the ZIP of a release), and extract the whole folder.
+2. Download MONET: on GitHub, **Code › Download ZIP** (or the ZIP of a release), and extract the whole folder. With git: `git clone https://github.com/Gandalf88201/MONET_Molecular_Dynamics_Extractor.git`, and `git pull` in the folder to update.
 3. Start it:
    - **macOS**: double-click `start_monet.command`. The first time, macOS may block a downloaded script: right-click it › **Open** › **Open**. If it does not run, open Terminal in the folder and type `bash start_monet.command`.
    - **Windows**: double-click `start_monet.bat`. If SmartScreen appears, choose **More info › Run anyway**.
@@ -535,28 +535,19 @@ See [CHANGELOG.md](CHANGELOG.md).
 
 ## Validation
 
-With the environment above active (or `PYTHON=.venv/bin/python`):
-
-```sh
-node tests/regression.cjs
-node tests/qm-parity.cjs
-node tests/formats.cjs
-node tests/analysis.cjs
-node tests/mdanalysis.cjs
-node tests/ase-integration.cjs
-node tests/ase-analyses.cjs
-node tests/mda-analyses.cjs
-node tests/references.cjs
-```
-
-For the DOM/plot checks, install the optional test dependencies (not required by the app):
+With the environment above active (or `PYTHON=.venv/bin/python`), install the optional test dependencies (not required by the app) and run the suites as the CI does (`.github/workflows/tests.yml`):
 
 ```sh
 npm install --no-save jsdom @napi-rs/canvas
-node tests/ase-ui.cjs
+for t in regression units qm-parity qm-resolve formats analysis mdanalysis ase-integration ase-ui provenance console \
+         report session replay history-ui launcher registry ase-analyses mda-analyses references app-load mcp; do
+  node tests/$t.cjs || break
+done
 ```
 
-Current results (ASE 3.29.0, MDAnalysis 2.10.0, Python 3.14, Node 22): 48 regression, 20 QM-input parity, 38 format-import, 73 analysis, 65 MDAnalysis, 86 live launcher and 261 DOM/plot checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion). The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
+`tests/mcp.cjs` also needs `python -m pip install "mcp>=1.2"`.
+
+Current results (MONET 2.7.0, ASE 3.29.0, MDAnalysis 2.10.0, Python 3.11, Node 22; the CI runs Python 3.10 and 3.13): 74 regression, 19 units, 132 QM-input parity, 177 QM-keyword, 38 format-import, 107 analysis, 71 MDAnalysis, 94 live ASE integration, 458 DOM/plot, 29 provenance, 48 console, 26 report, 21 session, 26 replay, 61 history, 7 launcher, 9 registry, 10 ASE-analysis, 15 MDAnalysis-analysis, 9 reference, 10 page-load and 8 MCP checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion, an ideal α-helix, a planar bilayer, base pairs at known distances); the ASE and MDAnalysis analyses are also compared with the libraries called directly. The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
 
 ## Citing and licences
 
