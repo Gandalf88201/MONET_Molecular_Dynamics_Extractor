@@ -1018,3 +1018,20 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .analysis-error details { margin-top: 6px; }
 .analysis-error summary { cursor: pointer; color: var(--text-dim); }
 .analysis-error pre { margin: 6px 0 0; max-height: 220px; overflow: auto; font-family: var(--mono); font-size: .72rem; white-space: pre-wrap; }
+
+/* ── References dialog (app-references.js) ── */
+.refs-overlay { position: fixed; inset: 0; z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 16px; background: var(--overlay); }
+.refs-dialog { width: min(920px, 100%); max-height: calc(100vh - 32px); display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; background: var(--bg2); color: var(--text); border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: 0 8px 32px var(--shadow); }
+.refs-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.refs-head h2 { font-size: 1rem; font-weight: 600; }
+.refs-actions, .refs-format { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.refs-format-btn[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
+.refs-body { overflow-y: auto; min-height: 0; font-size: 0.8rem; line-height: 1.45; }
+.refs-body h3 { font-size: 0.9rem; margin: 12px 0 4px; color: var(--gold); }
+.refs-body h4 { font-size: 0.78rem; margin: 8px 0 4px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+.refs-section + .refs-section { border-top: 1px solid var(--border); margin-top: 10px; }
+.refs-list { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+.refs-entry { padding-left: 1.6em; text-indent: -1.6em; overflow-wrap: anywhere; }
+.refs-bib { font-family: var(--mono); font-size: 0.72rem; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; user-select: text; }
+.refs-table { margin: 4px 0 8px; }
+.refs-table td:last-child { overflow-wrap: anywhere; }

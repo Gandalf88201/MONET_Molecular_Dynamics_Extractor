@@ -150,7 +150,7 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'app']) w.eval((file === 'app' ? appScript() : fs.readFileSync(path.join(root, file), 'utf8')) + (file === 'app' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness, syncAsePicks };' : ''))
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'references.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'app']) w.eval((file === 'app' ? appScript() : fs.readFileSync(path.join(root, file), 'utf8')) + (file === 'app' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness, syncAsePicks };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
@@ -466,6 +466,51 @@ async function fluctChecks () {
 const near = (a, b, tol) => assert.ok(Math.abs(a - b) <= tol, `${a} vs ${b}`)
 
 // Step 4 › Cell section of the plane-wave cards: structure cell detection, per-card custom cells, native units.
+// References dialog (app-references.js): "ⓘ References" lists MONET, ASE and MDAnalysis with the analyses that
+// add method references; "ⓘ Cite" shows one analysis; Chicago or BibTeX, copied as shown.
+async function referencesChecks () {
+  let copied = null
+  Object.defineProperty(w.navigator, 'clipboard', { configurable: true, value: { writeText: async text => { copied = text } } })
+  const body = () => el('refs-body')
+  const open = () => !el('refs-overlay').classList.contains('hidden')
+  w.localStorage.removeItem('monet-refs-format')
+  await click('refs-toggle')
+  assert.ok(open()); assert.equal(el('refs-title').textContent, 'References'); assert.equal(el('refs-toggle').getAttribute('aria-pressed'), 'true'); checks++
+  assert.deepEqual([...body().querySelectorAll('h3')].map(h => h.textContent), ['MONET', 'ASE', 'MDAnalysis']); checks++
+  const rows = [...body().querySelectorAll('.refs-table tr')].map(tr => [...tr.cells].map(c => c.textContent))
+  assert.ok(rows.some(([label, cite]) => label === 'Secondary structure (dssp.DSSP)' && cite === 'Kabsch and Sander 1983'), rows.map(r => r.join(' | ')).join('\n'))
+  assert.ok(rows.some(([label, cite]) => label.startsWith('Hydrogen-bond autocorrelation') && cite === 'Gowers and Carbone 2015'))
+  assert.ok(rows.some(([label, cite]) => label.startsWith('RMSD after optimal superposition') && cite === 'Theobald 2005; Liu, Agrafiotis, and Theobald 2010')); checks++
+  assert.ok([...body().querySelectorAll('.refs-entry')].some(li => li.textContent.startsWith('Michaud-Agrawal, Naveen') && li.querySelector('i').textContent === 'Journal of Computational Chemistry')); checks++
+  await click('refs-copy')
+  assert.match(copied, /^MONET\n\nFrancese, Tommaso\. 2026\. MONET: Molecular Dynamics Extractor\. Version 2\.7\.0\./); assert.match(copied, /Secondary structure \(dssp\.DSSP\): Kabsch and Sander 1983/); checks++
+  body().parentElement.querySelector('[data-format="bibtex"]').click(); await tick()
+  assert.equal(w.localStorage.getItem('monet-refs-format'), 'bibtex')
+  assert.ok(body().querySelector('.refs-bib').textContent.startsWith('@misc{monet,'))
+  assert.ok([...body().querySelectorAll('.refs-table td')].some(td => td.textContent === '\\cite{kabsch1983}')); checks++
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }))
+  assert.ok(!open()); assert.equal(el('refs-toggle').getAttribute('aria-pressed'), 'false'); checks++
+  // One analysis: its library (always) and its method references; the description no longer repeats them.
+  chooseMda('dssp')
+  assert.doesNotMatch(el('mda-description').textContent, /Cite:/)
+  await click('mda-cite')
+  assert.ok(open()); assert.equal(el('refs-title').textContent, 'References: Secondary structure (dssp.DSSP)'); checks++
+  await click('refs-copy')
+  assert.match(copied, /^@article\{michaud2011,[\s\S]*@inproceedings\{gowers2016,[\s\S]*@article\{kabsch1983,[\s\S]*\\cite\{michaud2011,gowers2016,kabsch1983\}$/); checks++
+  el('refs-body').parentElement.querySelector('[data-format="chicago"]').click(); await tick()
+  assert.deepEqual([...body().querySelectorAll('h3')].map(h => h.textContent), ['MDAnalysis (always)', 'This analysis'])
+  assert.match(body().querySelectorAll('.refs-list')[1].textContent, /^Kabsch, Wolfgang, and Christian Sander\. 1983\./); checks++
+  await click('refs-close')
+  assert.ok(!open())
+  // An ASE analysis of "More analyses": ASE, then the X-ray form factors.
+  el('extase-analysis').value = 'ase.xrd'; el('extase-analysis').dispatchEvent(new w.Event('change'))
+  await click('extase-cite')
+  assert.equal(el('refs-title').textContent, 'References: Powder X-ray diffraction pattern (utils.xrdebye)')
+  assert.match(body().textContent, /Hjorth Larsen, Ask[\s\S]*Waasmaier, D\., and A\. Kirfel\. 1995/); checks++
+  el('refs-overlay').click(); await tick()
+  assert.ok(!open()); checks++
+}
+
 async function qmCellChecks () {
   const setCodes = wanted => {
     for (const box of $$('[data-qm-code]')) if (box.checked !== wanted.includes(box.dataset.qmCode)) box.click()
@@ -1274,6 +1319,7 @@ async function run () {
   assert.equal(el('file-display').classList.contains('hidden'), true); assert.equal(el('next-1').disabled, true); checks++
   assert.equal(w.testMonet.state.source.original, null); assert.equal(el('stat-atoms').textContent, '—'); assert.ok(el('panel-1').classList.contains('active')); checks++
   await qmCellChecks()
+  await referencesChecks()
   console.log(`PASS: ${checks} DOM/plot checks (stable atom IDs, dihedrals, clear controls, PNG export, theme).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => w.close())

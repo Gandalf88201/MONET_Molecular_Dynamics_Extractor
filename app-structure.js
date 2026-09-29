@@ -1,6 +1,6 @@
 'use strict'
 
-// MONET page script, part 6 of 8: ASE structure summary and coordination, atom identity check, fluctuations and trends, unwrap and format conversion.
+// MONET page script, part 6 of 9: ASE structure summary and coordination, atom identity check, fluctuations and trends, unwrap and format conversion.
 // The app-*.js files are classic scripts sharing one global scope; index.html loads them in this order.
 
 // =============================================================================

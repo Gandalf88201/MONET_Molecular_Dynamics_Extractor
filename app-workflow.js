@@ -1,6 +1,6 @@
 'use strict'
 
-// MONET page script, part 2 of 8: Workflow steps 1–6: file input and import, sampling, atom selection, options and QM inputs, extraction, results.
+// MONET page script, part 2 of 9: Workflow steps 1–6: file input and import, sampling, atom selection, options and QM inputs, extraction, results.
 // The app-*.js files are classic scripts sharing one global scope; index.html loads them in this order.
 
 // =============================================================================

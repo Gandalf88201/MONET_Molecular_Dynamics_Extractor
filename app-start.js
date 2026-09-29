@@ -1,6 +1,6 @@
 'use strict'
 
-// MONET page script, part 8 of 8: Start-up: runs once every app-*.js file has loaded.
+// MONET page script, part 9 of 9: Start-up: runs once every app-*.js file has loaded.
 // The app-*.js files are classic scripts sharing one global scope; index.html loads them in this order.
 
 // =============================================================================

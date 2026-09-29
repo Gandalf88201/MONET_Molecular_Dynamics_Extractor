@@ -11,13 +11,13 @@ AI assistants that speak the Model Context Protocol (Claude Desktop, Claude Code
 MONET runs in your browser, with a small Python service on your own computer that provides ASE and MDAnalysis. There are no installers: download the code and start it with Python.
 
 1. Install **Python 3.10 or newer** (<https://www.python.org/downloads/>; on Windows tick *Add python.exe to PATH*), or use conda (below).
-2. Download MONET: on GitHub, **Code › Download ZIP** (or the ZIP of a release), and extract the whole folder.
+2. Download MONET: on GitHub, **Code › Download ZIP** (or the ZIP of a release), and extract the whole folder. With git: `git clone https://github.com/Gandalf88201/MONET_Molecular_Dynamics_Extractor.git`, and `git pull` in the folder to update.
 3. Start it:
    - **macOS**: double-click `start_monet.command`. The first time, macOS may block a downloaded script: right-click it › **Open** › **Open**. If it does not run, open Terminal in the folder and type `bash start_monet.command`.
    - **Windows**: double-click `start_monet.bat`. If SmartScreen appears, choose **More info › Run anyway**.
    - **Linux**: run `./start_monet.command` in a terminal.
 
-The first start creates a private environment (`.venv`) in the MONET folder and installs ASE, MDAnalysis and spglib from `requirements.txt` (internet needed once, a few minutes). Later starts open MONET at once; the requirements are reinstalled only when `requirements.txt` changes, e.g. after downloading a new version. Arguments are passed on, e.g. `start_monet.command --port 8766`; set `MONET_PYTHON` to choose a particular Python.
+The first start creates a private environment (`.venv`) in the MONET folder and installs ASE, MDAnalysis, spglib and networkx from `requirements.txt` (internet needed once, a few minutes). Later starts open MONET at once; the requirements are reinstalled only when `requirements.txt` changes, e.g. after downloading a new version. Arguments are passed on, e.g. `start_monet.command --port 8766`; set `MONET_PYTHON` to choose a particular Python.
 
 ### With conda
 
@@ -61,7 +61,7 @@ With the launcher, a trajectory is uploaded **once** (no size limit other than `
 After loading, the files are shared by three tabs, in the order of a typical study:
 
 1. **ASE** — Structure (formula, masses, centre of mass, inertia, cell, volume, density, shortest distance, overlapping atoms, molecules, bonds per element pair, coordination numbers, space group with `spglib`), bond lengths, bond angles, dihedrals, pair distances, coordination numbers along the trajectory, conversion to other formats and wrapping. *More analyses* adds the ASE analysis modules: self-diffusion per element (`md.analysis.DiffusionCoefficient`), energy, forces, temperature and pressure stored in the file, every bond, angle and dihedral by element type (`geometry.analysis.Analysis`), molecules and species per frame, bonds formed and broken, total or partial RDF (`geometry.rdf`), space group along the trajectory (`spacegroup.symmetrize`, spglib), dimensionality of the bonded network (`geometry.dimensionality`), atomic layers (`geometry.get_layers`), powder XRD and SAXS (`utils.xrdebye`), Bravais lattice and Niggli-reduced cell (`ase.cell`), supercell trajectory (`build.make_supercell`) and cell volume/density. See [ASE › More analyses](#ase--more-analyses).
-2. **MDAnalysis** — *Topology & consistency* (atom-identity check, below) and *Analyses*: `rms.RMSD` (with extra groups), pairwise RMSD matrix (`diffusionmap.DistanceMatrix` with `rms.rmsd`, optimal superposition of every pair), `rms.RMSF`, radius of gyration, `pca.PCA` (up to 10 components picked from a list, their distribution, and configurations picked by projection window, extremes or frame list, written as a trajectory for the extraction), `msd.EinsteinMSD`, `gnm.GNMAnalysis`, `diffusionmap.DiffusionMap`, `align.AlignTraj` (aligned trajectory to download or to analyse in MONET), `HydrogenBondAnalysis` (occupancy table with MONET IDs), `contacts.Contacts`, `rdf.InterRDF`, centre-of-mass and minimum distances between groups, `atomicdistances`, `dihedrals.Dihedral` (−180…180°), `lineardensity`, `density.DensityAnalysis` (OpenDX file), `dihedrals.Ramachandran` and `dssp.DSSP` (proteins). Each analysis shows its own fields; **← picked** inserts the atoms selected in the viewer as `id …`.
+2. **MDAnalysis** — *Topology & consistency* (atom-identity check, below) and *Analyses*: `rms.RMSD` (with extra groups), pairwise RMSD matrix (`diffusionmap.DistanceMatrix` with `rms.rmsd`, optimal superposition of every pair), `rms.RMSF`, radius of gyration, `pca.PCA` (up to 10 components picked from a list, their distribution, and configurations picked by projection window, extremes or frame list, written as a trajectory for the extraction), `msd.EinsteinMSD`, `gnm.GNMAnalysis`, `diffusionmap.DiffusionMap`, `align.AlignTraj` (aligned trajectory to download or to analyse in MONET), `HydrogenBondAnalysis` (occupancy table with MONET IDs), `contacts.Contacts`, `rdf.InterRDF`, centre-of-mass and minimum distances between groups, `atomicdistances`, `dihedrals.Dihedral` (−180…180°), `lineardensity`, `density.DensityAnalysis` (OpenDX file), `dihedrals.Ramachandran` and `dssp.DSSP` (proteins); since 2.7 also `align.AverageStructure`, `bat.BAT`, `rdf.InterRDF_s`, hydrogen-bond lifetimes (`HydrogenBondAnalysis.lifetime`, `HydrogenBondAutoCorrel`), `WaterBridgeAnalysis`, contact maps (`distances.contact_matrix`), `leaflet.LeafletFinder`, `polymer.PersistenceLength`, `dielectric.DielectricConstant`, `dihedrals.Janin`, `helix_analysis.HELANAL`, `nucleicacids` and `nuclinfo`, the PCA cosine content and the close-contact GNM (see [MDAnalysis › Analyses](#mdanalysis--analyses)). Each analysis shows its own fields; **← picked** inserts the atoms selected in the viewer as `id …`; **ⓘ Cite** lists its references.
 3. **MONET Custom Functionalities** — *3D viewer & extraction* (3D view, sampling, extraction and QM inputs), then MONET's own analyses: autocorrelation (decorrelation time and uncorrelated trajectory), fluctuations and trends, Kabsch RMSD, RMSD matrix, RDF, MSD/diffusion and VDOS.
 
 The viewer, atom table, cell and time axis are common to all analysis sub-tabs.
@@ -321,6 +321,34 @@ With [MDAnalysis](https://www.mdanalysis.org/) installed (included in `requireme
 - **Selections**: *Select with MDAnalysis syntax* (e.g. `resname SOL and name OW`, `resid 1:5`, `around 3.5 resname LIG`) fills the ASE picks with the matching MONET IDs.
 - **MDAnalysis tab**: the analyses listed under *Analysis modules*, on the same trajectory, cell and frame step as the other tabs.
 - Residues and atom names come from the imported topology. For XYZ trajectories each bonded molecule becomes a residue named by its formula (`resname H2O`, `resname C20H22N2O2` …). Periodic cells are passed to MDAnalysis for minimum-image distances.
+- Partial charges come from a topology that has them (e.g. TPR, PSF, PRMTOP) or from a `charge`, `charges` or `initial_charges` column of an extended XYZ file; imports keep them as a `charge` column. Without charges the charge-dependent analyses (dielectric constant) accept charges typed by element.
+
+### MDAnalysis › Analyses
+
+The MDAnalysis analyses use the frame step, crystal cell, bond cutoff (bonds, molecules and residues of XYZ files) and MONET IDs of the other tabs. Analyses added in 2.7 (the others are listed under [Analysis modules](#analysis-modules)); every one is compared with MDAnalysis called directly, or with a value known by construction, in `tests/mda-analyses.cjs`:
+
+| Analysis | MDAnalysis module | What it gives |
+| --- | --- | --- |
+| Average structure | `align.AverageStructure` | average of the selection after superposition, as extended XYZ, and the RMSD of every frame from it |
+| Internal coordinates | `bat.BAT` | every bond, angle and torsion of one whole molecule (mean, SD); the most fluctuating ones along the trajectory |
+| Site-specific RDF | `rdf.InterRDF_s` | g(r) of each site atom (e.g. each ion) with a group, first peak and coordination number within a chosen shell |
+| Hydrogen-bond lifetime | `HydrogenBondAnalysis.lifetime` | continuous or intermittent autocorrelation C(τ) and its integral (ps with the time axis) |
+| Hydrogen-bond autocorrelation | `hydrogenbonds.HydrogenBondAutoCorrel` | C(t) from several starting frames, fitted with a sum of exponentials to give τ |
+| Water bridges | `hydrogenbonds.WaterBridgeAnalysis` | bridges through up to 4 waters between two selections per frame, and the most frequent ends |
+| Contact map | `distances.contact_matrix` | fraction of frames in which each pair of up to 1000 atoms is within the cutoff, and the most frequent contacts |
+| Membrane leaflets | `leaflet.LeafletFinder` (networkx) | leaflets of the head groups (first frame), their z along the trajectory and the bilayer thickness |
+| Persistence length | `polymer.PersistenceLength` | bond autocorrelation along the backbone of each molecule, l_b and the fitted l_p |
+| Dielectric constant | `dielectric.DielectricConstant` | ε from the total-dipole fluctuations (tin-foil boundary), with the dipole along the trajectory; needs charges |
+| Janin angles | `dihedrals.Janin` | side-chain χ1/χ2 per residue |
+| Helix geometry | `helix_analysis.HELANAL` | twist, rise, residues per turn, bend and axis tilt of a helix from its Cα atoms |
+| Base-pair distances | `nucleicacids` | Watson–Crick (N1–N3), minor-groove (O2–C2) or major-groove (N4–O6) distance of each base pair |
+| Nucleic-acid torsions | `nuclinfo` | α–ζ, χ and the sugar pucker (pseudorotation phase and type) of each residue |
+
+*Principal component analysis* also reports the cosine content of each projection (`pca.cosine_content`; close to 1 means random diffusion, not sampled motion), and *Gaussian network model* offers `closeContactGNMAnalysis`. Not included: `encore`, `psa` and `waterdynamics` (deprecated, removed in MDAnalysis 3.0 in favour of separate MDAKits) and `hole2` and `legacy.x3dna`, which need the external HOLE and X3DNA programs.
+
+### References to cite (ⓘ)
+
+**ⓘ References** in the title bar lists what to cite: MONET (software and article), ASE and MDAnalysis whenever they are used, and a table of the analyses that add method references (e.g. DSSP → Kabsch and Sander 1983), separated by library. **ⓘ Cite** next to each analysis menu shows only the references of the chosen analysis. Both switch between **Chicago** (author-date) and **BibTeX** (with the `\cite{…}` keys for LaTeX), **Copy** the text shown and **Download .bib**. The methods report of the history lists the same references for the steps it contains. The references are kept in `references.js`, following those that each ASE and MDAnalysis module declares in its documentation; a plugin can give its own with `citation=`.
 
 ### ASE › More analyses
 
@@ -488,8 +516,9 @@ Activate the Python environment before launching Electron: extraction, ASE and M
 | Files | Role |
 | --- | --- |
 | `index.html`, `styles.css`, `theme.js` | page and themes |
-| `app-core.js` … `app-start.js` | page logic, loaded in order by `index.html`: state and navigation (`app-core`), workflow steps 1–6 (`app-workflow`), analysis workspace, charts and player (`app-analysis`), geometry and dynamics analyses (`app-geometry`), MDAnalysis and registered analyses (`app-mdanalysis`), structure, atom identity and fluctuations (`app-structure`), history, console and sessions (`app-history`), start-up (`app-start`) |
+| `app-core.js` … `app-start.js` | page logic, loaded in order by `index.html`: state and navigation (`app-core`), workflow steps 1–6 (`app-workflow`), analysis workspace, charts and player (`app-analysis`), geometry and dynamics analyses (`app-geometry`), MDAnalysis and registered analyses (`app-mdanalysis`), structure, atom identity and fluctuations (`app-structure`), history, console and sessions (`app-history`), references dialog (`app-references`), start-up (`app-start`) |
 | `analysis-forms.js` | forms and *More analyses* tabs built from the analysis registry |
+| `references.js`, `app-references.js` | references of MONET, ASE, MDAnalysis and every analysis (Chicago and BibTeX) and the References dialog |
 | `viewer.js`, `plot.js`, `xyz.js`, `pbc.js`, `fit.js`, `units.js`, `ase-model.js` | 3D viewer, charts, XYZ parser and numeric helpers |
 | `qm-*.js`, `monet_qm.py` | QM input generation (JavaScript and Python, kept in parity by tests) |
 | `provenance.js`, `console.js`, `report.js`, `replaygen.js`, `monet_replay.py` | analysis history, console, methods report and `replay.py` |
@@ -506,28 +535,23 @@ See [CHANGELOG.md](CHANGELOG.md).
 
 ## Validation
 
-With the environment above active (or `PYTHON=.venv/bin/python`):
-
-```sh
-node tests/regression.cjs
-node tests/qm-parity.cjs
-node tests/formats.cjs
-node tests/analysis.cjs
-node tests/mdanalysis.cjs
-node tests/ase-integration.cjs
-node tests/ase-analyses.cjs
-```
-
-For the DOM/plot checks, install the optional test dependencies (not required by the app):
+With the environment above active (or `PYTHON=.venv/bin/python`), install the optional test dependencies (not required by the app) and run the suites as the CI does (`.github/workflows/tests.yml`):
 
 ```sh
 npm install --no-save jsdom @napi-rs/canvas
-node tests/ase-ui.cjs
+for t in regression units qm-parity qm-resolve formats analysis mdanalysis ase-integration ase-ui provenance console \
+         report session replay history-ui launcher registry ase-analyses mda-analyses references app-load mcp; do
+  node tests/$t.cjs || break
+done
 ```
 
-Current results (ASE 3.29.0, MDAnalysis 2.10.0, Python 3.14, Node 22): 48 regression, 20 QM-input parity, 38 format-import, 73 analysis, 65 MDAnalysis, 86 live launcher and 261 DOM/plot checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion). The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
+`tests/mcp.cjs` also needs `python -m pip install "mcp>=1.2"`.
+
+Current results (MONET 2.7.0, ASE 3.29.0, MDAnalysis 2.10.0, Python 3.11, Node 22; the CI runs Python 3.10 and 3.13): 74 regression, 19 units, 132 QM-input parity, 177 QM-keyword, 38 format-import, 107 analysis, 71 MDAnalysis, 94 live ASE integration, 458 DOM/plot, 29 provenance, 48 console, 26 report, 21 session, 26 replay, 61 history, 7 launcher, 9 registry, 10 ASE-analysis, 15 MDAnalysis-analysis, 9 reference, 10 page-load and 8 MCP checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion, an ideal α-helix, a planar bilayer, base pairs at known distances); the ASE and MDAnalysis analyses are also compared with the libraries called directly. The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
 
 ## Citing and licences
+
+**What to cite for an analysis**: click **ⓘ Cite** next to the analysis, or **ⓘ References** in the title bar for everything (Chicago or BibTeX, see [References to cite](#references-to-cite-)).
 
 **How to cite MONET**: GitHub shows a *Cite this repository* button generated from [`CITATION.cff`](CITATION.cff). Please cite the software — T. Francese, *MONET: Molecular Dynamics Extractor*, the version you used (shown in the title bar), Zenodo, doi:[10.5281/zenodo.22816521](https://doi.org/10.5281/zenodo.22816521) (all versions; each release also has its own DOI on the Zenodo page) — together with the PCCP 2022 article (doi:[10.1039/d2cp01147f](https://doi.org/10.1039/d2cp01147f)) and the libraries of the analyses you used, listed below.
 
@@ -552,17 +576,14 @@ MONET calls ASE and MDAnalysis as separate, user-installed Python packages; it d
 - **Always cite both**:
   - R. J. Gowers *et al.*, “MDAnalysis: A Python package for the rapid analysis of molecular dynamics simulations”, *Proc. 15th Python in Science Conf.* 98–105 (2016), doi:[10.25080/Majora-629e541a-00e](https://doi.org/10.25080/Majora-629e541a-00e).
   - N. Michaud-Agrawal, E. J. Denning, T. B. Woolf, O. Beckstein, “MDAnalysis: A toolkit for the analysis of molecular dynamics simulations”, *J. Comput. Chem.* **32**, 2319–2327 (2011), doi:[10.1002/jcc.21787](https://doi.org/10.1002/jcc.21787).
-- **Also cite, depending on the analysis** (references declared by MDAnalysis itself):
-  - RMSD, pairwise RMSD matrix, RMSF with alignment and AlignTraj (QCP superposition): D. L. Theobald, *Acta Cryst.* **A61**, 478–480 (2005), doi:[10.1107/S0108767305015266](https://doi.org/10.1107/S0108767305015266); P. Liu, D. K. Agrafiotis, D. L. Theobald, *J. Comput. Chem.* **31**, 1561–1563 (2010), doi:[10.1002/jcc.21439](https://doi.org/10.1002/jcc.21439).
-  - Hydrogen bonds: P. Smith, R. M. Ziolek, E. Gazzarrini, D. M. Owen, C. D. Lorenz, *Phys. Chem. Chem. Phys.* **21**, 9285–9295 (2019), doi:[10.1039/C9CP01532A](https://doi.org/10.1039/C9CP01532A).
-  - DSSP: W. Kabsch, C. Sander, *Biopolymers* **22**, 2577–2637 (1983), doi:[10.1002/bip.360221211](https://doi.org/10.1002/bip.360221211).
-  - Native contacts, diffusion maps, GNM and PCA follow the methods named in the MDAnalysis documentation of each module (<https://docs.mdanalysis.org>); cite the original method papers listed there when you report those results.
+- **Also cite, depending on the analysis**: the method references that MDAnalysis declares for each module, e.g. QCP superposition for RMSD, RMSF, alignment and the average structure (D. L. Theobald, *Acta Cryst.* **A61**, 478–480 (2005), doi:[10.1107/S0108767305015266](https://doi.org/10.1107/S0108767305015266); P. Liu, D. K. Agrafiotis, D. L. Theobald, *J. Comput. Chem.* **31**, 1561–1563 (2010), doi:[10.1002/jcc.21439](https://doi.org/10.1002/jcc.21439)), hydrogen bonds (P. Smith *et al.*, *Phys. Chem. Chem. Phys.* **21**, 9845–9857 (2019), doi:[10.1039/C9CP01532A](https://doi.org/10.1039/C9CP01532A)) or DSSP (W. Kabsch, C. Sander, *Biopolymers* **22**, 2577–2637 (1983), doi:[10.1002/bip.360221211](https://doi.org/10.1002/bip.360221211)). The full list, analysis by analysis, is in the References dialog (**ⓘ References**, **ⓘ Cite**) and in `references.js`.
 
 ### Other components
 
 | Component | Licence | Role |
 |---|---|---|
 | NumPy | BSD-3-Clause (with bundled MIT/Zlib/0BSD/CC0 parts) | arrays, FFT, linear algebra — cite C. R. Harris *et al.*, *Nature* **585**, 357 (2020), doi:[10.1038/s41586-020-2649-2](https://doi.org/10.1038/s41586-020-2649-2) |
+| networkx | BSD-3-Clause | graph of head groups for `leaflet.LeafletFinder` — cite A. A. Hagberg, D. A. Schult, P. J. Swart, *Proc. 7th Python in Science Conf.* 11–15 (2008) |
 | SciPy | BSD-3-Clause | connected components, sparse graphs — cite P. Virtanen *et al.*, *Nat. Methods* **17**, 261 (2020), doi:[10.1038/s41592-019-0686-2](https://doi.org/10.1038/s41592-019-0686-2) |
 | Electron (desktop app only) | MIT; bundles Chromium and Node.js under their own licences | desktop window |
 | jsdom, @napi-rs/canvas | MIT | test suites only, not shipped |

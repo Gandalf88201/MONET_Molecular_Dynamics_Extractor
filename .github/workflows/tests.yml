@@ -46,6 +46,8 @@ jobs:
           node tests/launcher.cjs
           node tests/registry.cjs
           node tests/ase-analyses.cjs
+          node tests/mda-analyses.cjs
+          node tests/references.cjs
           node tests/app-load.cjs
           node tests/mcp.cjs
 

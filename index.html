@@ -15,12 +15,13 @@
   <div class="titlebar-logo">
     <span class="logo-m">M</span><span class="logo-rest">ONET</span>
   </div>
-  <div class="titlebar-sub">Molecular Dynamics Extractor &nbsp;·&nbsp; v 2.6.0</div>
+  <div class="titlebar-sub">Molecular Dynamics Extractor &nbsp;·&nbsp; v 2.7.0</div>
   <div class="titlebar-right">
     <div class="ase-badge" id="ase-badge" title="ASE (Atomic Simulation Environment) status">
       <span class="ase-dot" id="ase-dot"></span>
       <span id="ase-badge-text">ASE …</span>
     </div>
+    <button class="theme-toggle" id="refs-toggle" type="button" aria-pressed="false" aria-haspopup="dialog" title="References to cite: MONET, ASE, MDAnalysis and each analysis (Chicago or BibTeX)">ⓘ References</button>
     <button class="theme-toggle" id="history-toggle" type="button" aria-pressed="false" title="Analysis history and console (Ctrl+`)">History</button>
     <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">☀ Day</button>
     <div class="titlebar-author">Dr. T. Francese &nbsp;·&nbsp; Univ. of Chicago</div>
@@ -1143,6 +1144,8 @@
               <option value="gnm">Gaussian network model (gnm.GNMAnalysis)</option>
               <option value="diffusionmap">Diffusion map (diffusionmap.DiffusionMap)</option>
               <option value="align">Align the trajectory and download it (align.AlignTraj)</option>
+              <option value="average_structure">Average structure and RMSD from it (align.AverageStructure)</option>
+              <option value="bat">Bond–angle–torsion internal coordinates (bat.BAT)</option>
             </optgroup>
             <optgroup label="Interactions and distances">
               <option value="hbonds">Hydrogen bonds (HydrogenBondAnalysis)</option>
@@ -1152,19 +1155,36 @@
               <option value="min_distance">Minimum distance between two groups</option>
               <option value="atomic_distances">Atom-by-atom distances (atomicdistances)</option>
               <option value="dihedral_mda">Dihedral angles (dihedrals.Dihedral, −180…180°)</option>
+              <option value="interrdf_s">Site-specific RDF and coordination number (rdf.InterRDF_s)</option>
+              <option value="hbond_lifetime">Hydrogen-bond lifetime (HydrogenBondAnalysis.lifetime)</option>
+              <option value="hbond_autocorrel">Hydrogen-bond autocorrelation with triexponential fit (HydrogenBondAutoCorrel)</option>
+              <option value="water_bridges">Water bridges (WaterBridgeAnalysis)</option>
+              <option value="contact_map">Contact map (distances.contact_matrix)</option>
             </optgroup>
             <optgroup label="Densities">
               <option value="lineardensity">Linear density profile (lineardensity)</option>
               <option value="density">3D density grid, OpenDX (density.DensityAnalysis)</option>
             </optgroup>
+            <optgroup label="Membranes, polymers and dielectrics">
+              <option value="leaflets">Membrane leaflets and thickness (leaflet.LeafletFinder)</option>
+              <option value="persistence_length">Persistence length (polymer.PersistenceLength)</option>
+              <option value="dielectric">Static dielectric constant (dielectric.DielectricConstant)</option>
+            </optgroup>
             <optgroup label="Proteins">
               <option value="ramachandran">Ramachandran φ/ψ (dihedrals.Ramachandran)</option>
               <option value="dssp">Secondary structure (dssp.DSSP)</option>
+              <option value="janin">Janin χ1/χ2 side-chain angles (dihedrals.Janin)</option>
+              <option value="helanal">Helix geometry (helix_analysis.HELANAL)</option>
+            </optgroup>
+            <optgroup label="Nucleic acids">
+              <option value="nucleic_pairs">Base-pair distances (nucleicacids)</option>
+              <option value="nucleic_torsions">Backbone torsions and sugar pucker (nuclinfo)</option>
             </optgroup>
           </select>
           <label class="field-label" for="mda-step">Frame step</label>
           <input class="field-input field-input-sm" type="number" id="mda-step" value="1" min="1" />
           <button class="btn btn-sm btn-accent" id="btn-run-mda">Compute</button>
+          <button class="btn btn-sm" id="mda-cite" type="button" title="References to cite for this analysis">ⓘ Cite</button>
         </div>
         <p class="panel-desc" id="mda-description"></p>
         <div class="mda-fields" id="mda-fields"></div>
@@ -1400,6 +1420,26 @@
     </div>
   </div>
 </aside>
+<!-- ===== REFERENCES DIALOG (app-references.js) ===== -->
+<div class="refs-overlay hidden" id="refs-overlay">
+  <div class="refs-dialog" role="dialog" aria-modal="true" aria-labelledby="refs-title">
+    <div class="refs-head">
+      <h2 id="refs-title">References</h2>
+      <div class="refs-actions">
+        <span class="refs-format" role="group" aria-label="Format">
+          <button class="btn btn-sm refs-format-btn" type="button" data-format="chicago" aria-pressed="true">Chicago</button>
+          <button class="btn btn-sm refs-format-btn" type="button" data-format="bibtex" aria-pressed="false">BibTeX</button>
+        </span>
+        <button class="btn btn-sm" id="refs-copy" type="button" title="Copy the references shown">Copy</button>
+        <button class="btn btn-sm" id="refs-bib" type="button" title="Download the references shown as a BibTeX file">Download .bib</button>
+        <button class="btn btn-sm" id="refs-close" type="button" aria-label="Close the references">✕</button>
+      </div>
+    </div>
+    <p class="panel-desc" id="refs-intro"></p>
+    <div class="refs-body" id="refs-body"></div>
+  </div>
+</div>
+
 <script src="xyz.js"></script>
 <script src="viewer.js"></script>
 <script src="units.js"></script>
@@ -1413,6 +1453,7 @@
 <script src="plot.js"></script>
 <script src="provenance.js"></script>
 <script src="console.js"></script>
+<script src="references.js"></script>
 <script src="report.js"></script>
 <script src="replaygen.js"></script>
 <script src="analysis-forms.js"></script>
@@ -1423,6 +1464,7 @@
 <script src="app-mdanalysis.js"></script>
 <script src="app-structure.js"></script>
 <script src="app-history.js"></script>
+<script src="app-references.js"></script>
 <script src="app-start.js"></script>
 </body>
 </html>

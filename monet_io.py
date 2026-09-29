@@ -310,22 +310,26 @@ class XYZTrajectory:
         return list(self.symbols)
 
     def atom_properties(self):
-        """Extra per-atom extended-XYZ columns (resname, resid, atomname) from the first frame."""
+        """Extra per-atom extended-XYZ columns (resname, resid, atomname, charge) from the first frame.
+
+        A charge column may be called charge, charges or initial_charges (ASE's name)."""
         if not self.properties:
             return {}
         fields = self.properties.split(':')
         wanted, col = {}, 0
         for i in range(0, len(fields), 3):
             name, kind, width = fields[i], fields[i + 1], int(fields[i + 2])
-            if name in ('resname', 'resid', 'atomname') and width == 1:
-                wanted[name] = (col, kind)
+            key = 'charge' if name in ('charges', 'initial_charges') and kind == 'R' else name
+            if key in ('resname', 'resid', 'atomname', 'charge') and width == 1 and key not in wanted:
+                wanted[key] = (col, kind)
             col += width
         if not wanted:
             return {}
         with open(self.path, 'rb') as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
             parts = self._block(mm, 0).split(b'\n', 2)
             table = self._tokens(parts[2], 0)
-        return {name: [int(v) if kind == 'I' else v.decode('utf-8', 'replace') for v in table[:, column]]
+        convert = {'I': int, 'R': float}
+        return {name: [convert[kind](v) if kind in convert else v.decode('utf-8', 'replace') for v in table[:, column]]
                 for name, (column, kind) in wanted.items()}
 
     def frame_indices(self, step=1, start=0, stop=None):

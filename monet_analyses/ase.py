@@ -21,12 +21,7 @@ STRUCTURE = 'Structure and symmetry'
 SCATTERING = 'Scattering'
 CELL = 'Cell'
 
-ASE_CITATION = ('A. H. Larsen et al., The atomic simulation environment — a Python library for working with atoms, '
-                'J. Phys.: Condens. Matter 29, 273002 (2017).')
-DIMENSIONALITY_CITATION = (ASE_CITATION + ' P. M. Larsen, M. Pandey, M. Strange, K. W. Jacobsen, Definition of a scoring '
-                           'parameter to identify low-dimensional materials components, Phys. Rev. Materials 3, 034003 (2019).')
-XRAY_CITATION = (ASE_CITATION + ' D. Waasmaier, A. Kirfel, New analytical scattering-factor functions for free atoms '
-                 'and ions, Acta Cryst. A51, 416–431 (1995).')
+# References (ASE and the methods of each analysis) are in references.js, shown by the ⓘ Cite button.
 MAX_CURVES = 12       # curves drawn per plot; the table lists every type
 MAX_EVENT_ROWS = 2000
 
@@ -111,7 +106,7 @@ def _components(n, codes):
 # ── dynamics ─────────────────────────────────────────────────────────────────
 
 @analysis('diffusion', 'ase', 'Self-diffusion coefficient per element (md.analysis.DiffusionCoefficient)',
-          category=DYNAMICS, citation=ASE_CITATION,
+          category=DYNAMICS,
           description='ase.md.analysis.DiffusionCoefficient: Einstein relation ⟨|r(t) − r(0)|²⟩ = 6Dt fitted over each '
                       'segment of the trajectory, one D per element (or for the centre of mass of the chosen atoms). '
                       'The spread between segments gives the standard deviation. Periodic trajectories are unwrapped '
@@ -220,7 +215,7 @@ def _stored_names(atoms):
 
 
 @analysis('stored_properties', 'ase', 'Energy, forces, temperature or pressure written in the file',
-          category=STORED, citation=ASE_CITATION,
+          category=STORED,
           description='Reads with ase.io what the MD program wrote for every frame: potential energy (extended XYZ '
                       'energy=, CP2K "E =" in hartree converted to eV), forces (largest and RMS |F|), kinetic '
                       'temperature from the momenta (Atoms.get_temperature, 3N degrees of freedom) and pressure '
@@ -294,7 +289,7 @@ def _tuple_values(atoms, tuples, kind):
 
 
 @analysis('bond_types', 'ase', 'Every bond, angle or dihedral by element type (geometry.analysis.Analysis)',
-          category=BONDS, citation=ASE_CITATION,
+          category=BONDS,
           description='ase.geometry.analysis.Analysis finds every bond, angle and dihedral of the first frame (bond '
                       'cutoff of MONET); their values are then followed in every analysed frame and grouped by element '
                       'type (C–H, H–C–H, H–C–C–H …). Distribution: histogram of all values of each type; along the '
@@ -349,7 +344,7 @@ def bond_types(ctx, p):
 
 
 @analysis('molecules', 'ase', 'Molecules and species along the trajectory (neighborlist)',
-          category=BONDS, citation=ASE_CITATION,
+          category=BONDS,
           description='In every analysed frame the atoms are joined by bonds (ase.neighborlist, covalent radii × the '
                       'MONET bond cutoff) and each connected group is a molecule, named by its Hill formula. Shows how '
                       'many molecules of each species there are in every frame: proton transfer, dissociation, '
@@ -401,7 +396,7 @@ def _confirmed(states, hold):
     return out
 
 
-@analysis('bond_events', 'ase', 'Bonds formed and broken (neighborlist)', category=BONDS, citation=ASE_CITATION,
+@analysis('bond_events', 'ase', 'Bonds formed and broken (neighborlist)', category=BONDS,
           description='Compares the bonds (ase.neighborlist, covalent radii × the MONET bond cutoff) of consecutive '
                       'analysed frames and lists every bond that forms or breaks, with its atoms as MONET IDs. A change '
                       'counts only when it lasts at least the given number of analysed frames, so bonds that flicker '
@@ -454,7 +449,7 @@ def bond_events(ctx, p):
 # ── structure and symmetry ───────────────────────────────────────────────────
 
 @analysis('rdf', 'ase', 'Radial distribution function, total or partial (geometry.rdf.get_rdf)',
-          category=STRUCTURE, citation=ASE_CITATION,
+          category=STRUCTURE,
           description='ase.geometry.rdf.get_rdf averaged over the analysed frames, with the volume of each frame. A '
                       'pair of elements gives the partial g_AB(r) (same convention as LAMMPS compute rdf). The cell must '
                       'contain a sphere of radius r_max. MONET Custom › RDF gives the same curve for groups of atoms.',
@@ -491,7 +486,7 @@ def _symmetry(atoms, symprec):
 
 
 @analysis('space_group', 'ase', 'Space group along the trajectory (spacegroup.symmetrize, spglib)',
-          category=STRUCTURE, requires=('spglib',), citation=ASE_CITATION,
+          category=STRUCTURE, requires=('spglib',),
           description='Space group of every analysed frame with ase.spacegroup.symmetrize.check_symmetry (spglib) and '
                       'the given tolerance: phase transitions in NPT runs, or the symmetry an average structure keeps. '
                       'Thermal motion lowers the symmetry of single frames; raise the tolerance to see the underlying '
@@ -516,7 +511,7 @@ def space_group(ctx, p):
 
 
 @analysis('dimensionality', 'ase', 'Dimensionality of the bonded network (geometry.dimensionality)',
-          category=STRUCTURE, citation=DIMENSIONALITY_CITATION,
+          category=STRUCTURE,
           description='ase.geometry.dimensionality.analyze_dimensionality: finds whether the bonded network is made of '
                       'molecules (0D), chains (1D), layers (2D) or a 3D framework, in every analysed frame. The most '
                       'likely k-interval is kept; its components are counted by dimensionality. RDA: rank determination '
@@ -552,7 +547,7 @@ def dimensionality(ctx, p):
 
 
 @analysis('layers', 'ase', 'Atomic layers along a lattice direction (geometry.get_layers)',
-          category=STRUCTURE, citation=ASE_CITATION,
+          category=STRUCTURE,
           description='ase.geometry.get_layers groups the atoms into planes of the given Miller indices: atoms closer '
                       'than the tolerance along the plane normal share a layer. Shows the number of layers in every '
                       'analysed frame (surface reconstruction, melting, intercalation); the table describes the layers '
@@ -669,7 +664,7 @@ XRAY_PARAMS = [Param.number('wavelength', 'Wavelength (Å)', 1.5406, positive=Tr
                Param.integer('points', 'Points', 300, min=10, max=5000)]
 
 
-@analysis('xrd', 'ase', 'Powder X-ray diffraction pattern (utils.xrdebye)', category=SCATTERING, citation=XRAY_CITATION,
+@analysis('xrd', 'ase', 'Powder X-ray diffraction pattern (utils.xrdebye)', category=SCATTERING,
           description='Powder XRD intensity against 2θ from the Debye formula of ase.utils.xrdebye.XrDebye '
                       '(Waasmaier–Kirfel form factors, Iwasa polarisation factor), averaged over the analysed frames. '
                       'Compares an MD ensemble with a measured pattern of a liquid, glass or nanoparticle.',
@@ -680,7 +675,7 @@ def xrd(ctx, p):
     return profile(x, {'XRD intensity': intensity}, '2θ (°)', 'Intensity (a.u.)', notes=notes)
 
 
-@analysis('saxs', 'ase', 'Small-angle X-ray scattering (utils.xrdebye)', category=SCATTERING, citation=XRAY_CITATION,
+@analysis('saxs', 'ase', 'Small-angle X-ray scattering (utils.xrdebye)', category=SCATTERING,
           description='SAXS intensity against q = 4π sin θ / λ from the Debye formula of ase.utils.xrdebye.XrDebye, '
                       'averaged over the analysed frames: size and shape of particles or clusters.',
           params=[Param.number('start', 'q from (Å⁻¹)', 0.01, positive=True), Param.number('stop', 'q to (Å⁻¹)', 1.0, positive=True)]
@@ -693,7 +688,7 @@ def saxs(ctx, p):
 # ── cell ─────────────────────────────────────────────────────────────────────
 
 @analysis('lattice', 'ase', 'Bravais lattice and Niggli-reduced cell along the trajectory (ase.cell)',
-          category=CELL, citation=ASE_CITATION,
+          category=CELL,
           description='For every analysed frame: the Bravais lattice of the cell (Cell.get_bravais_lattice, with the '
                       'given tolerance) and the Niggli-reduced cell (Cell.niggli_reduce), the unique shortest '
                       'description of the lattice. Follows NPT runs where the box shears or changes shape.',
@@ -727,7 +722,7 @@ def lattice(ctx, p):
                   table={'columns': ['Bravais lattice', 'Frames', '%', 'First frame'], 'rows': rows})
 
 
-@analysis('supercell', 'ase', 'Supercell trajectory (build.make_supercell)', category=CELL, citation=ASE_CITATION,
+@analysis('supercell', 'ase', 'Supercell trajectory (build.make_supercell)', category=CELL,
           output={'suffix': '-supercell.extxyz', 'trajectory': True},
           description='Repeats every analysed frame na × nb × nc times along the cell vectors with '
                       'ase.build.make_supercell and writes the trajectory (extended XYZ with the new lattice), e.g. to '

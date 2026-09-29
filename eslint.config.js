@@ -28,7 +28,7 @@ const pageGlobals = file => Object.fromEntries(appFiles.filter(other => other !=
 // Browser modules share these globals through <script> tags (see index.html).
 const monet = Object.fromEntries(['MonetViewer', 'MonetTheme', 'MonetXYZ', 'MonetUnits', 'MonetQMResolve', 'MonetQM', 'MonetQMPanel',
   'MonetASEModel', 'MonetFit', 'MonetPBC', 'MonetLineChart', 'MonetHeatmapChart', 'MonetPlot', 'MonetProvenance', 'MonetConsole',
-  'MonetReport', 'MonetReplay', 'MonetAnalysisForms'].map(name => [name, 'readonly']))
+  'MonetReport', 'MonetReplay', 'MonetAnalysisForms', 'MonetReferences'].map(name => [name, 'readonly']))
 
 const rules = {
   'no-unused-vars': ['error', { args: 'none', caughtErrors: 'none', ignoreRestSiblings: true }],

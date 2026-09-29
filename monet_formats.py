@@ -38,7 +38,7 @@ FORMATS = {
     **{key: value[0] for key, value in monet_mda.FORMATS.items()},
 }
 NEEDS_REFERENCE = {'qe-cp-pos', 'cp2k-dcd', 'cpmd-trajectory'} | {k for k, v in monet_mda.FORMATS.items() if v[2]}
-EXTRA_PROPERTIES = (('resname', 'S'), ('resid', 'I'), ('atomname', 'S'))
+EXTRA_PROPERTIES = (('resname', 'S'), ('resid', 'I'), ('atomname', 'S'), ('charge', 'R'))
 
 
 def ase_readable():
@@ -431,8 +431,10 @@ def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_f
                 columns = [[''] * natoms]
                 if extra:
                     # Topology labels travel as extra extended-XYZ columns (used by MDAnalysis selections).
-                    properties += ''.join(f':{key}:{kind}:1' for key, kind in EXTRA_PROPERTIES)
-                    columns = [[' ' + ' '.join(str(extra[key][i]).replace('%', '%%') for key, _ in EXTRA_PROPERTIES) for i in range(natoms)]]
+                    # Partial charges (from a topology that has them) are written as a charge column.
+                    keys = [(key, kind) for key, kind in EXTRA_PROPERTIES if key in extra]
+                    properties += ''.join(f':{key}:{kind}:1' for key, kind in keys)
+                    columns = [[' ' + ' '.join(str(extra[key][i]).replace('%', '%%') for key, _ in keys) for i in range(natoms)]]
                 row = ''.join(f'{symbol} %.8f %.8f %.8f{columns[0][i]}\n' for i, symbol in enumerate(symbols0))
             elif list(symbols) != symbols0:
                 raise ValueError(f'Frame {count + 1}: atom count or order changed; MONET needs a constant atom list.')
