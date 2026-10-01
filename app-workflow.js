@@ -15,6 +15,7 @@ function clearTrajectory () {
   state.fileInfo = null
   state.firstFrame = null
   state.firstLattice = null
+  state.firstPbc = null
   state.selectedAtoms.clear()
   state.lastResult = null
   // A custom cell of the QM cards belongs to the trajectory it was typed for.
@@ -332,7 +333,10 @@ async function loadFrameForViewer (frameIdx) {
   state.firstFrame = result.atoms
   // The lattice of frame 0 (extended XYZ Lattice="…", also written by the importer for CIF/cell files) is the
   // structure cell of the QM cards, available at once without waiting for the player's frame requests.
-  if (frameIdx === 0) state.firstLattice = usableLattice(result.lattice)
+  if (frameIdx === 0) {
+    state.firstLattice = usableLattice(result.lattice)
+    state.firstPbc = state.firstLattice && Array.isArray(result.pbc) && result.pbc.length === 3 ? result.pbc.map(Boolean) : null
+  }
   viewer.loadAtoms(result.atoms)
   viewerNeedsFit = true
   buildAtomTable(result.atoms)

@@ -222,6 +222,16 @@ def _frame_lattice(traj, comment):
         return None
 
 
+def _frame_pbc(comment):
+    """Periodic flags [a, b, c] of an extended XYZ comment line: all True when pbc="…" is absent or malformed."""
+    import re
+    match = re.search(rb'\bpbc="([^"]*)"', comment)
+    flags = match.group(1).split() if match else []
+    if len(flags) != 3:
+        return [True, True, True]
+    return [flag.lower() in (b't', b'true', b'1') for flag in flags]
+
+
 def action_frame(cmd):
     """Atoms of one frame for the viewer: [{index, element, x, y, z}] with 1-based MONET IDs, and its lattice."""
     traj = _require_xyz(cmd['filename'])
@@ -230,9 +240,10 @@ def action_frame(cmd):
         raise ValueError('Frame index is outside the trajectory.')
     [(_, positions, comment)] = list(traj.iter_frames([index]))
     symbols = traj.symbols_list()
+    lattice = _frame_lattice(traj, comment)
     ok(atoms=[{'index': i + 1, 'element': symbols[i], 'x': float(x), 'y': float(y), 'z': float(z)}
               for i, (x, y, z) in enumerate(positions.tolist())],
-       lattice=_frame_lattice(traj, comment))
+       lattice=lattice, pbc=_frame_pbc(comment) if lattice else None)
 
 
 def action_extract(cmd):

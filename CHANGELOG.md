@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: a cell imported with the trajectory (XYZ + CIF, POSCAR, PDB or CP2K `.cell`) no longer has to be loaded again in the ASE module. The extracted trajectory (`FULL_TRAJECTORY_EXTRACTED.xyz`, `SAMPLED_CONFIGURATIONS.xyz`) keeps each frame's extended XYZ `Lattice="…"` and `pbc="…"`, so the analyses that run on it after the extraction still have the cell. Both engines (`monet_io.py` and `xyz.js`) do this.
+- *Crystal cell and periodic boundaries* now shows the source cell of the loaded trajectory: its parameters, periodic directions and the file it came from. It used to say "No manual cell" with the default 10 Å values. The cell is shown, not applied, so its vectors keep their original orientation. *Use source cell* shows it again.
+- The viewer frame (`readFrame`, `frame` action) now reports the periodic flags `pbc` next to `lattice`.
+
 ## 2.7.0 (2026-09-28)
 
 The remaining MDAnalysis analysis modules join the *MDAnalysis › Analyses* menu, and MONET now tells you what to cite: a References dialog (Chicago or BibTeX) for MONET, ASE, MDAnalysis and each analysis.

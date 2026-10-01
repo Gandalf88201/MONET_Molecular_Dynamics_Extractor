@@ -66,7 +66,7 @@ w.monet = {
   // periodic.xyz: an extended XYZ whose first frame carries a lattice, parsed like the real local reader (xyz.js).
   readFrame: async (name, index) => {
     if (!trajectoryTexts[name]) return { atoms }
-    for await (const frame of MonetXYZ.frames(trajectoryTexts[name].split('\n'))) if (frame.index === index) return { atoms: frame.atoms, lattice: frame.lattice }
+    for await (const frame of MonetXYZ.frames(trajectoryTexts[name].split('\n'))) if (frame.index === index) return { atoms: frame.atoms, lattice: frame.lattice, pbc: frame.pbc }
     return { error: 'Frame index is outside the trajectory.' }
   },
   onProgress () {}, onAseProgress: callback => { listeners.add(callback); return () => listeners.delete(callback) },
@@ -523,6 +523,11 @@ async function qmCellChecks () {
   frameCount = 2; activeAtoms = atoms; nextFile = 'periodic.xyz'
   await click('btn-browse'); await click('next-1'); await tick()
   assert.equal(w.testMonet.player.cells.get(0), undefined, 'the mock launcher gives no lattice'); checks++
+  // The Crystal cell panel shows the trajectory's own cell (also the one the importer writes from a CIF), not "No manual cell".
+  const panelCell = () => ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].map(k => el(`cell-${k}`).value)
+  assert.deepEqual(panelCell(), ['10', '11', '12', '90', '90', '90']); assert.equal(el('cell-system').value, 'triclinic'); checks++
+  assert.match(el('cell-status').textContent, /^Using source cell \(trajectory lattice, frame 0\): 10, 11, 12, 90, 90, 90 \(Å, °\)\. PBC: abc\./); checks++
+  assert.equal(w.testMonet.aseState.cellParameters, null, 'the source cell is shown, not applied'); assert.deepEqual(JSON.parse(JSON.stringify(w.testMonet.aseViewer.cell)), [[10, 0, 0], [0, 11, 0], [0, 0, 12]]); checks++
   el('inp-atom-ids').value = '1 2 3 4'; await click('btn-apply-ids')
   w.testMonet.state.outputDir = 'out'
   setCodes(['qe'])
@@ -542,6 +547,8 @@ async function qmCellChecks () {
   assert.match(el('qm-qe-cell').textContent, /Cell from crystal\.cif/); checks++
   await click('cell-reset')
   assert.equal(sourceLabel('qe'), 'Lattice from the trajectory'); assert.equal(el('qm-qe-cell-a').value, '10'); checks++
+  // Use source cell: the panel shows the trajectory cell again.
+  assert.deepEqual(panelCell(), ['10', '11', '12', '90', '90', '90']); assert.match(el('cell-status').textContent, /^Using source cell/); checks++
   // Editing a field makes the cell custom for this code only.
   set('qm-qe-cell-a', '9')
   assert.equal(el('qm-qe-cellSource').value, 'custom'); assert.equal(sourceLabel('qe'), 'Custom cell for this code'); checks++

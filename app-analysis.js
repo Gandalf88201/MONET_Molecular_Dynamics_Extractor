@@ -200,12 +200,11 @@ for (const field of cellFields) $(`cell-${field}`).addEventListener('input', upd
 function invalidateCellAnalyses () {
   aseState.sourceRevision++
   clearAllAnalyses(false)
-  setViewerCell(aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : null, { fit: true })
+  setViewerCell(aseState.cellParameters ? MonetASEModel.cellVectors(aseState.cellParameters) : state.firstLattice, { fit: true })
   aseViewerNeedsFit = true
   resizeAseViewer()
-  $('cell-status').textContent = aseState.cellParameters
-    ? `Applied cell: ${aseState.cellParameters.join(', ')} (Å, °). PBC: ${aseState.cellPbc.map((on,i) => on ? 'abc'[i] : '').join('') || 'none'}.`
-    : 'No manual cell. Source lattice/PBC are used when present.'
+  if (aseState.cellParameters) $('cell-status').textContent = `Applied cell: ${aseState.cellParameters.join(', ')} (Å, °). PBC: ${aseState.cellPbc.map((on,i) => on ? 'abc'[i] : '').join('') || 'none'}.`
+  else showSourceCell({ fields: false })
   player.treeKey = null
   applyDisplay()
   updateLive()
@@ -227,6 +226,7 @@ $('cell-reset').addEventListener('click', () => {
   aseState.cellParameters = null
   aseState.cellSourceName = null
   invalidateCellAnalyses()
+  showSourceCell()
   historyRecord({ kind: 'cell', action: 'reset', params: { mic: aseState.mic } })
 })
 $('ase-mic').addEventListener('change', () => {
@@ -234,6 +234,28 @@ $('ase-mic').addEventListener('change', () => {
   invalidateCellAnalyses()
   historyRecord({ kind: 'cell', action: 'mic', params: { mic: aseState.mic } })
 })
+// Without a manual cell the analyses use the trajectory's own lattice: the extended XYZ Lattice="…" and pbc="…"
+// of frame 0, also written by the importer for a CIF/POSCAR/.cell file. The panel shows its parameters and the
+// viewers its vectors in their original orientation; `fields: false` keeps values typed but not yet applied.
+function showSourceCell ({ fields = true } = {}) {
+  const lattice = state.firstLattice
+  setViewerCell(lattice)
+  if (!lattice) {
+    $('cell-status').textContent = 'No manual cell. Source lattice/PBC are used when present.'
+    return
+  }
+  const cellpar = MonetUnits.cellParameters(lattice)
+  const pbc = state.firstPbc || [true, true, true]
+  if (fields) {
+    $('cell-system').value = 'triclinic'
+    cellpar.forEach((v, i) => { $(`cell-${cellFields[i]}`).value = Number(v.toFixed(6)) })
+    ;['a', 'b', 'c'].forEach((axis, i) => { $(`cell-pbc-${axis}`).checked = pbc[i] })
+    updateCellPreset()
+  }
+  const origin = state.source.cellFile ? `cell file ${fileName(state.source.cellFile)}` : 'trajectory lattice, frame 0'
+  $('cell-status').textContent = `Using source cell (${origin}): ${cellpar.map(v => Number(v.toFixed(5))).join(', ')} (Å, °). ` +
+    `PBC: ${pbc.map((on, i) => on ? 'abc'[i] : '').join('') || 'none'}. Original vector orientation retained; Apply cell would replace it with the standard orientation.`
+}
 function cellOptions () {
   return { ...(aseState.cellParameters ? { cell: aseState.cellParameters, pbc: aseState.cellPbc } : {}), mic: aseState.mic }
 }
@@ -740,9 +762,8 @@ function updateAnalysisSource () {
     aseState.cellParameters = null
     aseState.cellSourceName = null
     aseState.cellSource = state.filePath
-    setViewerCell(null)
-    $('cell-status').textContent = 'No manual cell. Source lattice/PBC are used when present.'
-  } else if (!aseState.cellParameters) setViewerCell(null)
+    showSourceCell()
+  } else if (!aseState.cellParameters) showSourceCell()
   hideAtomMenu()
   const extracted = Boolean(state.lastResult?.success)
   aseState.centreIds = $('ase-center').checked ? [] : null

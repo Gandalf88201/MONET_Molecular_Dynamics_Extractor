@@ -120,6 +120,7 @@ async function run () {
   chosenFile = new File([fs.readFileSync(path.join(root, 'examples/periodic-water.xyz'), 'utf8')], 'periodic-water.xyz')
   assert.equal(await api.selectFile(), 'periodic-water.xyz')
   assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame('periodic-water.xyz', 0)).lattice)), [[10, 0, 0], [0, 10, 0], [0, 0, 10]]); checks++
+  assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame('periodic-water.xyz', 0)).pbc)), [true, true, true]); assert.equal((await api.readFrame('water.XYZ', 0)).pbc, null); checks++
   chosenFile = new File([source], 'water.XYZ')
   chosenEvent = 'cancel'; assert.equal(await api.selectFile(), null); chosenEvent = 'change'; checks++
   const options = { filePath: 'water.XYZ', atomCount: 3, selectedAtoms: [1, 3], frequency: 1, computeAverage: true, generateGaussian: true }
@@ -154,7 +155,9 @@ async function run () {
   const result = await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, filePath, outputDir: path.join(temp, 'desktop') })
   assert.equal(result.success, true); assert.equal(result.sampledFrames, 2); checks++
   // A derived trajectory (e.g. a PCA selection) keeps the original frame in the extracted comment lines.
-  assert.equal(XYZ.outputComment(3, 'Lattice="1 0 0 0 1 0 0 0 1" frame=3 source_frame=5244'), 'frame 3 source_frame=5244'); assert.equal(XYZ.outputComment(0, 'Water frame 0'), 'frame 0'); checks++
+  // The extended XYZ cell is kept too, so a cell imported from a CIF reaches the ASE module after extraction.
+  assert.equal(XYZ.outputComment(3, 'Lattice="1 0 0 0 1 0 0 0 1" frame=3 source_frame=5244'), 'frame 3 source_frame=5244 Lattice="1 0 0 0 1 0 0 0 1"'); assert.equal(XYZ.outputComment(0, 'Water frame 0'), 'frame 0'); checks++
+  assert.equal(XYZ.outputComment(1, 'Lattice="2 0 0 0 2 0 0 0 2" Properties=species:S:1:pos:R:3 pbc="T T F"'), 'frame 1 Lattice="2 0 0 0 2 0 0 0 2" pbc="T T F"'); checks++
   const derived = path.join(temp, 'derived.xyz')
   fs.writeFileSync(derived, fs.readFileSync(filePath, 'utf8').split('\n').map((line, i) => i % 5 === 1 ? `${line} source_frame=${[5244, 16231][(i - 1) / 5]}` : line).join('\n'))
   await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, generateGaussian: false, filePath: derived, outputDir: path.join(temp, 'desktop-derived') })

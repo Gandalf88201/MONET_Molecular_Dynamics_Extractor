@@ -519,15 +519,24 @@ GAUSSIAN_TEMPLATE = ('%nproc=6\n%chk={chk}\n%mem=4gb\n'
 
 
 _SOURCE_FRAME = re.compile(r'(?:^|\s)source_frame=(\d+)')
+_LATTICE = re.compile(r'(?:^|\s)(Lattice="[^"]*")')
+_PBC = re.compile(r'(?:^|\s)(pbc="[^"]*")')
 
 
 def output_comment(index, comment):
     """Comment line of an extracted frame: its index in the file being extracted, plus the frame of the
-    original trajectory when this file is derived (uncorrelated, cropped, PCA selection: source_frame=)."""
+    original trajectory when this file is derived (uncorrelated, cropped, PCA selection: source_frame=).
+    The extended XYZ Lattice="…" and pbc="…" are kept, so the cell (e.g. from an imported CIF) follows the
+    extracted trajectory into the ASE module."""
     if isinstance(comment, bytes):
         comment = comment.decode('utf-8', 'replace')
     source = _SOURCE_FRAME.search(comment or '')
-    return f'frame {index} source_frame={source.group(1)}' if source else f'frame {index}'
+    text = f'frame {index} source_frame={source.group(1)}' if source else f'frame {index}'
+    lattice = _LATTICE.search(comment or '')
+    if lattice:
+        pbc = _PBC.search(comment)
+        text += f' {lattice.group(1)}' + (f' {pbc.group(1)}' if pbc else '')
+    return text
 
 
 def _row_format(symbols):
