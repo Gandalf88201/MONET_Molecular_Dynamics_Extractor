@@ -98,6 +98,8 @@
       this.showAllLabels = false
       this.showSelectionOrder = false
       this.cell = null
+      this.showCell = true // draw the cell box when a cell is set
+      this.showAxes = true // orientation axes in the bottom-right corner
       // Colour map of an analysis: { atomColors: Map(MONET ID → colour), segments: [{ ids, color }], legend }
       this.overlay = null
       this.onSelectionChange = null
@@ -266,7 +268,7 @@
       // Mapped atoms take the colour of their value; with a map of bonds/angles the other atoms are dimmed.
       const colorOf = i => overlay?.atomColors?.get(atoms[i].index) || (overlay?.dimAtoms ? dimmed : atomColor(atoms[i].element))
 
-      if (this.cell) {
+      if (this.cell && this.showCell) {
         const v = this.cellVertices().map(point => this._project(...point))
         ctx.save(); ctx.strokeStyle = themeColor('--cell-line', '#54cbd8'); ctx.globalAlpha = .65; ctx.lineWidth = 1
         ctx.beginPath()
@@ -385,7 +387,8 @@
       if (overlay?.legend) this._drawLegend(overlay.legend)
       else if (overlay?.caption) {
         ctx.save(); ctx.fillStyle = themeColor('--plot-label', '#c0c0d8'); ctx.font = '11px sans-serif'
-        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'; ctx.fillText(overlay.caption, 12, canvas.height - 12, canvas.width - 24)
+        ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic'
+        ctx.fillText(overlay.caption, 12, canvas.height - 12, Math.max(40, canvas.width - 24 - this._axesWidth()))
         ctx.restore()
       }
 
@@ -405,6 +408,110 @@
           ctx.fillText(atoms[i].index, x[i], y[i])
         }
       }
+
+      if (this.showAxes) this._drawAxes()
+    }
+
+    _axesLength () { return Math.max(18, Math.min(40, Math.min(this.canvas.width, this.canvas.height) * 0.07)) }
+
+    // Width of the corner taken by the axes (0 when hidden), so that captions stop before it.
+    // Each set of axes (x y z; a b c with a cell) fills a square of side 2 × length + room for the labels.
+    _axesWidth () {
+      if (!this.showAxes) return 0
+      return (this.cell ? 2 : 1) * (2 * this._axesLength() + 30) + 4
+    }
+
+    // Orthographic orientation axes in the bottom-right corner, drawn with the rotation of the view:
+    // x, y, z (red, green, blue) and, when a cell is set, a, b, c. Axes pointing away from the viewer are faded.
+    _drawAxes () {
+      const { ctx, canvas } = this
+      const cyR = Math.cos(this.rotY), syR = Math.sin(this.rotY), cxR = Math.cos(this.rotX), sxR = Math.sin(this.rotX)
+      const toScreen = ([dx, dy, dz]) => {
+        const x1 = dx * cyR + dz * syR, z1 = -dx * syR + dz * cyR
+        return [x1, -(dy * cxR - z1 * sxR), dy * sxR + z1 * cxR]
+      }
+      const length = this._axesLength()
+      const halo = themeColor('--canvas-bg', '#0d0d1a')
+      ctx.save()
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round'
+      ctx.font = `bold ${Math.round(Math.max(10, length * 0.36))}px monospace`
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
+      const sets = [[[1, 0, 0], 'x', themeColor('--axis-x', '#ef5350')], [[0, 1, 0], 'y', themeColor('--axis-y', '#43c463')],
+        [[0, 0, 1], 'z', themeColor('--axis-z', '#4d8dff')]]
+      const groups = [sets]
+      if (this.cell) {
+        const color = themeColor('--cell-label', '#8fe9f3')
+        const abc = this.cell.map((vector, i) => {
+          const norm = Math.hypot(...vector)
+          return norm > 0 ? [vector.map(v => v / norm), 'abc'[i], color] : null
+        }).filter(Boolean)
+        if (abc.length) groups.push(abc)
+      }
+      groups.forEach((axes, g) => {
+        const pitch = 2 * length + 30
+        const ox = canvas.width - 4 - (g + 0.5) * pitch, oy = canvas.height - 4 - pitch / 2
+        const drawn = axes.map(([vector, label, color]) => ({ s: toScreen(vector), label, color })).sort((p, q) => p.s[2] - q.s[2])
+        for (const { s, label, color } of drawn) {
+          const shown = Math.hypot(s[0], s[1])
+          if (shown <= 0.25) {
+            // Seen end-on: ⊙ when the axis points at the viewer, ⊗ when it points away; the label goes
+            // on the side free of the other axes.
+            const others = drawn.filter(other => other.s !== s).reduce((sum, other) => [sum[0] + other.s[0], sum[1] + other.s[1]], [0, 0])
+            const norm = Math.hypot(others[0], others[1])
+            const [dx, dy] = norm > 1e-3 ? [-others[0] / norm, -others[1] / norm] : [-Math.SQRT1_2, -Math.SQRT1_2]
+            ctx.globalAlpha = 1
+            ctx.beginPath(); ctx.arc(ox, oy, 5, 0, Math.PI * 2)
+            ctx.lineWidth = 3.5; ctx.strokeStyle = halo; ctx.stroke()
+            ctx.lineWidth = 1.6; ctx.strokeStyle = color; ctx.stroke()
+            ctx.beginPath()
+            if (s[2] > 0) ctx.arc(ox, oy, 1.6, 0, Math.PI * 2)
+            else { ctx.moveTo(ox - 3, oy - 3); ctx.lineTo(ox + 3, oy + 3); ctx.moveTo(ox + 3, oy - 3); ctx.lineTo(ox - 3, oy + 3) }
+            ctx.fillStyle = color; ctx.fill(); ctx.stroke()
+            const lx = ox + dx * 14, ly = oy + dy * 14
+            ctx.lineWidth = 3; ctx.strokeStyle = halo; ctx.strokeText(label, lx, ly)
+            ctx.fillText(label, lx, ly)
+            continue
+          }
+          const tx = ox + s[0] * length, ty = oy + s[1] * length
+          ctx.globalAlpha = s[2] < -0.05 ? 0.5 : 1
+          // Arrow: shaft and head, with a halo in the background colour for contrast over atoms.
+          const head = Math.min(7, 0.3 * length * shown)
+          const ux = s[0] / shown, uy = s[1] / shown
+          const path = () => {
+            ctx.beginPath(); ctx.moveTo(ox, oy); ctx.lineTo(tx, ty)
+            if (head > 1.5) {
+              ctx.moveTo(tx - ux * head - uy * head * 0.55, ty - uy * head + ux * head * 0.55); ctx.lineTo(tx, ty)
+              ctx.lineTo(tx - ux * head + uy * head * 0.55, ty - uy * head - ux * head * 0.55)
+            }
+          }
+          path(); ctx.lineWidth = 4.5; ctx.strokeStyle = halo; ctx.stroke()
+          path(); ctx.lineWidth = 2.2; ctx.strokeStyle = color; ctx.stroke()
+          const lx = tx + ux * 9, ly = ty + uy * 9
+          ctx.lineWidth = 3; ctx.strokeStyle = halo; ctx.strokeText(label, lx, ly)
+          ctx.fillStyle = color; ctx.fillText(label, lx, ly)
+        }
+        ctx.globalAlpha = 1
+      })
+      ctx.restore()
+    }
+
+    // Rotate the view so that `vector` points at the viewer (orthographic projection along it):
+    // along z, x is to the right and y up. Asking again for the current direction looks from the other side.
+    // Returns +1 or -1, the sign of the direction now facing the viewer (0 for a null vector).
+    viewAlong (vector) {
+      const norm = Math.hypot(vector[0], vector[1], vector[2])
+      if (!(norm > 0)) return 0
+      const angles = d => {
+        const r = Math.hypot(d[0], d[2])
+        return [Math.atan2(d[1], r), r > 1e-9 ? Math.atan2(-d[0], d[2]) : 0]
+      }
+      const same = ([rx, ry]) => Math.abs(Math.sin((rx - this.rotX) / 2)) < 1e-6 && Math.abs(Math.sin((ry - this.rotY) / 2)) < 1e-6
+      let sign = 1
+      let target = angles(vector.map(v => v / norm))
+      if (same(target)) { sign = -1; target = angles(vector.map(v => -v / norm)) }
+      ;[this.rotX, this.rotY] = target
+      this.requestRender()
+      return sign
     }
 
     // Displacement ellipsoids { id, u: [U11 U22 U33 U12 U13 U23] (Å²), color } scaled by overlay.ellipsoidScale.
@@ -694,7 +801,7 @@
         high[0] = Math.max(high[0], px); high[1] = Math.max(high[1], py); high[2] = Math.max(high[2], pz)
       }
       for (const a of this.atoms) extend(a.x, a.y, a.z)
-      if (this.cell) for (const p of this.cellVertices()) extend(...p)
+      if (this.cell && this.showCell) for (const p of this.cellVertices()) extend(...p)
       this.center = low.map((v, j) => (v + high[j]) / 2)
       const half = Math.hypot(high[0] - low[0], high[1] - low[1], high[2] - low[2]) / 2 || 1
       this.zoom = Math.min(this.canvas.width, this.canvas.height) * .45 / half

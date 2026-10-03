@@ -793,6 +793,30 @@ async function run () {
   assert.equal(w.testMonet.aseViewer.cell.length, 3); checks++
   // The 3D view of MONET Custom Functionalities draws the same cell.
   assert.deepEqual(w.testMonet.viewer.cell, w.testMonet.aseViewer.cell); checks++
+  // Viewer tools: the cell buttons appear with a cell; the cell box and the axes can be switched off.
+  {
+    const tool = (id, text) => [...el(id).querySelectorAll('.viewer-tool')].find(b => b.textContent.includes(text))
+    const aseView = w.testMonet.aseViewer
+    assert.equal(tool('ase-viewer-tools', 'cell').classList.contains('hidden'), false); assert.equal(tool('ase-viewer-tools', 'cell').getAttribute('aria-pressed'), 'true'); checks++
+    assert.equal(el('ase-viewer-tools').querySelector('[data-axis="a"]').classList.contains('hidden'), false); checks++
+    tool('ase-viewer-tools', 'cell').click()
+    assert.equal(aseView.showCell, false); assert.equal(w.testMonet.viewer.showCell, true, 'per viewer'); assert.equal(w.localStorage.getItem('monet-ase-show-cell'), 'off'); checks++
+    tool('ase-viewer-tools', 'cell').click(); assert.equal(aseView.showCell, true); checks++
+    tool('ase-viewer-tools', 'axes').click(); assert.equal(aseView.showAxes, false); tool('ase-viewer-tools', 'axes').click(); assert.equal(aseView.showAxes, true); checks++
+    // View down c: the cell vector c points at the viewer (the rotation is restored for the picks below).
+    const rotation = [aseView.rotX, aseView.rotY]
+    el('ase-viewer-tools').querySelector('[data-axis="c"]').click()
+    assert.match(el('status-msg').textContent, /View down the c axis \(c towards you\)/); checks++
+    ;[aseView.rotX, aseView.rotY] = rotation
+    // Expand and restore with Esc.
+    tool('ase-viewer-tools', '⛶').click()
+    assert.equal(el('ase-viewer-frame').classList.contains('viewer-expanded'), true); assert.equal(w.document.body.classList.contains('viewer-is-expanded'), true); checks++
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }))
+    assert.equal(el('ase-viewer-frame').classList.contains('viewer-expanded'), false); assert.equal(w.document.body.classList.contains('viewer-is-expanded'), false); checks++
+    tool('viewer-tools', '⛶').click(); tool('ase-viewer-tools', '⛶').click()
+    assert.equal(el('viewer-stage').classList.contains('viewer-expanded'), false, 'one expanded viewer at a time'); assert.equal(el('ase-viewer-frame').classList.contains('viewer-expanded'), true); checks++
+    tool('ase-viewer-tools', '⛶').click()
+  }
   // Centre selection: the centred atoms are fixed when ticked; later picks must not move the structure.
   if (!el('ase-center').disabled) {
     const coordsOf = () => JSON.stringify(w.testMonet.aseViewer.atoms.map(atom => [atom.x, atom.y, atom.z]))
@@ -840,6 +864,7 @@ async function run () {
   el('angles-range').value = '360'; el('angles-range').dispatchEvent(new w.Event('change'))
   assert.equal(el('angles-normal-row').classList.contains('hidden'), false); checks++
   await click('cell-reset'); assert.equal(w.testMonet.aseViewer.cell, null); assert.equal(w.testMonet.viewer.cell, null); checks++
+  assert.equal(el('ase-viewer-tools').querySelector('[data-axis="a"]').classList.contains('hidden'), true, 'no cell, no a b c buttons'); checks++
   await click('ase-clear-selection')
   // Extraction ordering comes from the original file, not the order entered by the user.
   el('inp-atom-ids').value = '4 1 3'; await click('btn-apply-ids')

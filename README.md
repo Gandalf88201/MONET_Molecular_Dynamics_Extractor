@@ -444,6 +444,16 @@ XYZ frames must keep a constant atom count and element order. Extended XYZ `spec
 
 Both viewers (3D View and the ASE module) offer **Balls & sticks**, **Sticks (licorice)**, **Space-filling (vdW)**, **Lines** and **Points**; the choice is remembered per viewer. The ASE viewer size can be *Compact*, *Large* or *Full height*.
 
+The buttons in the top-right corner of each viewer help to orient the structure and pick molecules:
+
+- **x y z** turn the (orthographic) view to look down that Cartesian axis, which then points at you: along z, x is to the right and y up. Click the same button again to look from the other side. With a cell, **a b c** do the same along the cell vectors.
+- **⊹ axes** shows or hides the orientation axes in the bottom-right corner: x, y, z in red, green and blue and, with a cell, the directions of a, b and c. They turn with the structure; an axis pointing away from you is faded, and one seen end-on is drawn as ⊙ (towards you) or ⊗ (away).
+- **▣ cell** (shown when a cell is set) switches the drawn cell box on and off. It changes only the display: analyses still use the cell and the minimum image.
+- **fit** (3D View, and the ASE viewer when expanded) fits the structure and the shown cell in the view.
+- **⛶** expands the viewer to the whole window, with the trajectory player for the ASE viewer; **⛶** again or **Esc** brings it back. Selections, style and frame are kept, as it is the same viewer.
+
+The axes and cell choices are remembered per viewer.
+
 Large systems stay responsive: bonds are found with a spatial grid (linear in the number of atoms, instead of comparing every pair), atoms are drawn from cached sphere images, bonds are drawn in one batch per colour, redraws are coalesced to the display refresh, and systems above 2,500 atoms switch to a line representation while rotating. On a 14,046-atom box a full redraw takes about 50–80 ms with spheres and 3–9 ms with lines or points (Chrome, Apple silicon). Atom-ID labels are shown only for systems up to 300 atoms and for selected atoms.
 
 ### Performance
@@ -547,7 +557,7 @@ done
 
 `tests/mcp.cjs` also needs `python -m pip install "mcp>=1.2"`.
 
-Current results (MONET 2.7.0, ASE 3.29.0, MDAnalysis 2.10.0, Python 3.11, Node 22; the CI runs Python 3.10 and 3.13): 74 regression, 19 units, 132 QM-input parity, 177 QM-keyword, 38 format-import, 107 analysis, 71 MDAnalysis, 94 live ASE integration, 458 DOM/plot, 29 provenance, 48 console, 26 report, 21 session, 26 replay, 61 history, 7 launcher, 9 registry, 10 ASE-analysis, 15 MDAnalysis-analysis, 9 reference, 10 page-load and 8 MCP checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion, an ideal α-helix, a planar bilayer, base pairs at known distances); the ASE and MDAnalysis analyses are also compared with the libraries called directly. The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
+Current results (MONET 2.7.0, ASE 3.29.0, MDAnalysis 2.10.0, Python 3.11, Node 22; the CI runs Python 3.10 and 3.13): 81 regression, 19 units, 132 QM-input parity, 177 QM-keyword, 42 format-import, 107 analysis, 71 MDAnalysis, 94 live ASE integration, 472 DOM/plot, 29 provenance, 48 console, 26 report, 21 session, 26 replay, 61 history, 7 launcher, 9 registry, 10 ASE-analysis, 15 MDAnalysis-analysis, 9 reference, 10 page-load and 8 MCP checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion, an ideal α-helix, a planar bilayer, base pairs at known distances); the ASE and MDAnalysis analyses are also compared with the libraries called directly. The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
 
 ## Citing and licences
 
