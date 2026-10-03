@@ -483,7 +483,9 @@ async function referencesChecks () {
   assert.ok(rows.some(([label, cite]) => label.startsWith('RMSD after optimal superposition') && cite === 'Theobald 2005; Liu, Agrafiotis, and Theobald 2010')); checks++
   assert.ok([...body().querySelectorAll('.refs-entry')].some(li => li.textContent.startsWith('Michaud-Agrawal, Naveen') && li.querySelector('i').textContent === 'Journal of Computational Chemistry')); checks++
   await click('refs-copy')
-  assert.match(copied, /^MONET\n\nFrancese, Tommaso\. 2026\. MONET: Molecular Dynamics Extractor\. Version 2\.7\.0\./); assert.match(copied, /Secondary structure \(dssp\.DSSP\): Kabsch and Sander 1983/); checks++
+  // The MONET reference names the release in CITATION.cff.
+  const citedVersion = fs.readFileSync(path.join(root, 'CITATION.cff'), 'utf8').match(/^version: *(\S+)/m)[1].replace(/\./g, '\\.')
+  assert.match(copied, new RegExp(`^MONET\n\nFrancese, Tommaso\\. 2026\\. MONET: Molecular Dynamics Extractor\\. Version ${citedVersion}\\.`)); assert.match(copied, /Secondary structure \(dssp\.DSSP\): Kabsch and Sander 1983/); checks++
   body().parentElement.querySelector('[data-format="bibtex"]').click(); await tick()
   assert.equal(w.localStorage.getItem('monet-refs-format'), 'bibtex')
   assert.ok(body().querySelector('.refs-bib').textContent.startsWith('@misc{monet,'))
