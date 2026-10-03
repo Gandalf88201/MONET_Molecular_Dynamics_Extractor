@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- New viewer tools in the top-right corner of both 3D viewers (3D View and ASE): **x y z** (and **a b c** with a cell) look down that axis in the orthographic view, a second click looks from the other side; **⊹ axes** shows orientation axes (x, y, z and the cell vectors a, b, c) in the bottom-right corner that turn with the structure; **▣ cell** switches the cell box on and off (display only); **⛶** expands the viewer to the whole window (Esc restores it), the ASE viewer together with its trajectory player. The choices are remembered per viewer.
 - Fixed: a cell imported with the trajectory (XYZ + CIF, POSCAR, PDB or CP2K `.cell`) no longer has to be loaded again in the ASE module. The extracted trajectory (`FULL_TRAJECTORY_EXTRACTED.xyz`, `SAMPLED_CONFIGURATIONS.xyz`) keeps each frame's extended XYZ `Lattice="…"` and `pbc="…"`, so the analyses that run on it after the extraction still have the cell. Both engines (`monet_io.py` and `xyz.js`) do this.
 - *Crystal cell and periodic boundaries* now shows the source cell of the loaded trajectory: its parameters, periodic directions and the file it came from. It used to say "No manual cell" with the default 10 Å values. The cell is shown, not applied, so its vectors keep their original orientation. *Use source cell* shows it again.
 - The viewer frame (`readFrame`, `frame` action) now reports the periodic flags `pbc` next to `lattice`.

@@ -309,8 +309,10 @@
         <label class="view-style">Style <select class="field-input field-input-sm view-style-select" id="view-style"></select></label>
         <span class="viewer-hint">Drag to rotate · Right-drag or Shift-drag to move · Scroll to zoom · Click atom to select · Right-click for selection options</span>
       </div>
-      <div class="viewer-stage">
+      <div class="viewer-stage" id="viewer-stage">
         <canvas id="mol-canvas"></canvas>
+        <!-- View along x, y, z (a, b, c with a cell), cell and axes on/off, expand: filled by app-analysis.js. -->
+        <div class="viewer-tools hidden" id="viewer-tools" role="toolbar" aria-label="3D view tools"></div>
         <div class="viewer-overlay" id="viewer-overlay">
           <div class="overlay-msg">Load a trajectory file to begin</div>
         </div>
@@ -383,7 +385,11 @@
           </select>
           <button class="btn btn-sm" id="ase-fit-view">Fit view</button>
         </div>
-        <canvas id="ase-mol-canvas" aria-label="ASE molecular viewer: click atoms to select; drag to rotate; scroll to zoom"></canvas>
+        <div class="viewer-frame" id="ase-viewer-frame">
+        <div class="viewer-canvas-wrap">
+          <canvas id="ase-mol-canvas" aria-label="ASE molecular viewer: click atoms to select; drag to rotate; scroll to zoom"></canvas>
+          <div class="viewer-tools" id="ase-viewer-tools" role="toolbar" aria-label="ASE viewer tools"></div>
+        </div>
         <div class="player" id="ase-player" aria-label="Trajectory player">
           <div class="player-row">
             <button class="btn btn-sm" id="player-first" title="First frame">⏮</button>
@@ -406,6 +412,7 @@
             <label class="plot-view" title="Move the centroid of the atoms selected when ticked (or of all atoms) to the cell centre; later picks do not move the view. Untick and tick again to re-centre."><input type="checkbox" id="ase-center" /> centre selection</label>
           </div>
           <div class="player-live" id="ase-live" aria-live="polite"></div>
+        </div>
         </div>
         <p class="panel-desc">Click atoms in order · Right-click for selection options (molecule, neighbours, element, sphere …) · Drag to rotate · Right-drag or Shift-drag to move · Scroll to zoom · Space plays/stops, ←/→ step · Click a time-series plot to jump to that frame. With 2–4 selected atoms the distance, angle or dihedral of the shown frame is updated live.</p>
         <label class="field-label">Molecule bond cutoff × covalent radii

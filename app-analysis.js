@@ -135,6 +135,7 @@ function setViewerCell (cell, { fit = false } = {}) {
   if (fit || (cell && !viewer.cell)) viewerNeedsFit = true
   aseViewer.cell = cell
   viewer.cell = cell
+  syncViewerTools()
   resizeCanvas()
 }
 
@@ -180,6 +181,91 @@ $('ase-fit-view').addEventListener('click', () => {
   aseViewerNeedsFit = true
   resizeAseViewer()
 })
+
+// ── Viewer tools (both 3D viewers): view along x, y, z or a, b, c, cell and axes on/off, expand ──
+// The cell buttons appear only when a cell is set; the choices are remembered per viewer.
+const viewerTools = [
+  { key: 'view3d', viewer, tools: $('viewer-tools'), expand: $('viewer-stage'), resize: () => resizeCanvas(), fit: () => { viewer.fitView() } },
+  // The ASE toolbar has its own Fit view button; the copy here is for the expanded viewer.
+  { key: 'ase', viewer: aseViewer, tools: $('ase-viewer-tools'), expand: $('ase-viewer-frame'), resize: () => resizeAseViewer(), fit: () => $('ase-fit-view').click(), fitWhenExpanded: true }
+]
+for (const entry of viewerTools) {
+  const { key, viewer: target, tools } = entry
+  target.showCell = stored(`monet-${key}-show-cell`, 'on') === 'on'
+  target.showAxes = stored(`monet-${key}-show-axes`, 'on') === 'on'
+  const button = (label, title, onClick, attributes = {}) => {
+    const b = document.createElement('button')
+    b.type = 'button'; b.className = 'viewer-tool'; b.textContent = label; b.title = title
+    for (const [name, value] of Object.entries(attributes)) b.setAttribute(name, value)
+    b.addEventListener('click', onClick)
+    tools.appendChild(b)
+    return b
+  }
+  const hint = document.createElement('span')
+  hint.className = 'viewer-tool-hint'; hint.textContent = 'Esc or ⛶ to restore'
+  tools.appendChild(hint)
+  const along = (axis, vector) => {
+    const sign = target.viewAlong(vector)
+    if (sign) setStatus(`View down the ${axis} axis ${sign > 0 ? `(${axis} towards you)` : `from the other side (${axis} away from you)`}.`)
+  }
+  for (const [i, axis] of ['x', 'y', 'z'].entries()) {
+    button(axis, `View down the ${axis} axis (orthographic); click again to look from the other side`,
+      () => along(axis, [0, 1, 2].map(j => (j === i ? 1 : 0))), { 'data-axis': axis })
+  }
+  entry.cellButtons = ['a', 'b', 'c'].map((axis, i) => button(axis, `View down the cell vector ${axis}; click again to look from the other side`,
+    () => target.cell && along(axis, target.cell[i]), { 'data-axis': axis }))
+  entry.cellSeparator = document.createElement('span')
+  entry.cellSeparator.className = 'viewer-tool-sep'
+  tools.appendChild(entry.cellSeparator)
+  entry.cellToggle = button('▣ cell', 'Show or hide the crystal cell', () => {
+    target.showCell = !target.showCell
+    store(`monet-${key}-show-cell`, target.showCell ? 'on' : 'off')
+    syncViewerTools()
+    target.render()
+  })
+  entry.axesToggle = button('⊹ axes', 'Show or hide the orientation axes (bottom-right corner)', () => {
+    target.showAxes = !target.showAxes
+    store(`monet-${key}-show-axes`, target.showAxes ? 'on' : 'off')
+    syncViewerTools()
+    target.render()
+  })
+  if (entry.fit) button('fit', 'Fit the structure (and the shown cell) in the view', entry.fit, entry.fitWhenExpanded ? { 'data-expanded-only': '' } : {})
+  entry.expandButton = button('⛶', 'Expand the viewer to the whole window (Esc to restore)', () => setViewerExpanded(entry, !entry.expand.classList.contains('viewer-expanded')))
+}
+
+function syncViewerTools () {
+  for (const entry of viewerTools) {
+    const hasCell = Boolean(entry.viewer.cell)
+    for (const b of [...entry.cellButtons, entry.cellSeparator, entry.cellToggle]) b.classList.toggle('hidden', !hasCell)
+    entry.cellToggle.setAttribute('aria-pressed', String(entry.viewer.showCell))
+    entry.axesToggle.setAttribute('aria-pressed', String(entry.viewer.showAxes))
+    const expanded = entry.expand.classList.contains('viewer-expanded')
+    entry.expandButton.setAttribute('aria-pressed', String(expanded))
+    entry.expandButton.title = expanded ? 'Restore the viewer (Esc)' : 'Expand the viewer to the whole window (Esc to restore)'
+  }
+}
+
+// The canvas takes its new size and the zoom follows it, so the structure keeps its share of the view.
+function setViewerExpanded (entry, expanded) {
+  if (expanded) for (const other of viewerTools) if (other !== entry && other.expand.classList.contains('viewer-expanded')) setViewerExpanded(other, false)
+  const canvas = entry.viewer.canvas
+  const before = Math.min(canvas.width, canvas.height)
+  entry.expand.classList.toggle('viewer-expanded', expanded)
+  document.body.classList.toggle('viewer-is-expanded', viewerTools.some(other => other.expand.classList.contains('viewer-expanded')))
+  syncViewerTools()
+  entry.resize()
+  const after = Math.min(canvas.width, canvas.height)
+  if (before > 0 && after > 0 && entry.viewer.atoms.length) {
+    entry.viewer.zoom *= after / before
+    entry.viewer.render()
+  }
+  canvas.focus?.()
+}
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape' || !$('viewer-context-menu').classList.contains('hidden')) return
+  for (const entry of viewerTools) if (entry.expand.classList.contains('viewer-expanded')) setViewerExpanded(entry, false)
+})
+syncViewerTools()
 
 const cellFields = ['a', 'b', 'c', 'alpha', 'beta', 'gamma']
 function updateCellPreset () {

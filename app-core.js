@@ -217,6 +217,7 @@ function resizeCanvas () {
 function setViewerEmpty (empty) {
   $('viewer-overlay').classList.toggle('hidden', !empty)
   $('viewer-header').classList.toggle('hidden', empty)
+  $('viewer-tools').classList.toggle('hidden', empty)
   resizeCanvas()
 }
 

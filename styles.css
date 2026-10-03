@@ -38,6 +38,9 @@
   --select-ring: #ffffff;
   --cell-line:   #54cbd8;
   --cell-label:  #8fe9f3;
+  --axis-x:      #ef5350;
+  --axis-y:      #43c463;
+  --axis-z:      #4d8dff;
   --bond-carbon: #666666;
   --atom-outline: rgba(0, 0, 0, 0);
   --series-1: #4d9de0; --series-2: #e94560; --series-3: #00c87a; --series-4: #ffd700;
@@ -76,6 +79,9 @@
   --select-ring: #1b1f31;
   --cell-line:   #0f8a98;
   --cell-label:  #0b6f7a;
+  --axis-x:      #c62828;
+  --axis-y:      #1b8a3a;
+  --axis-z:      #1f5fd1;
   --bond-carbon: #555555;
   --atom-outline: rgba(0, 0, 0, 0.35);
   --series-1: #1d64a8; --series-2: #c8243f; --series-3: #067a51; --series-4: #b07d00;
@@ -533,6 +539,7 @@ html, body {
 }
 
 .viewer-overlay {
+  z-index: 3;
   position: absolute;
   inset: 0;
   display: flex;
@@ -1035,3 +1042,28 @@ body, .sidebar, .titlebar, .statusbar, .viewer-header { transition: background-c
 .refs-bib { font-family: var(--mono); font-size: 0.72rem; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; user-select: text; }
 .refs-table { margin: 4px 0 8px; }
 .refs-table td:last-child { overflow-wrap: anywhere; }
+
+/* ── Viewer tools: view along an axis, cell and axes on/off, expand (both 3D viewers) ── */
+.viewer-frame { display: flex; flex-direction: column; gap: 8px; }
+.viewer-canvas-wrap { position: relative; }
+.viewer-tools { position: absolute; top: 6px; right: 6px; z-index: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 3px; max-width: calc(100% - 12px); pointer-events: none; }
+.viewer-tools > * { pointer-events: auto; }
+.viewer-tool { min-width: 24px; height: 24px; padding: 0 6px; border: 1px solid var(--border); border-radius: 4px; background: color-mix(in srgb, var(--bg2) 85%, transparent); color: var(--text-dim); font: 600 .72rem var(--mono); cursor: pointer; }
+.viewer-tool:hover, .viewer-tool:focus-visible { color: var(--text); border-color: var(--blue); }
+.viewer-tool[aria-pressed="true"] { color: var(--text); border-color: var(--blue); background: color-mix(in srgb, var(--blue) 22%, var(--bg2)); }
+.viewer-tool[data-axis="x"] { color: var(--axis-x); }
+.viewer-tool[data-axis="y"] { color: var(--axis-y); }
+.viewer-tool[data-axis="z"] { color: var(--axis-z); }
+.viewer-tool[data-axis="a"], .viewer-tool[data-axis="b"], .viewer-tool[data-axis="c"] { color: var(--cell-label); font-style: italic; }
+.viewer-tool-sep { width: 1px; height: 18px; margin: 0 2px; background: var(--border); }
+.viewer-tool-hint { display: none; font-size: .7rem; color: var(--text-dim); margin-right: 6px; }
+
+/* Expanded viewer: the same canvas over the whole window (⛶ or Esc to bring it back). */
+.viewer-expanded { position: fixed !important; inset: 0; z-index: 500; margin: 0; padding: 10px; background: var(--bg); }
+.viewer-expanded .viewer-tool-hint { display: inline; }
+.viewer-tool[data-expanded-only] { display: none; }
+.viewer-expanded .viewer-tool[data-expanded-only] { display: inline-block; }
+.viewer-frame.viewer-expanded .viewer-canvas-wrap { flex: 1; min-height: 0; }
+.ase-reference .viewer-frame.viewer-expanded #ase-mol-canvas { height: 100%; min-height: 0; }
+.viewer-frame.viewer-expanded .player { margin: 0; }
+body.viewer-is-expanded { overflow: hidden; }

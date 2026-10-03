@@ -99,6 +99,31 @@ assert.deepEqual(ends.low.map(item => item.frame), [0, 4]); assert.deepEqual(end
   assert.ok(Date.now() - started < 3000, `grid bond search took ${Date.now() - started} ms`); assert.ok(bigBonds.length > 0); checks++
 }
 
+// Viewer orientation: viewAlong turns the given direction towards the viewer, a second call looks from the other side.
+{
+  const { MolecularViewer } = require('../viewer.js')
+  const view = Object.create(MolecularViewer.prototype)
+  Object.assign(view, { rotX: 0.25, rotY: -0.4, requestRender () {} })
+  // Model direction → screen [right, up, towards the viewer] with the rotation of _project.
+  const screen = d => {
+    const cy = Math.cos(view.rotY), sy = Math.sin(view.rotY), cx = Math.cos(view.rotX), sx = Math.sin(view.rotX)
+    const x1 = d[0] * cy + d[2] * sy, z1 = -d[0] * sy + d[2] * cy
+    return [x1, d[1] * cx - z1 * sx, d[1] * sx + z1 * cx].map(v => Math.round(v * 1e9) / 1e9 + 0)
+  }
+  assert.equal(view.viewAlong([0, 0, 1]), 1)
+  assert.deepEqual([screen([1, 0, 0]), screen([0, 1, 0]), screen([0, 0, 1])], [[1, 0, 0], [0, 1, 0], [0, 0, 1]]); checks++
+  assert.equal(view.viewAlong([0, 0, 1]), -1); assert.deepEqual(screen([0, 0, 1]), [0, 0, -1]); checks++
+  for (const d of [[1, 0, 0], [0, 1, 0], [0, -2, 0], [1, 2, -3]]) {
+    const n = Math.hypot(...d)
+    assert.equal(view.viewAlong(d), 1); assert.deepEqual(screen(d.map(v => v / n)), [0, 0, 1], JSON.stringify(d))
+  }
+  checks++
+  // Down x the right-handed frame shows y up and z to the left.
+  assert.equal(view.viewAlong([1, 0, 0]), 1)
+  assert.deepEqual([screen([0, 1, 0]), screen([0, 0, 1])], [[0, 1, 0], [-1, 0, 0]]); checks++
+  assert.equal(view.viewAlong([0, 0, 0]), 0); checks++
+}
+
 async function run () {
   // Exercise the real browser adapter with a DOM file-input stub and native File/Blob.
   let chosenFile = new File([source], 'water.XYZ'), chosenEvent = 'change'
