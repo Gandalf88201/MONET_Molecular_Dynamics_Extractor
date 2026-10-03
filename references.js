@@ -9,7 +9,7 @@
     // ── MONET and the Python libraries it always uses ──
     monet: {
       type: 'software', authors: [['Francese', 'Tommaso']], title: 'MONET: Molecular Dynamics Extractor',
-      version: '2.7.0', publisher: 'Zenodo', year: 2026, doi: '10.5281/zenodo.22816521',
+      version: '2.7.1', publisher: 'Zenodo', year: 2026, doi: '10.5281/zenodo.22816521',
       url: 'https://github.com/Gandalf88201/MONET_Molecular_Dynamics_Extractor'
     },
     francese2022: {

@@ -1,6 +1,8 @@
 # Changelog
 
-## Unreleased
+## 2.7.1 (2026-10-03)
+
+The 3D viewers gain tools to orient the structure and to pick molecules (orientation axes, views down x, y, z or a, b, c, cell on and off, full-window view), and a cell imported with the trajectory is kept in the ASE module and after the extraction.
 
 - New viewer tools in the top-right corner of both 3D viewers (3D View and ASE): **x y z** (and **a b c** with a cell) look down that axis in the orthographic view, a second click looks from the other side; **⊹ axes** shows orientation axes (x, y, z and the cell vectors a, b, c) in the bottom-right corner that turn with the structure; **▣ cell** switches the cell box on and off (display only); **⛶** expands the viewer to the whole window (Esc restores it), the ASE viewer together with its trajectory player. The choices are remembered per viewer.
 - Fixed: a cell imported with the trajectory (XYZ + CIF, POSCAR, PDB or CP2K `.cell`) no longer has to be loaded again in the ASE module. The extracted trajectory (`FULL_TRAJECTORY_EXTRACTED.xyz`, `SAMPLED_CONFIGURATIONS.xyz`) keeps each frame's extended XYZ `Lattice="…"` and `pbc="…"`, so the analyses that run on it after the extraction still have the cell. Both engines (`monet_io.py` and `xyz.js`) do this.
