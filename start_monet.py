@@ -23,13 +23,14 @@ import sys
 import tempfile
 import threading
 import time
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
 import zipfile
 
 ROOT = Path(__file__).resolve().parent
 STATIC = {'index.html', 'styles.css', 'theme.js', 'xyz.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'browser-bridge.js',
-          'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'app-core.js', 'app-workflow.js', 'app-analysis.js', 'app-geometry.js', 'app-mdanalysis.js', 'app-structure.js', 'app-history.js', 'app-references.js', 'app-start.js', 'provenance.js', 'console.js', 'references.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'examples/water.XYZ'}
+          'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'app-core.js', 'app-workflow.js', 'app-analysis.js', 'app-geometry.js', 'app-mdanalysis.js', 'app-structure.js', 'app-history.js', 'app-references.js', 'app-start.js', 'provenance.js', 'console.js', 'references.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'examples/water.XYZ',
+          'manual/manual.css', 'manual/manual.js'}
 FORMATS = {'xyz', 'extxyz', 'vasp', 'cif', 'espresso-in', 'lammps-data', 'aims', 'turbomole', 'gaussian-in', 'dftb', 'json'}
 ACTIONS = {'scan', 'frame', 'read_info', 'molecule', 'rmsd', 'pdd', 'bonds', 'angles', 'dihedrals', 'convert', 'extract', 'import',
            'rmsd_matrix', 'rdf', 'msd', 'vdos', 'unwrap', 'acf', 'equilibration', 'mda_select', 'mda_rmsf', 'mda_rgyr', 'mda_hbonds', 'cell_file', 'wrap', 'frames', 'subsample', 'mda_run', 'mda_align', 'topology', 'ase_structure', 'ase_coordination', 'fluctuations', 'select_atoms',
@@ -589,6 +590,19 @@ class Handler(BaseHTTPRequestHandler):
         url = urlsplit(self.path)
         if url.path.startswith('/api/'):
             return self.api_get(url)
+        if url.path in ('/manual', '/manual/'):
+            # The user manual (monet_manual.py): public like the page itself, it carries no token and no data.
+            import monet_manual
+            query = parse_qs(url.query)
+            page = monet_manual.render_page(lang=(query.get('lang') or [''])[0], explicit='lang' in query)
+            return self.respond(200, page.encode('utf-8'), 'text/html; charset=utf-8')
+        if url.path.startswith('/manual/img/'):
+            import monet_manual
+            image = monet_manual.image_path(unquote(url.path[len('/manual/img/'):]))
+            if not image:
+                return self.respond(404, {'ok': False, 'error': 'Not found.'})
+            mime = {'.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml'}[image.suffix]
+            return self.respond(200, image.read_bytes(), mime)
         filename = url.path.lstrip('/') or 'index.html'
         if filename not in STATIC:
             return self.respond(404, {'ok': False, 'error': 'Not found.'})

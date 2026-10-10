@@ -6,6 +6,8 @@ MONET extracts configurations every N frames from molecular-dynamics trajectorie
 
 AI assistants that speak the Model Context Protocol (Claude Desktop, Claude Code, Gemini CLI) can also drive MONET through its MCP server: ask in plain language to open a trajectory, run any analysis or write a derived trajectory. See [AI assistants (MCP server)](#ai-assistants-mcp-server).
 
+**New: a built-in user manual** in English and Italian (button *Manual* in the title bar, or `/manual` on the launcher's address) walks through every step, from loading a trajectory to the QM inputs and the analysis history, with pictures taken from the program itself. See [User manual](#user-manual).
+
 ## Start MONET
 
 MONET runs in your browser, with a small Python service on your own computer that provides ASE and MDAnalysis. There are no installers: download the code and start it with Python.
@@ -55,6 +57,12 @@ Installing ASE needs internet access once. The app then runs locally; trajectory
 With the launcher, a trajectory is uploaded **once** (no size limit other than `--max-upload-gb`, default 200 GB) and every scan, frame, extraction and analysis runs as a background job with a progress bar and a **Cancel** button. Results are streamed as a ZIP download.
 
 **Opening `index.html` directly does not start Python and cannot enable ASE.** It still supports XYZ import (up to 100 MiB), visualization, extraction, QM input generation and ZIP export in the page. To use ASE, open the address printed by `start_monet.py`.
+
+## User manual
+
+The launcher serves a manual at `http://127.0.0.1:8765/manual` (the **Manual** button in the title bar opens it in a new tab). It has the same sections in English and Italian (**EN / IT** at the top right; it opens in the language you used last, else your browser's) and about forty pictures of the program: start-up, formats, the viewer and the cell, every ASE, MDAnalysis and MONET analysis, the extraction and QM inputs, the history and the references. The pictures use two small synthetic trajectories that you can write yourself with `python tools/manual_data.py DIRECTORY` to repeat every step. The manual needs the launcher (it is not available when `index.html` is opened directly, nor in the Electron window).
+
+The text is `manual/MANUAL.md` (English) and `manual/MANUAL.it.md` (Italian: keep the same sections and pictures, `tests/manual.cjs` checks it) plus `manual/img/*.png`, rendered by `monet_manual.py`. After an interface change, redraw the pictures from the running program with `pip install playwright` and `python tools/make_manual_images.py` (`--only window,acf_result` for some; set `CHROME` to a Chromium binary if Playwright has none).
 
 ## Analysis modules
 
@@ -538,6 +546,8 @@ Activate the Python environment before launching Electron: extraction, ASE and M
 | `ase_bridge.py` | Python worker: one JSON command per line (`--serve`) |
 | `monet_registry.py`, `monet_analyses/`, `plugins/` | analysis registry, built-in ASE and MDAnalysis analyses, plugins ([docs/plugins.md](docs/plugins.md)) |
 | `monet_io.py`, `monet_analysis.py`, `monet_mda.py`, `monet_formats.py` | trajectory I/O, analysis numerics, MDAnalysis helpers, format import |
+| `monet_manual.py`, `manual/` | the built-in user manual (English and Italian), its stylesheet and pictures |
+| `tools/make_manual_images.py`, `tools/manual_data.py` | redraw the manual's pictures from the running program; write its example trajectories |
 
 ## Changes
 
@@ -550,14 +560,14 @@ With the environment above active (or `PYTHON=.venv/bin/python`), install the op
 ```sh
 npm install --no-save jsdom @napi-rs/canvas
 for t in regression units qm-parity qm-resolve formats analysis mdanalysis ase-integration ase-ui provenance console \
-         report session replay history-ui launcher registry ase-analyses mda-analyses references app-load mcp; do
+         report session replay history-ui launcher registry ase-analyses mda-analyses references app-load manual mcp; do
   node tests/$t.cjs || break
 done
 ```
 
 `tests/mcp.cjs` also needs `python -m pip install "mcp>=1.2"`.
 
-Current results (MONET 2.7.1, ASE 3.29.0, MDAnalysis 2.10.0, Python 3.11, Node 22; the CI runs Python 3.10 and 3.13): 81 regression, 19 units, 132 QM-input parity, 177 QM-keyword, 42 format-import, 107 analysis, 71 MDAnalysis, 94 live ASE integration, 472 DOM/plot, 29 provenance, 48 console, 26 report, 21 session, 26 replay, 61 history, 7 launcher, 9 registry, 10 ASE-analysis, 15 MDAnalysis-analysis, 9 reference, 10 page-load and 8 MCP checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion, an ideal α-helix, a planar bilayer, base pairs at known distances); the ASE and MDAnalysis analyses are also compared with the libraries called directly. The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
+Current results (MONET 2.7.1, ASE 3.29.0, MDAnalysis 2.10.0, Python 3.11, Node 22; the CI runs Python 3.10 and 3.13): 81 regression, 19 units, 132 QM-input parity, 177 QM-keyword, 42 format-import, 107 analysis, 71 MDAnalysis, 94 live ASE integration, 472 DOM/plot, 29 provenance, 48 console, 26 report, 21 session, 26 replay, 61 history, 7 launcher, 9 registry, 10 ASE-analysis, 15 MDAnalysis-analysis, 9 reference, 10 page-load, 4 manual and 8 MCP checks. The analysis tests compare against synthetic trajectories with known answers (Kabsch on rigid motion, first-shell coordination of a simple cubic lattice, ideal-gas g(r), Brownian diffusion coefficient, a 1000 cm⁻¹ VDOS peak, τ of an Ornstein–Uhlenbeck torsion, an ideal α-helix, a planar bilayer, base pairs at known distances); the ASE and MDAnalysis analyses are also compared with the libraries called directly. The interface was also exercised in a live browser through the launcher; the packaged Electron GUI was not.
 
 ## Citing and licences
 
