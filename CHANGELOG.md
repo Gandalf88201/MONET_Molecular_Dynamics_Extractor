@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+A built-in user manual, in English and Italian, with pictures taken from the program.
+
+- New: **Manual** button in the title bar. The launcher serves the manual at `/manual` (`?lang=en` or `?lang=it`; without it the page follows the language you used last, else the browser's) and its pictures at `/manual/img/`. It covers starting MONET, the formats, the viewer, cell and time axis, every ASE, MDAnalysis and MONET Custom analysis, the extraction and the QM inputs, the history and replay, plugins, the MCP server, troubleshooting and citing. The button is hidden when `index.html` is opened directly and in the Electron window, which have no launcher.
+- New: `monet_manual.py` (a small Markdown reader, standard library only, that escapes everything it does not know), `manual/MANUAL.md`, `manual/MANUAL.it.md`, `manual/manual.css`, `manual/manual.js` and 41 pictures in `manual/img/`.
+- New: `tools/make_manual_images.py` redraws the pictures from the running launcher with Playwright (day theme, 2x), from two synthetic trajectories written by `tools/manual_data.py` (an ethanol molecule with a start-up transient and a slowly rotating hydroxyl; 64 waters in a periodic box). `python tools/manual_data.py DIRECTORY` writes them for anyone who wants to repeat the steps.
+- Tests: `tests/manual.cjs` checks the Markdown reader (nothing from the text becomes markup), that every picture exists and is used, that the English and Italian manuals have the same sections, tables, boxes and pictures, and the pages served by the launcher (language choice, picture names, 404 for anything outside `manual/img/`, no session token in the page).
+
 ## 2.7.1 (2026-10-03)
 
 The 3D viewers gain tools to orient the structure and to pick molecules (orientation axes, views down x, y, z or a, b, c, cell on and off, full-window view), and a cell imported with the trajectory is kept in the ASE module and after the extraction.

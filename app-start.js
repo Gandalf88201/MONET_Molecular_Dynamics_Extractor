@@ -31,5 +31,7 @@ window.addEventListener('load', () => {
     $('conv-format').value = 'extxyz'
     $('conv-format').querySelector('option[value=""]').disabled = true
   }
+  // The manual is served by the launcher; opening index.html directly or the desktop window has no /manual.
+  if (/^https?:$/.test(location.protocol)) $('manual-link').hidden = false
   checkAseStatus().catch(error => setStatus('ASE check failed: ' + error.message))
 })

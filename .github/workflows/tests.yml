@@ -49,6 +49,7 @@ jobs:
           node tests/mda-analyses.cjs
           node tests/references.cjs
           node tests/app-load.cjs
+          node tests/manual.cjs
           node tests/mcp.cjs
 
   lint:
