@@ -473,13 +473,71 @@ def view3d(ui):
     ui.save('view3d')
 
 
+def uncorrelated(ui, size=VIEWPORT):
+    """Ethanol with the time axis, the ACF of the hydroxyl torsion and the uncorrelated trajectory made active."""
+    ui.fresh('ethanol_md.xyz', size)
+    ui.set_time_axis()
+    ui.vtab('custom')
+    ui.tab('acf')
+    ui.fill('#acf-groups', '1 2 3 4')
+    ui.run('#btn-run-acf', 1200)
+    ui.pg.click('#acf-accept')
+    ui.pg.wait_for_selector('#restore-full-trajectory:not(.hidden)', timeout=120000)
+    ui.idle(800)
+
+
 @shot('sampling')
 def sampling(ui):
-    ui.fresh('ethanol_md.xyz')
+    uncorrelated(ui)
     ui.pg.click('#rail-continue')
-    ui.fill('#inp-freq', 129)
-    ui.pg.wait_for_timeout(500)
+    ui.pg.wait_for_timeout(600)
     ui.save('sampling', '.sidebar')
+
+
+@shot('active_trajectory')
+def active_trajectory(ui):
+    uncorrelated(ui)
+    ui.vtab('ase')
+    ui.pg.wait_for_timeout(600)
+    top = ui.pg.locator('#analysis-source').first.bounding_box()
+    end = ui.pg.locator('#md-dt-info').first.bounding_box()
+    ui.save('active_trajectory', clip={'x': 46, 'y': top['y'] - 8, 'width': 1454, 'height': end['y'] + end['height'] + 10 - top['y']})
+
+
+@shot('acf_plateau')
+def acf_plateau(ui):
+    custom(ui, 'acf', 'acf', VERY_TALL)
+    ui.fill('#acf-groups', '1 2 3 4')
+    ui.run('#btn-run-acf', 1200)
+    ui.save('acf_plateau', '#acf-result', pad=4)
+
+
+@shot('use_selection')
+def use_selection(ui):
+    """Two crops stacked: the viewer with four picked atoms, and the selection panel with Use selection for."""
+    ui.fresh('ethanol_md.xyz')
+    for row in (1, 2, 3, 4):
+        ui.pg.click(f'#ase-atom-body tr:nth-child({row})')
+    ui.choose('#ase-selection-target', 'dihedrals')
+    ui.pg.evaluate("document.querySelector('#ase-viewer-title').scrollIntoView({block: 'start'})")
+    ui.pg.wait_for_timeout(600)
+    viewer = ui.pg.locator('#ase-viewer-frame').first.bounding_box()
+    first = ui.pg.screenshot(clip={**viewer, 'height': viewer['height'] * 0.82})
+    ui.pg.evaluate("document.querySelector('#ase-picked-count').scrollIntoView({block: 'start'})")
+    ui.pg.wait_for_timeout(400)
+    top = ui.pg.locator('#ase-picked-count').first.bounding_box()
+    end = ui.pg.locator('#ase-selection-hint').first.bounding_box()
+    second = ui.pg.screenshot(clip={'x': viewer['x'], 'y': top['y'] - 10, 'width': viewer['width'], 'height': end['y'] + end['height'] + 10 - top['y']})
+    import io
+    from PIL import Image
+    a, b = Image.open(io.BytesIO(first)), Image.open(io.BytesIO(second))
+    out = Image.new('RGB', (max(a.width, b.width), a.height + b.height + 16), 'white')
+    out.paste(a, (0, 0))
+    out.paste(b, (0, a.height + 16))
+    path = OUT / 'use_selection.png'
+    out.save(path)
+    shrink(path)
+    print('  wrote', path.relative_to(ROOT))
 
 
 @shot('atom_selection')

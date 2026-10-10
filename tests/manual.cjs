@@ -31,6 +31,7 @@ body, _ = manual.render_body('Plain <script>alert(1)</script> and [bad](javascri
 assert '<script>' not in body and 'href="javascript' not in body and '<img' not in body and '&lt;script&gt;' in body, body
 body, _ = manual.render_body('![alt text](img/window.png "A long caption")\n')
 assert '<figcaption>A long caption</figcaption>' in body and 'src="/manual/img/window.png"' in body, body
+assert manual.inline(r'**Accept t\* now** and *Accept t\**') == '<strong>Accept t* now</strong> and <em>Accept t*</em>'
 page = manual.render_page('# T\n\n## A\n\ntext\n')
 assert 'MONET' in page and 'Dr. T. Francese' in page and 'href="#a"' in page and 'id="theme-toggle"' in page
 checks += 1
@@ -62,6 +63,7 @@ for lang, text in texts.items():
     ids = set(re.findall(r'<h[1-4] id="([^"]+)"', body))
     assert all(t in ids for t in re.findall(r'href="#([^"]+)"', body)), lang
     assert body.count('<figure>') == len(pics[lang]), (lang, body.count('<figure>'))
+    assert '\\*' not in re.sub(r'<code>.*?</code>|<pre>.*?</pre>', '', body, flags=re.S), f'{lang}: an escaped asterisk is shown'
 assert manual.render_page(lang='it').count('<figure>') == manual.render_page().count('<figure>')
 assert 'Indice' in manual.render_page(lang='it') and '<html lang="it">' in manual.render_page(lang='it')
 assert [manual.pick_language(v) for v in ('it', 'IT-it', 'fr', None, '../../etc/passwd')] == ['it', 'it', 'en', 'en', 'en']

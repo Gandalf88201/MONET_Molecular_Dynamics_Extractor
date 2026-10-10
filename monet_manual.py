@@ -46,7 +46,8 @@ def safe_url(url):
 
 
 def inline(text):
-    """Escape, then re-introduce `code`, **bold**, *italic* and [links](url). Code is taken out first."""
+    """Escape, then re-introduce `code`, **bold**, *italic* and [links](url). Code is taken out first, then the
+    backslash escapes (\\* is a literal asterisk, as in t\\*)."""
     codes = []
 
     def stash(m):
@@ -54,6 +55,13 @@ def inline(text):
         return f'\x00{len(codes) - 1}\x00'
 
     text = re.sub(r'`([^`]+)`', stash, text)
+    literals = []
+
+    def literal(m):
+        literals.append(html.escape(m.group(1)))
+        return f'\x01{len(literals) - 1}\x01'
+
+    text = re.sub(r'\\([\\`*_\[\]])', literal, text)
     text = html.escape(text, quote=False)
 
     def link(m):
@@ -66,7 +74,8 @@ def inline(text):
     text = re.sub(r'\[([^\]]+)\]\(([^)\s]+)\)', link, text)
     text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
     text = re.sub(r'(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])', r'<em>\1</em>', text)
-    return re.sub(r'\x00(\d+)\x00', lambda m: codes[int(m.group(1))], text)
+    text = re.sub(r'\x00(\d+)\x00', lambda m: codes[int(m.group(1))], text)
+    return re.sub(r'\x01(\d+)\x01', lambda m: literals[int(m.group(1))], text)
 
 
 def _cells(line):
