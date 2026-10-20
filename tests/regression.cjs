@@ -43,6 +43,22 @@ assert.equal(stat([NaN]), null); checks++
 const hist = model.histogram([0.5, 1.5, 1.6], 2, 0, 2)
 assert.deepEqual(hist.density, [1 / 3, 2 / 3]); checks++
 
+// Groups from picked atoms: a carbon and its hydrogens give C–H bonds (never H–H); ordered bonded picks are kept.
+{
+  const bondList = new Set(['1-2', '1-3', '1-4', '1-5', '1-6', '6-7', '6-8', '6-9'])
+  const bonded = (a, b) => bondList.has(`${a}-${b}`) || bondList.has(`${b}-${a}`)
+  const picks = (ids, width) => model.groupsFromPicks(ids, width, bonded)
+  assert.deepEqual(picks([1, 2, 3, 4], 2), [[1, 2], [1, 3], [1, 4]]); assert.deepEqual(picks([1, 2, 3], 2), [[1, 2], [1, 3]]); checks++
+  assert.deepEqual(picks([1, 2, 6, 7], 2), [[1, 2], [6, 7]]); assert.deepEqual(picks([2, 10], 2), [[2, 10]]); checks++
+  assert.throws(() => picks([2, 10, 3], 2), /No bonds among the selected atoms/); checks++
+  assert.deepEqual(picks([2, 1, 3], 3), [[2, 1, 3]]); assert.deepEqual(picks([1, 2, 3, 4], 3), [[2, 1, 3], [2, 1, 4], [3, 1, 4]]); checks++
+  assert.deepEqual(picks([2, 1, 6, 7], 4), [[2, 1, 6, 7]]); assert.deepEqual(picks([1, 2, 3, 4, 6, 7], 4), [[2, 1, 6, 7], [3, 1, 6, 7], [4, 1, 6, 7]]); checks++
+  // Main axis of a displacement tensor (vibration arrows of atoms).
+  const axis = model.principalAxis([1, 1, 1, 0.9, 0.9, 0.9])
+  assert.ok(Math.abs(axis.value - 2.8) < 1e-12 && axis.vector.every(v => Math.abs(Math.abs(v) - 1 / Math.sqrt(3)) < 1e-12)); checks++
+  assert.ok(Math.abs(Math.abs(model.principalAxis([0.01, 0.02, 0.005, 0, 0, 0]).vector[1]) - 1) < 1e-12); checks++
+}
+
 // Sokal τ_int (same value as monet_analysis.integrated_time) and g of configurations taken every s lags.
 const expAcf = Array.from({ length: 2000 }, (_, k) => Math.exp(-k / 40))
 assert.ok(Math.abs(model.tauFromAcf(expAcf) - 39.7292) < 1e-3); checks++
@@ -83,6 +99,31 @@ assert.deepEqual(ends.low.map(item => item.frame), [0, 4]); assert.deepEqual(end
   assert.ok(Date.now() - started < 3000, `grid bond search took ${Date.now() - started} ms`); assert.ok(bigBonds.length > 0); checks++
 }
 
+// Viewer orientation: viewAlong turns the given direction towards the viewer, a second call looks from the other side.
+{
+  const { MolecularViewer } = require('../viewer.js')
+  const view = Object.create(MolecularViewer.prototype)
+  Object.assign(view, { rotX: 0.25, rotY: -0.4, requestRender () {} })
+  // Model direction → screen [right, up, towards the viewer] with the rotation of _project.
+  const screen = d => {
+    const cy = Math.cos(view.rotY), sy = Math.sin(view.rotY), cx = Math.cos(view.rotX), sx = Math.sin(view.rotX)
+    const x1 = d[0] * cy + d[2] * sy, z1 = -d[0] * sy + d[2] * cy
+    return [x1, d[1] * cx - z1 * sx, d[1] * sx + z1 * cx].map(v => Math.round(v * 1e9) / 1e9 + 0)
+  }
+  assert.equal(view.viewAlong([0, 0, 1]), 1)
+  assert.deepEqual([screen([1, 0, 0]), screen([0, 1, 0]), screen([0, 0, 1])], [[1, 0, 0], [0, 1, 0], [0, 0, 1]]); checks++
+  assert.equal(view.viewAlong([0, 0, 1]), -1); assert.deepEqual(screen([0, 0, 1]), [0, 0, -1]); checks++
+  for (const d of [[1, 0, 0], [0, 1, 0], [0, -2, 0], [1, 2, -3]]) {
+    const n = Math.hypot(...d)
+    assert.equal(view.viewAlong(d), 1); assert.deepEqual(screen(d.map(v => v / n)), [0, 0, 1], JSON.stringify(d))
+  }
+  checks++
+  // Down x the right-handed frame shows y up and z to the left.
+  assert.equal(view.viewAlong([1, 0, 0]), 1)
+  assert.deepEqual([screen([0, 1, 0]), screen([0, 0, 1])], [[0, 1, 0], [-1, 0, 0]]); checks++
+  assert.equal(view.viewAlong([0, 0, 0]), 0); checks++
+}
+
 async function run () {
   // Exercise the real browser adapter with a DOM file-input stub and native File/Blob.
   let chosenFile = new File([source], 'water.XYZ'), chosenEvent = 'change'
@@ -104,6 +145,7 @@ async function run () {
   chosenFile = new File([fs.readFileSync(path.join(root, 'examples/periodic-water.xyz'), 'utf8')], 'periodic-water.xyz')
   assert.equal(await api.selectFile(), 'periodic-water.xyz')
   assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame('periodic-water.xyz', 0)).lattice)), [[10, 0, 0], [0, 10, 0], [0, 0, 10]]); checks++
+  assert.deepEqual(JSON.parse(JSON.stringify((await api.readFrame('periodic-water.xyz', 0)).pbc)), [true, true, true]); assert.equal((await api.readFrame('water.XYZ', 0)).pbc, null); checks++
   chosenFile = new File([source], 'water.XYZ')
   chosenEvent = 'cancel'; assert.equal(await api.selectFile(), null); chosenEvent = 'change'; checks++
   const options = { filePath: 'water.XYZ', atomCount: 3, selectedAtoms: [1, 3], frequency: 1, computeAverage: true, generateGaussian: true }
@@ -138,7 +180,9 @@ async function run () {
   const result = await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, filePath, outputDir: path.join(temp, 'desktop') })
   assert.equal(result.success, true); assert.equal(result.sampledFrames, 2); checks++
   // A derived trajectory (e.g. a PCA selection) keeps the original frame in the extracted comment lines.
-  assert.equal(XYZ.outputComment(3, 'Lattice="1 0 0 0 1 0 0 0 1" frame=3 source_frame=5244'), 'frame 3 source_frame=5244'); assert.equal(XYZ.outputComment(0, 'Water frame 0'), 'frame 0'); checks++
+  // The extended XYZ cell is kept too, so a cell imported from a CIF reaches the ASE module after extraction.
+  assert.equal(XYZ.outputComment(3, 'Lattice="1 0 0 0 1 0 0 0 1" frame=3 source_frame=5244'), 'frame 3 source_frame=5244 Lattice="1 0 0 0 1 0 0 0 1"'); assert.equal(XYZ.outputComment(0, 'Water frame 0'), 'frame 0'); checks++
+  assert.equal(XYZ.outputComment(1, 'Lattice="2 0 0 0 2 0 0 0 2" Properties=species:S:1:pos:R:3 pbc="T T F"'), 'frame 1 Lattice="2 0 0 0 2 0 0 0 2" pbc="T T F"'); checks++
   const derived = path.join(temp, 'derived.xyz')
   fs.writeFileSync(derived, fs.readFileSync(filePath, 'utf8').split('\n').map((line, i) => i % 5 === 1 ? `${line} source_frame=${[5244, 16231][(i - 1) / 5]}` : line).join('\n'))
   await handlers.get('process-trajectory')({ sender: { send () {} } }, { ...options, generateGaussian: false, filePath: derived, outputDir: path.join(temp, 'desktop-derived') })
@@ -178,6 +222,8 @@ with zipfile.ZipFile(sys.argv[1]) as z:
     const potcarText = fs.readFileSync(path.join(temp, 'desktop-potcar/2-SAMPLED_CONFIGURATIONS/conf1/vasp/POTCAR'), 'utf8')
     assert.match(potcarText, /PAW_PBE O[\s\S]*PAW_PBE H/); checks++
   }
+  // The desktop app extracts with the Python engine, like the launcher: portable Gaussian inputs (relative %chk).
+  assert.match(fs.readFileSync(path.join(temp, 'desktop/2-SAMPLED_CONFIGURATIONS/conf1/sing.dat'), 'utf8'), /^%nproc=6\n%chk=s0\.chk\n/); checks++
   const extracted = fs.readFileSync(path.join(temp, 'desktop/1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz'), 'utf8')
   assert.equal(parse(extracted).configCount, 2); assert.equal(parse(extracted).atomCount, 2); checks++
   // Python's standard ZIP reader verifies CRCs and output numerics independently.
@@ -193,6 +239,11 @@ with zipfile.ZipFile(sys.argv[1]) as z:
  assert z.read('1-FULL_TRAJECTORY_EXTRACTED/FULL_TRAJECTORY_EXTRACTED.xyz').decode().splitlines()[0] == '2'
 `, path.join(temp, 'results.zip')]); checks++
   fs.rmSync(temp, { recursive: true, force: true })
+  // One version everywhere: CITATION.cff (checked against the release tag), package.json, the title bar and the changelog.
+  { const version = fs.readFileSync(path.join(root, 'CITATION.cff'), 'utf8').match(/^version: *(\S+)/m)[1]
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version, version)
+    assert.match(fs.readFileSync(path.join(root, 'index.html'), 'utf8'), new RegExp(`class="titlebar-sub">[^<]*v ${version.replace(/\./g, '\\.')}<`))
+    assert.match(fs.readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'), new RegExp(`^## ${version.replace(/\./g, '\\.')}( |$)`, 'm')); checks++ }
   console.log(`PASS: ${checks} regression checks (XYZ parser, browser adapter, ZIP output, desktop IPC).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 })

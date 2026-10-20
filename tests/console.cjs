@@ -67,5 +67,8 @@ for (const analysis of C.names()) {
   for (const key of C.parameters(analysis)) assert.ok(allowed.has(key), `${analysis}.${key} is not allowed by the launcher`)
   assert.ok(P.SUMMARY[analysis], `no key numbers for ${analysis}`)
 }
-assert.equal(C.names().length, 15); checks++
+assert.equal(C.names().length, 16); checks++
+// Registered analyses: atom parameters inside params are MONET IDs in the call and file indices for Python.
+{ const call = C.toCall({ action: 'run_analysis', analysis: 'custom.radius_of_gyration', params: { indices: [3, 2], mass_weighted: true } }, mapping)
+  assert.deepEqual(call.args.params.indices, [225, 289]); assert.deepEqual(C.fromCall(call.args, mapping).params.indices, [3, 2]); checks++ }
 console.log(`PASS: ${checks} console checks (parser, formatter, whitelist, MONET IDs).`)

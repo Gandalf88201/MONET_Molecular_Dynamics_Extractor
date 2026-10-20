@@ -101,6 +101,8 @@ r = bridge({ action: 'rmsd_matrix', filename: path.join(temp, 'rigid.xyz'), alig
 assert.equal(r.matrix.length, 5); assert.equal(r.matrix[2][2], 0); assert.equal(r.matrix[1][3], r.matrix[3][1]); assert.ok(r.matrix[0][4] > 5); checks++
 r = bridge({ action: 'rmsd_matrix', filename: path.join(temp, 'rigid.xyz'), align: true, max_frames: 3 })
 assert.equal(r.matrix.length, 3); assert.equal(r.truncated, true); assert.ok(Math.max(...r.matrix.flat()) < 1e-6); checks++
+r = bridge({ action: 'rmsd_matrix', filename: path.join(temp, 'rigid.xyz'), align: true, max_frames: 5 })
+assert.equal(r.matrix.length, 5); assert.equal(r.truncated, false); checks++
 
 // RDF: simple cubic first shell at 2 A with 6 neighbours; g -> ~1 is not expected for a crystal, but n(r) is exact.
 r = bridge({ action: 'rdf', filename: path.join(temp, 'lattice.xyz'), rmax: 3.5, nbins: 70 })
@@ -126,6 +128,14 @@ near(r.fits.selection.D_cm2_s, 1.25e-4, 1.25e-5, 'diffusion cm2/s'); checks++
 near(r.series.selection[10], 6 * 1.25e-3 * 10, 0.02, 'MSD(10 fs)'); checks++
 r = bridge({ action: 'msd', filename: path.join(temp, 'brownian.xyz'), dt: 1, frame_step: 20, fit_start: 100, fit_end: 1500 })
 near(r.fits.selection.D_A2_fs, 1.25e-3, 2.5e-4, 'diffusion with frame step'); assert.equal(r.dt, 20); checks++
+// Drift removal uses the centre of mass of the whole system: atom 1 of 10 moves 0.1 A per frame,
+// so the system moves 0.01 A per frame and atom 1 keeps 0.09 A per frame of its own motion.
+fs.writeFileSync(path.join(temp, 'drift.xyz'), Array.from({ length: 20 }, (_, f) =>
+  `10\nframe=${f}\n` + Array.from({ length: 10 }, (_, i) => `Ar ${i === 0 ? (0.1 * f).toFixed(4) : 3 * i} 0 0\n`).join('')).join(''))
+r = bridge({ action: 'msd', filename: path.join(temp, 'drift.xyz'), dt: 1, indices: [0], by_element: false, remove_drift: true })
+near(r.series.selection[10], 0.81, 1e-6, 'MSD of one atom after removing the system drift'); checks++
+r = bridge({ action: 'msd', filename: path.join(temp, 'drift.xyz'), dt: 1, indices: [0], by_element: false, remove_drift: false })
+near(r.series.selection[10], 1.0, 1e-6, 'MSD of one atom with the drift kept'); checks++
 r = bridge({ action: 'msd', filename: path.join(temp, 'brownian.xyz'), dt: 0 })
 assert.equal(r.ok, false); assert.match(r.message, /dt must be a positive/); checks++
 
@@ -322,6 +332,27 @@ r = bridge({ action: 'fluctuations', filename: chain, quantity: 'atoms', indices
 assert.ok(Math.max(...r.statistics.map(st => st.rmsf)) < 1e-6); checks++
 r = bridge({ action: 'fluctuations', filename: chain, quantity: 'atoms', indices: [0, 1, 2, 3], mic: true, align: false })
 assert.ok(r.statistics[3].rmsf > r.statistics[1].rmsf); assert.ok(r.statistics[3].rmsf < 2, 'unwrapped across the boundary'); checks++
+// Displacement tensors of the ellipsoids: six components per atom, trace = RMSF².
+for (const st of r.statistics) { assert.equal(st.u.length, 6); near(st.u[0] + st.u[1] + st.u[2], st.rmsf ** 2, 1e-8, 'trace of U') }
+checks++
+// A rotating molecule with one atom vibrating along a fixed molecular direction: after alignment the
+// major axis of its tensor is that direction in the axes of the first frame.
+const ellipsoid = py(`
+base = np.array([[0, 0, 0], [1.5, 0, 0], [1.5, 1.5, 0], [0, 1.5, 0.4], [0.7, 0.7, 1.2]])
+axis = np.array([1.0, 1.0, 0.0]) / math.sqrt(2)
+def rot(t):
+    a = 0.02 * t
+    tilt = np.array([[1, 0, 0], [0, math.cos(0.3), -math.sin(0.3)], [0, math.sin(0.3), math.cos(0.3)]])
+    return np.array([[math.cos(a), -math.sin(a), 0], [math.sin(a), math.cos(a), 0], [0, 0, 1]]) @ tilt
+frames = []
+for t in range(400):
+    p = base.copy(); p[4] += 0.2 * math.sin(0.7 * t) * axis
+    frames.append(p @ rot(t).T + [0.01 * t, 0, 0])
+_, rmsf, deviation = ma.atomic_fluctuations(np.array(frames))
+w, v = np.linalg.eigh(ma.displacement_tensors(deviation)[4])
+print(json.dumps({'cos': abs(float(v[:, -1] @ (rot(0) @ axis))), 'ratio': float(w[1] / w[2])}))
+`)
+assert.ok(ellipsoid.cos > 0.999, `major axis in first-frame axes (|cos| ${ellipsoid.cos})`); assert.ok(ellipsoid.ratio < 0.01, 'anisotropic'); checks++
 
 // τ_int of an exact exponential ACF (τ = 40 lags): Sokal window (c = 5), Geyer sequence, first zero.
 const tauInt = py(`
@@ -393,4 +424,24 @@ const launcher = fs.readFileSync(path.join(root, 'start_monet.py'), 'utf8')
 assert.match(launcher, /'equilibration'/); assert.match(launcher, /'tau_int_method'/); checks++
 
 fs.rmSync(temp, { recursive: true, force: true })
+// Index cache: a cache file with unexpected content is ignored (re-indexed), and old index files are deleted.
+execFileSync(python, ['-c', `
+import json, os, sys, time, numpy as np
+sys.path.insert(0, sys.argv[1])
+os.environ['MONET_CACHE_DIR'] = sys.argv[2]
+import monet_io
+path = sys.argv[3]
+traj = monet_io.XYZTrajectory(path)
+cache = monet_io._cache_path(path)
+with np.load(cache) as data:
+    offsets, meta = data['offsets'], json.loads(str(data['meta']))
+np.savez(cache, offsets=offsets, meta=json.dumps({**meta, 'path': '/etc/passwd'}))
+again = monet_io.XYZTrajectory(path)
+assert again.path == path and again.nframes == traj.nframes
+old = os.path.join(sys.argv[2], 'old.npz'); open(old, 'wb').close()
+os.utime(old, (time.time() - 40 * 86400,) * 2)
+os.remove(cache)
+monet_io.XYZTrajectory(path)
+assert not os.path.exists(old)
+`, root, fs.mkdtempSync(path.join(os.tmpdir(), 'monet-cache-')), path.join(root, 'examples', 'water.XYZ')]); checks++
 console.log(`PASS: ${checks} analysis checks (Kabsch, RMSD matrix, RDF, MSD/D, unwrap, VDOS, ACF, fluctuations, tau_int).`)

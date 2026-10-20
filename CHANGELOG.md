@@ -2,6 +2,98 @@
 
 ## Unreleased
 
+A built-in user manual, in English and Italian, with pictures taken from the program.
+
+- New: **Manual** button in the title bar. The launcher serves the manual at `/manual` (`?lang=en` or `?lang=it`; without it the page follows the language you used last, else the browser's) and its pictures at `/manual/img/`. It covers starting MONET, the formats, the viewer, cell and time axis, every ASE, MDAnalysis and MONET Custom analysis, the extraction and the QM inputs, the history and replay, plugins, the MCP server, troubleshooting and citing. The button is hidden when `index.html` is opened directly and in the Electron window, which have no launcher.
+- New: `monet_manual.py` (a small Markdown reader, standard library only, that escapes everything it does not know), `manual/MANUAL.md`, `manual/MANUAL.it.md`, `manual/manual.css`, `manual/manual.js` and 41 pictures in `manual/img/`.
+- New: `tools/make_manual_images.py` redraws the pictures from the running launcher with Playwright (day theme, 2x), from two synthetic trajectories written by `tools/manual_data.py` (an ethanol molecule with a start-up transient and a slowly rotating hydroxyl; 64 waters in a periodic box). `python tools/manual_data.py DIRECTORY` writes them for anyone who wants to repeat the steps.
+- The manual explains every concept it uses and gives every analysis the same four parts: what it tells you, numbered steps, how to read the result and what to watch out for. A new *Key concepts* section covers the MONET ID, frames and the time axis, the cell and the minimum image, the active trajectory and the difference between the spread (SD) and the error of the mean (SEM); a workflow diagram links the sections in the order of a study, and equilibration now comes before the autocorrelation. New pictures: picking atoms with *Use selection*, the active trajectory after *Accept t\**, the plateau validation box, and the Sampling step after it.
+- The manual's Markdown reader understands backslash escapes (`t\*` shows an asterisk).
+- Tests: `tests/manual.cjs` checks the Markdown reader (nothing from the text becomes markup), that every picture exists and is used, that the English and Italian manuals have the same sections, tables, boxes and pictures, and the pages served by the launcher (language choice, picture names, 404 for anything outside `manual/img/`, no session token in the page).
+
+## 2.7.1 (2026-10-03)
+
+The 3D viewers gain tools to orient the structure and to pick molecules (orientation axes, views down x, y, z or a, b, c, cell on and off, full-window view), and a cell imported with the trajectory is kept in the ASE module and after the extraction.
+
+- New viewer tools in the top-right corner of both 3D viewers (3D View and ASE): **x y z** (and **a b c** with a cell) look down that axis in the orthographic view, a second click looks from the other side; **⊹ axes** shows orientation axes (x, y, z and the cell vectors a, b, c) in the bottom-right corner that turn with the structure; **▣ cell** switches the cell box on and off (display only); **⛶** expands the viewer to the whole window (Esc restores it), the ASE viewer together with its trajectory player. The choices are remembered per viewer.
+- Fixed: a cell imported with the trajectory (XYZ + CIF, POSCAR, PDB or CP2K `.cell`) no longer has to be loaded again in the ASE module. The extracted trajectory (`FULL_TRAJECTORY_EXTRACTED.xyz`, `SAMPLED_CONFIGURATIONS.xyz`) keeps each frame's extended XYZ `Lattice="…"` and `pbc="…"`, so the analyses that run on it after the extraction still have the cell. Both engines (`monet_io.py` and `xyz.js`) do this.
+- *Crystal cell and periodic boundaries* now shows the source cell of the loaded trajectory: its parameters, periodic directions and the file it came from. It used to say "No manual cell" with the default 10 Å values. The cell is shown, not applied, so its vectors keep their original orientation. *Use source cell* shows it again.
+- The viewer frame (`readFrame`, `frame` action) now reports the periodic flags `pbc` next to `lattice`.
+
+## 2.7.0 (2026-09-28)
+
+The remaining MDAnalysis analysis modules join the *MDAnalysis › Analyses* menu, and MONET now tells you what to cite: a References dialog (Chicago or BibTeX) for MONET, ASE, MDAnalysis and each analysis.
+
+- New MDAnalysis analyses (`monet_analyses/mdanalysis.py`):
+  - Structure: average structure and RMSD from it (`align.AverageStructure`, written as extended XYZ); bond–angle–torsion internal coordinates of one molecule (`bat.BAT`).
+  - Interactions: site-specific RDF with the coordination number of each site (`rdf.InterRDF_s`); hydrogen-bond lifetime (`HydrogenBondAnalysis.lifetime`, continuous or intermittent) and autocorrelation with a multi-exponential fit (`HydrogenBondAutoCorrel`); water bridges between two selections (`WaterBridgeAnalysis`); contact maps (`distances.contact_matrix`).
+  - Membranes, polymers and dielectrics (new category): leaflets and bilayer thickness (`leaflet.LeafletFinder`), persistence length (`polymer.PersistenceLength`), static dielectric constant (`dielectric.DielectricConstant`).
+  - Proteins: Janin χ1/χ2 (`dihedrals.Janin`), helix geometry (`helix_analysis.HELANAL`).
+  - Nucleic acids (new category): base-pair distances (`nucleicacids`: Watson–Crick, minor and major groove) and backbone torsions with the sugar pucker (`nuclinfo`). PDB and AMBER names such as `DA` or `RG3` are accepted.
+  - PCA reports the cosine content of each component (`pca.cosine_content`); GNM offers `closeContactGNMAnalysis`.
+- New: **ⓘ References** in the title bar and **ⓘ Cite** next to each analysis menu. They list the references to cite, separated into MONET, ASE and MDAnalysis, with the method references of each analysis as the libraries declare them. They are shown in Chicago (author-date) or BibTeX with `\cite{…}` keys, and can be copied or downloaded as `.bib`. The methods report lists the references of the steps it contains. The references live in `references.js`; the ASE analyses no longer repeat them as text.
+- Partial charges: an extended XYZ `charge`, `charges` or `initial_charges` column, or the charges of an imported topology, reach MDAnalysis (they were zero before). The dielectric constant also accepts charges typed by element.
+- `networkx` is now in `requirements.txt` (needed by `LeafletFinder`); the launchers install it at the next start.
+- Not included: `encore`, `psa` and `waterdynamics` (deprecated since MDAnalysis 2.8 and removed in 3.0 in favour of MDAKits), `hole2` and `legacy.x3dna` (need the external HOLE and X3DNA programs).
+- Tests: `tests/mda-analyses.cjs` compares every new analysis with MDAnalysis called directly or with a known answer (ideal helix, planar bilayer, rigid torsion, paired bases); `tests/references.cjs` checks that every built-in analysis has references and that the Chicago and BibTeX forms are well formed.
+
+## 2.6.0 (2026-09-28)
+
+The ASE analysis modules join MONET: *ASE › More analyses* now holds thirteen built-in analyses from ASE, chosen for molecular-dynamics trajectories.
+
+- New (*ASE › More analyses*, `monet_analyses/ase.py`):
+  - Self-diffusion coefficient per element or for the centre of mass of chosen atoms (`ase.md.analysis.DiffusionCoefficient`), with the spread between segments and the MSD curves. Periodic runs are unwrapped first. For a subset of atoms, MONET divides by the chosen atoms only; ASE divides by every atom of the element.
+  - Energy, forces, kinetic temperature and pressure written in the file (extended XYZ calculator results, momenta and stress; CP2K `E =` in hartree), read with `ase.io`. Nothing is recomputed.
+  - Every bond, angle or dihedral by element type (`ase.geometry.analysis.Analysis` on the first frame, values in every frame): distribution or mean per frame.
+  - Molecules and species per frame, and bonds formed and broken between frames with a minimum lifetime, so that bonds flickering at the cutoff are not counted (`ase.neighborlist`, MONET bond cutoff).
+  - Total or partial RDF (`ase.geometry.rdf.get_rdf`), space group along the trajectory (`ase.spacegroup.symmetrize`, spglib), dimensionality of the bonded network (`ase.geometry.dimensionality`), atomic layers (`ase.geometry.get_layers`).
+  - Powder XRD and SAXS averaged over the frames with the Debye formula of `ase.utils.xrdebye`, computed from a distance histogram (it matches `XrDebye` to 0.1 %, and runs fast for thousands of atoms).
+  - Bravais lattice and Niggli-reduced cell per frame (`ase.cell`), supercell trajectory (`ase.build.make_supercell`).
+- `spglib` is now in `requirements.txt`, so the space group (structure summary and *Space group along the trajectory*) works without a separate install. The launchers install it at the next start.
+- Plugin API: `ctx.images()` returns every analysed frame as `ase.Atoms` with the values stored in the file (energy, forces, stress, momenta, comment values).
+- Changed: the *More analyses* tabs count built-in and plugin analyses separately.
+- Not included, with the reason in README.md: ASE calculators, optimisers, MD engines, NEB, vibrations, phonons, thermochemistry, EOS, GA, the database and `utils.structure_comparator`. The structure comparator finds thermally displaced MD frames all different, so it cannot group them.
+- Tests: `tests/ase-analyses.cjs` compares every analysis with ASE called directly or with a known answer.
+
+## 2.5.0 (2026-09-28)
+
+Motion on the structure: vibration arrows and thermal ellipsoids are drawn on the molecule in the ASE viewer, and atom groups picked in the viewer follow the bonds.
+
+- New:
+  - Vibration arrows (*Fluctuations & trends*): double-headed arrows on the structure show how the analysed items move, coloured like the map. Atoms: ± RMSF along the main displacement axis. Bonds: along the bond at both atoms, the SD shared in inverse proportion to the masses (for C–H mostly on the H). Angles: at the end atoms, in the angle plane (bending). Dihedrals: at the outer atoms, across the torsion plane. Arrow length is automatic (largest 1 Å) or a fixed magnification, and the arrows follow the atoms during playback.
+  - Thermal ellipsoids on the structure (*More analyses › Thermal ellipsoids (ADP) → PDB* and *… in crystal axes → CIF*): the ellipsoids are drawn in the ASE viewer, not only written to the file, coloured by U<sub>eq</sub> or in element colours, with 50, 90 or 99 % probability and a magnification. They come back when you return to the tab.
+  - Plugin API: a result can carry `ellipsoids` (atom index and Cartesian U in Å²), which MONET draws on the structure; the registry checks their shape. See `docs/plugins.md`. The thermal ellipsoids plugin still runs on older MONET releases.
+- Changed:
+  - Atom groups from the selection follow the bonds. When the picked atoms are not already bonded groups, **Use selection** writes every bond, angle or dihedral among them (first-frame connectivity, molecule bond cutoff, minimum image), so a carbon and its three hydrogens give the three C–H bonds instead of C–H plus H–H. Picks with no bond between them (an O···H contact) still form groups in pick order. Applies to *Fluctuations & trends*, the ASE bond, angle and dihedral panels and the autocorrelation groups.
+- Fixes:
+  - The crystal cell (CIF or other cell file, manual cell, or extended XYZ lattice) is drawn in the 3D view of *MONET Custom Functionalities* too; before, only the ASE viewer showed it.
+  - *Fluctuations & trends* with *only the groups entered below*: a selection whose size was not a multiple of the group size (a carbon and two hydrogens for bonds) was rejected and nothing was computed. An empty groups field now takes the selected atoms, grouped by their bonds, and errors in the groups are shown next to the plot as well as in the status bar.
+- Removed:
+  - Polar plot (angles and dihedrals): the *custom values…* radius, with its text box and *Radial label* (default ΔEST (eV)). ΔE<sub>ST</sub> is a quantum-chemical result that MONET does not compute or use; the radius is the count per bin (stacked dots) or the frame index.
+
+## 2.4.0 (2026-09-25)
+
+- MCP server `monet_mcp.py` for AI assistants (Claude Desktop, Claude Code, Gemini CLI): open trajectories (with import of other formats), list and run every MONET, MDAnalysis and plugin analysis, select atoms, find bonded groups and derive trajectories, with atoms as MONET IDs, compact results (full data on request) and progress. It runs headless on files; reads only below `--data` folders and writes only into `--output`. Needs the optional `mcp` Python SDK (1.x or 2.x). Guide: `docs/mcp.md`.
+- Fluctuations & trends:
+  - Fix: the statistics table collapsed to zero height, so no row could be clicked and the time-series panel below (*Click a row of the table …*) stayed empty. The table is now shown (up to 320 px, scrollable) and clicking a row plots the time series with mean, ±SD and trend line.
+  - Atoms: anisotropic displacement ellipsoids on the structure. The mean-square displacement tensor of each atom, in the axes of the first frame, is drawn as a translucent ellipsoid (50, 90 or 99 % probability, optional magnification), coloured like the map, with or without the atom colour map. U11 … U23 are added to the statistics CSV.
+  - A failed calculation is reported next to the plot as well as in the status bar.
+- New plugin `plugins/displacement_ellipsoids.py` (*MONET Custom Functionalities › More analyses*): thermal ellipsoids (anisotropic displacement parameters) from the trajectory, written as a PDB with `ANISOU` records (Cartesian axes of the first frame) or as a CIF with U^ij in the crystal axes (IUCr convention, P1) for Mercury, VESTA, Olex2, PyMOL or ORTEP. Table of U_eq, U_ij, principal RMS amplitudes and anisotropy.
+- Plugin API: `ctx.atom_ids` gives the MONET ID of every atom, for labels in written files.
+- The thermal ellipsoids plugin is self-contained: it also runs when copied into MONET 2.3.1 (it failed there with `AttributeError: module 'monet_analysis' has no attribute 'displacement_tensors'`). Long trajectories are aligned in blocks of 2000 frames.
+- Failed analyses (MDAnalysis and *More analyses*) are shown in their panel: the reason in one line, the plugin file when a plugin failed, and the Python traceback folded below. The status bar gets only the one-line reason instead of the whole traceback.
+
+## 2.3.1 (2026-09-24)
+
+- 3D view without a trajectory: only the *Load a trajectory file to begin* message is shown. The viewer title, style menu and hints appear with the first frame, and the message no longer covers the header half-transparently.
+- Fix: after switching from an analysis module back to the 3D view, the viewer could keep the resolution of the narrower layout and draw stretched atoms. Canvases and plots are now redrawn whenever the viewer area changes size.
+
+## 2.3.0 (2026-09-24)
+
+- Interface:
+  - *MONET processing* is renamed *MONET Custom Functionalities* and holds the former *Custom analyses* tab. Its first sub-tab, *3D viewer & extraction*, is the 3D view; the other sub-tabs are the custom analyses.
+  - The interface uses the system sans-serif font. Code, logs, consoles and QM input files use a monospace font, and numbers keep aligned digits.
+  - The selected module tab and sub-tab are filled, bold and underlined, so the active one is clear.
 - Large solvated systems (GROMACS/AMBER/CHARMM with 10⁴–10⁵ atoms), tested on an 87,403-atom protein–ligand–water system (XTC + GRO):
   - Fix: loading froze the page for minutes and used gigabytes. The atom-identity check looked every row of the atom table up with `find()` (quadratic) and drew a topology table row per atom. Atom tables now list the first 3,000 atoms (the viewer, the ID list and the selection tools reach the others); the topology table lists the first 3,000 atoms plus every mismatch.
   - Fix: *Analyse structure* built an n × n distance matrix (57 GiB at 87,000 atoms). The closest pair and the overlap count now use neighbour lists above 3,000 atoms, with the same results as before for smaller systems; the space group is skipped above 20,000 atoms.
@@ -22,6 +114,30 @@
 - A trajectory of picked, unevenly spaced frames has no time axis: MSD, VDOS and the autocorrelation ask for the full trajectory.
 - Extraction from a derived trajectory (uncorrelated, cropped, PCA selection) writes `frame N source_frame=M` in FULL_TRAJECTORY_EXTRACTED.xyz and SAMPLED_CONFIGURATIONS.xyz, so every configuration can be traced to its frame in the original run. The Python, desktop and browser engines all do this; files without `source_frame=` are unchanged.
 - Fix: a cell applied by hand or read from a cell file (e.g. a CIF) was dropped when a derived trajectory (uncorrelated, cropped, aligned, PCA selection) became active. It now follows the derived trajectory and comes back with ↩ Full trajectory, so plane-wave inputs (QE, VASP, CP2K, Qbox) keep it.
+
+- Analysis registry and plugins (`monet_registry.py`, guide in `docs/plugins.md`):
+  - an analysis is a Python function decorated with `@analysis`; MONET builds its form from the declared parameters, checks the values (ranges, choices, atoms inside the trajectory, unknown names), runs it on the active trajectory, plots the result (series, profile, matrix or table, with PNG/CSV export), logs it in the history and replays it with `replay.py`. No JavaScript or launcher change is needed.
+  - plugins are loaded from `plugins/`, `~/.monet/plugins/`, the folders in `MONET_PLUGINS` and installed packages with the `monet.analyses` entry point; a plugin that fails to load is reported in the interface without stopping MONET.
+  - ASE and MONET Custom Functionalities get a *More analyses* sub-tab when plugins are installed; two examples ship in `plugins/`: cell volume, mass density and lattice lengths per frame (ASE), and radius of gyration (Custom).
+  - the MDAnalysis analyses moved into the registry (`monet_analyses/mdanalysis.py`); their form, menu and checks now come from Python, and MDAnalysis plugins join the same menu. Saved sessions and replay scripts using `mda_run` keep working.
+  - new bridge actions `list_analyses` and `run_analysis`; the console accepts `run_analysis(analysis="custom.radius_of_gyration", params={...})` with MONET IDs.
+  - analyses may write a file (e.g. the density grid) or a trajectory; the launcher offers it for download and, for trajectories, as the next active trajectory.
+- Launcher:
+  - calculations run on persistent Python workers (`ase_bridge.py --serve`): libraries and trajectory indexes stay loaded, so after the first request a frame read takes about 1 ms instead of about 0.5 s. A worker starts in the background when the launcher starts; a cancelled calculation stops its worker.
+  - session files are deleted as soon as nothing uses them: released trajectories, derived copies (unwrapped, aligned, uncorrelated) once their download is gone, and job folders that produced nothing. Only the 40 newest downloads are kept.
+  - the job limit is checked before a calculation starts, so a refused request no longer starts Python.
+  - download links no longer contain the session token; the random download ID is the permission for that file.
+- Desktop app (Electron): extraction now runs on the Python engine of the launcher (`monet_io.extract`) instead of a separate JavaScript copy, and ASE/MDAnalysis calls use the same persistent workers (`bridge-worker.js`). Gaussian inputs written by the desktop app use `%chk=s0.chk` like the other engines (they had an absolute local path). Electron is updated from 28 to 44. The desktop app needs Python 3 with numpy on PATH for extraction.
+- Fixes and hardening:
+  - the trajectory index cache moved from the shared temp folder to a per-user folder (`~/.cache/monet/index`, or `$MONET_CACHE_DIR`); cache files with unexpected content are ignored, and index files unused for 30 days are deleted.
+  - element guessing for topologies without elements: atom names of standard residues (amino acids, nucleotides, water) use their first letter, so `CA` is a carbon, not calcium (`HG`, `NE`, `CD` likewise).
+  - the aligned trajectory (MDAnalysis › Align) no longer breaks its extended-XYZ comment line when the selection contains double quotes.
+  - *RMSD Matrix* no longer reports "truncated" when the trajectory has exactly the maximum number of frames.
+  - module tabs and sub-tabs are announced as tabs to screen readers, with the selected one marked (`aria-selected`).
+  - `renderer.js` (4,500 lines) is split into eight page scripts loaded in order (`app-core.js`, `app-workflow.js`, `app-analysis.js`, `app-geometry.js`, `app-mdanalysis.js`, `app-structure.js`, `app-history.js`, `app-start.js`); the code is moved unchanged. `tests/app-load.cjs` loads them as separate scripts, as a browser does, in browser and desktop modes. The README lists the source layout.
+  - CI runs ruff (`ruff.toml`) and ESLint (`eslint.config.js`) with correctness rules only; the unused variables and imports they found are removed.
+  - a test checks that the version is the same in `CITATION.cff`, `package.json`, the title bar and the changelog.
+- Fix: *Remove drift* in MSD / Diffusion subtracted the centre of the selected atoms, so a single atom, ion or molecule lost the diffusion the MSD measures (MSD and D close to zero). It now subtracts the centre-of-mass motion of the whole system, with minimum-image steps across periodic boundaries. MSD and D computed earlier for small selections with this option on should be recomputed.
 
 ## 2.2.0 (2026-09-23)
 

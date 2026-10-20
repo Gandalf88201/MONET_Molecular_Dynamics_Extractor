@@ -46,10 +46,16 @@
         else if (/\bi\s*=/.test(line)) this.format = 'CP2K'
         this.columns = { element: 0, position: 1, required: 4 }
         this.lattice = null
+        this.pbc = null
         const lattice = line.match(/\bLattice="([^"]+)"/)
         if (lattice) {
           const values = lattice[1].trim().split(/\s+/).map(Number)
           if (values.length === 9 && values.every(Number.isFinite)) this.lattice = [values.slice(0, 3), values.slice(3, 6), values.slice(6, 9)]
+        }
+        if (this.lattice) {
+          // Extended XYZ: periodic along all three vectors unless pbc="…" says otherwise.
+          const flags = (line.match(/\bpbc="([^"]*)"/)?.[1] || 'T T T').trim().split(/\s+/)
+          this.pbc = flags.length === 3 ? flags.map(flag => /^(t|true|1)$/i.test(flag)) : [true, true, true]
         }
         const props = line.match(/\bProperties=([^\s]+)/)
         if (props) {
@@ -91,7 +97,7 @@
             this.elements = this.atoms.map(atom => atom.element)
             this.rawElements = this.rawRow || null
           }
-          const frame = { index: this.configCount++, comment: this.comment, atoms: this.atoms, lattice: this.lattice }
+          const frame = { index: this.configCount++, comment: this.comment, atoms: this.atoms, lattice: this.lattice, pbc: this.pbc }
           this.phase = 'count'
           return frame
         }
@@ -117,9 +123,17 @@
 
   // Comment line of an extracted frame: its index in the file being extracted, plus the frame of the
   // original trajectory when this file is derived (uncorrelated, cropped, PCA selection: source_frame=).
+  // The extended XYZ Lattice="…" and pbc="…" are kept, so the cell (e.g. from an imported CIF) follows the
+  // extracted trajectory into the ASE module.
   function outputComment (index, comment) {
     const source = /(?:^|\s)source_frame=(\d+)/.exec(comment || '')
-    return source ? `frame ${index} source_frame=${source[1]}` : `frame ${index}`
+    let text = source ? `frame ${index} source_frame=${source[1]}` : `frame ${index}`
+    const lattice = /(?:^|\s)(Lattice="[^"]*")/.exec(comment || '')
+    if (lattice) {
+      const pbc = /(?:^|\s)(pbc="[^"]*")/.exec(comment)
+      text += ` ${lattice[1]}` + (pbc ? ` ${pbc[1]}` : '')
+    }
+    return text
   }
 
   const api = { Parser, frames, outputComment }

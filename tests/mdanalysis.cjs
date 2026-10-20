@@ -263,4 +263,13 @@ for (const mic of ['False', 'True']) {
 assert.equal(dense.True[0][1], 2); assert.equal(dense.True[0][0][0] < 0.05, true); checks++ // 3-7 and, through the boundary, 20-21
 
 fs.rmSync(temp, { recursive: true, force: true })
+// Element fallback: PDB atom names of standard residues use their first letter (CA = carbon), others two letters.
+execFileSync(python, ['-c', `
+import sys; sys.path.insert(0, sys.argv[1])
+from ase.data import chemical_symbols
+from monet_mda import element_from_name
+valid = set(chemical_symbols[1:])
+got = [element_from_name(n, r, valid) for n, r in [('CA', 'ALA'), ('HG1', 'SER'), ('NE2', 'HIS'), ('CD', 'PRO'), ('OW', 'SOL'), ('CA', 'CA'), ('CL', 'CL'), ('NA', 'NA'), ('1HB', 'LYS')]]
+assert got == ['C', 'H', 'N', 'C', 'O', 'Ca', 'Cl', 'Na', 'H'], got
+`, root]); checks++
 console.log(`PASS: ${checks} MDAnalysis checks (XTC/TRR/DCD + topology, ASE formats, selections, generic analyses, atom identity, ASE structure).`)

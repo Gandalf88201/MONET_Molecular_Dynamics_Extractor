@@ -34,7 +34,13 @@ const text = R.methodsReport(data)
 assert.ok(text.startsWith('# Methods: MONET analysis session\n')); checks++
 assert.match(text, /> \*\*Warning:\*\* the history was paused 1 time in this session/); checks++
 assert.match(text, /^- MONET 2\.1\.0 \(MONET, Zenodo concept DOI 10\.5281\/zenodo\.22816521\)$/m); checks++
-assert.match(text, /^- ASE 3\.23\.0 \(A\. H\. Larsen et al\./m); assert.match(text, /^- MDAnalysis 2\.10\.0 \(N\. Michaud-Agrawal/m); assert.doesNotMatch(text, /NumPy/); checks++
+assert.match(text, /^- ASE 3\.23\.0 \(A\. H\. Larsen et al\./m); assert.match(text, /^- MDAnalysis 2\.10\.0 \(N\. Michaud-Agrawal/m); assert.doesNotMatch(text.split('## References')[0], /NumPy/); checks++
+// References: MONET (with the session's version) and the method references of the steps that ran:
+// acf (Sokal window, block averaging) and rmsd (Kabsch); the cleared rdf adds nothing, NumPy is not in the environment.
+const references = text.split('## References')[1].split('## Input data')[0]
+assert.match(references, /^- Francese, Tommaso\. 2026\. \*MONET: Molecular Dynamics Extractor\*\. Version 2\.1\.0\. Zenodo\. https:\/\/doi\.org\/10\.5281\/zenodo\.22816521\.$/m)
+for (const name of ['Francese, Tommaso, Arpan Kundu', 'Sokal, Alan', 'Flyvbjerg, H., and H. G. Petersen', 'Kabsch, Wolfgang. 1976']) assert.ok(references.includes(name), name)
+assert.doesNotMatch(references, /NumPy|Geyer|Michaud-Agrawal/); checks++
 assert.ok(text.includes(`| S1 | torsion.xyz | 1234 | ${'ab'.repeat(32)} | XYZ | 100 | 4 | loaded |`)); checks++
 assert.ok(text.includes(`| S2 | torsion-uncorrelated.extxyz | n/a | not recorded | n/a | 2 | 4 | S1 → #${sub} subsample → S2 |`)); checks++
 // Final steps come first; cleared and failed steps are not in the list but in the gaps.

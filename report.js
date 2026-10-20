@@ -10,6 +10,7 @@
   const node = typeof module === 'object' && module.exports
   const C = node ? require('./console.js') : root.MonetConsole
   const P = node ? require('./provenance.js') : root.MonetProvenance
+  const Refs = node ? require('./references.js') : root.MonetReferences
   const SOFTWARE = [
     ['python', 'Python', null],
     ['ase', 'ASE', 'A. H. Larsen et al., J. Phys.: Condens. Matter 29, 273002 (2017), doi:10.1088/1361-648X/aa680e'],
@@ -106,6 +107,12 @@
       const version = data.environment && data.environment[key]
       if (version) out.push(`- ${name} ${version}${citation ? ` (${citation})` : ''}`)
     }
+    // References: MONET, the libraries it computed with, and the method references of the steps listed below.
+    const env = data.environment || {}
+    const keys = ['monet', 'francese2022', ...(env.numpy ? ['harris2020'] : []), ...(env.scipy ? ['virtanen2020'] : [])]
+    for (const step of data.steps.filter(s => s.status === 'ok' && (!finalOnly || s.final))) keys.push(...Refs.forStep(step))
+    out.push('', '## References', '', 'Chicago author-date; the References dialog of MONET (ⓘ References) gives the same entries in BibTeX.', '')
+    for (const key of [...new Set(keys)]) out.push(`- ${Refs.chicago(key, { markdown: true, version: data.monet_version })}`)
     out.push('', '## Input data', '', '| Source | File | Size (bytes) | SHA-256 | Format | Frames | Atoms | Origin |', '| --- | --- | --- | --- | --- | --- | --- | --- |')
     for (const s of data.sources) {
       out.push(`| ${s.id} | ${s.name ?? 'n/a'} | ${s.size ?? 'n/a'} | ${s.sha256 ?? 'not recorded'} | ${s.format ?? 'n/a'} | ${s.frames ?? 'n/a'} | ${s.atoms ?? 'n/a'} | ${s.parent ? session.lineage(s.id) : 'loaded'} |`)

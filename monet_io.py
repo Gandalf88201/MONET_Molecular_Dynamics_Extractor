@@ -14,13 +14,17 @@ import hashlib
 import json
 import mmap
 import os
+from pathlib import Path
 import re
-import tempfile
+import time
 
 import numpy as np
 
 CHUNK = 64 << 20
 INDEX_VERSION = 2
+CACHE_DAYS = 30
+# The index file holds only these attributes (plus offsets); anything else in a cache file is ignored.
+_CACHE_KEYS = ('natoms', 'symbols', 'format', 'ncols', 'comment0', 'species_col', 'pos_col', 'properties', 'first', 'raw_symbols')
 _SYMBOL = re.compile(r'^[A-Za-z]{1,3}$')
 
 
@@ -33,9 +37,25 @@ def _normalize(symbol):
 
 
 def _cache_dir():
-    path = os.environ.get('MONET_CACHE_DIR') or os.path.join(tempfile.gettempdir(), 'monet-index')
-    os.makedirs(path, exist_ok=True)
+    """Per-user index cache: $MONET_CACHE_DIR, else $XDG_CACHE_HOME/monet/index or ~/.cache/monet/index.
+
+    It is never a shared folder such as /tmp, where another user of the machine could place index files.
+    """
+    base = os.environ.get('XDG_CACHE_HOME') or os.path.join(Path.home(), '.cache')
+    path = os.environ.get('MONET_CACHE_DIR') or os.path.join(base, 'monet', 'index')
+    os.makedirs(path, mode=0o700, exist_ok=True)
     return path
+
+
+def _prune_cache(folder, days=CACHE_DAYS):
+    """Delete index files not used for `days` days."""
+    limit = time.time() - days * 86400
+    for entry in os.scandir(folder):
+        try:
+            if entry.name.endswith('.npz') and entry.stat().st_mtime < limit:
+                os.remove(entry.path)
+        except OSError:
+            pass
 
 
 def _cache_path(path):
@@ -67,6 +87,7 @@ class XYZTrajectory:
         if cache and os.path.exists(cache):
             try:
                 self._load(cache)
+                os.utime(cache)  # recently used: kept by _prune_cache
                 return
             except Exception:
                 pass
@@ -79,6 +100,7 @@ class XYZTrajectory:
         if cache:
             try:
                 self._save(cache)
+                _prune_cache(os.path.dirname(cache))
             except OSError:
                 pass
 
@@ -96,8 +118,10 @@ class XYZTrajectory:
         with np.load(cache) as data:
             self.offsets = data['offsets']
             meta = json.loads(str(data['meta']))
-        for key, value in meta.items():
-            setattr(self, key, value)
+        if not isinstance(meta, dict) or set(meta) != set(_CACHE_KEYS):
+            raise ValueError('Not a MONET index file.')
+        for key in _CACHE_KEYS:
+            setattr(self, key, meta[key])
         self.raw_symbols = np.array([s.encode('ascii') for s in self.raw_symbols])
 
     def _first_frame(self):
@@ -184,12 +208,10 @@ class XYZTrajectory:
         count = str(self.natoms).encode()
         ends = []
         line_no = 0          # lines completed so far (relative to self.first)
-        last_start = 0       # start offset of the current line, relative to buffer
         with open(self.path, 'rb') as fh:
             fh.seek(self.first)
             base = self.first
             carry = b''
-            header_start = self.first
             while True:
                 chunk = fh.read(CHUNK)
                 buf = carry + chunk
@@ -288,22 +310,26 @@ class XYZTrajectory:
         return list(self.symbols)
 
     def atom_properties(self):
-        """Extra per-atom extended-XYZ columns (resname, resid, atomname) from the first frame."""
+        """Extra per-atom extended-XYZ columns (resname, resid, atomname, charge) from the first frame.
+
+        A charge column may be called charge, charges or initial_charges (ASE's name)."""
         if not self.properties:
             return {}
         fields = self.properties.split(':')
         wanted, col = {}, 0
         for i in range(0, len(fields), 3):
             name, kind, width = fields[i], fields[i + 1], int(fields[i + 2])
-            if name in ('resname', 'resid', 'atomname') and width == 1:
-                wanted[name] = (col, kind)
+            key = 'charge' if name in ('charges', 'initial_charges') and kind == 'R' else name
+            if key in ('resname', 'resid', 'atomname', 'charge') and width == 1 and key not in wanted:
+                wanted[key] = (col, kind)
             col += width
         if not wanted:
             return {}
         with open(self.path, 'rb') as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
             parts = self._block(mm, 0).split(b'\n', 2)
             table = self._tokens(parts[2], 0)
-        return {name: [int(v) if kind == 'I' else v.decode('utf-8', 'replace') for v in table[:, column]]
+        convert = {'I': int, 'R': float}
+        return {name: [convert[kind](v) if kind in convert else v.decode('utf-8', 'replace') for v in table[:, column]]
                 for name, (column, kind) in wanted.items()}
 
     def frame_indices(self, step=1, start=0, stop=None):
@@ -459,6 +485,31 @@ class XYZTrajectory:
                 atoms.set_pbc(pbc)
             yield frame, atoms
 
+    def full_atoms(self, frames):
+        """Yield (frame_index, ase.Atoms) read by ASE's extended XYZ reader, so that what the file stores
+        (energy, forces, stress and momenta as calculator results or arrays, comment values in atoms.info)
+        is kept; plain XYZ and CP2K/CPMD comment lines are read too. Coordinates are checked as in atoms()."""
+        import io
+        from ase.io.extxyz import read_xyz
+        symbols = self.symbols_list()
+        with open(self.path, 'rb') as fh, mmap.mmap(fh.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+            for frame in frames:
+                if not 0 <= frame < self.nframes:
+                    raise ValueError('Frame index is outside the trajectory.')
+                positions, comment = self._parse(frame, None, mm)
+                block = self._block(mm, frame).decode('utf-8', 'replace')
+                try:
+                    atoms = next(read_xyz(io.StringIO(block), 0))
+                except Exception:
+                    # A comment line the extended XYZ reader rejects: keep the checked coordinates only.
+                    atoms = next(self.atoms([frame]))[1]
+                atoms.set_chemical_symbols(symbols)
+                atoms.positions = positions
+                lattice, pbc = self.cell(comment)
+                atoms.set_cell(lattice if lattice is not None else np.zeros((3, 3)))
+                atoms.set_pbc(pbc if pbc is not None else False)
+                yield frame, atoms
+
 
 # ── extraction ───────────────────────────────────────────────────────────────
 
@@ -468,15 +519,24 @@ GAUSSIAN_TEMPLATE = ('%nproc=6\n%chk={chk}\n%mem=4gb\n'
 
 
 _SOURCE_FRAME = re.compile(r'(?:^|\s)source_frame=(\d+)')
+_LATTICE = re.compile(r'(?:^|\s)(Lattice="[^"]*")')
+_PBC = re.compile(r'(?:^|\s)(pbc="[^"]*")')
 
 
 def output_comment(index, comment):
     """Comment line of an extracted frame: its index in the file being extracted, plus the frame of the
-    original trajectory when this file is derived (uncorrelated, cropped, PCA selection: source_frame=)."""
+    original trajectory when this file is derived (uncorrelated, cropped, PCA selection: source_frame=).
+    The extended XYZ Lattice="…" and pbc="…" are kept, so the cell (e.g. from an imported CIF) follows the
+    extracted trajectory into the ASE module."""
     if isinstance(comment, bytes):
         comment = comment.decode('utf-8', 'replace')
     source = _SOURCE_FRAME.search(comment or '')
-    return f'frame {index} source_frame={source.group(1)}' if source else f'frame {index}'
+    text = f'frame {index} source_frame={source.group(1)}' if source else f'frame {index}'
+    lattice = _LATTICE.search(comment or '')
+    if lattice:
+        pbc = _PBC.search(comment)
+        text += f' {lattice.group(1)}' + (f' {pbc.group(1)}' if pbc else '')
+    return text
 
 
 def _row_format(symbols):

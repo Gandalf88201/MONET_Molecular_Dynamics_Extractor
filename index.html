@@ -15,12 +15,14 @@
   <div class="titlebar-logo">
     <span class="logo-m">M</span><span class="logo-rest">ONET</span>
   </div>
-  <div class="titlebar-sub">Molecular Dynamics Extractor &nbsp;·&nbsp; v 2.2.0</div>
+  <div class="titlebar-sub">Molecular Dynamics Extractor &nbsp;·&nbsp; v 2.7.1</div>
   <div class="titlebar-right">
     <div class="ase-badge" id="ase-badge" title="ASE (Atomic Simulation Environment) status">
       <span class="ase-dot" id="ase-dot"></span>
       <span id="ase-badge-text">ASE …</span>
     </div>
+    <a class="theme-toggle" id="manual-link" href="/manual" target="_blank" rel="noopener" hidden title="User manual (English and Italian): every step with pictures taken from the program">Manual</a>
+    <button class="theme-toggle" id="refs-toggle" type="button" aria-pressed="false" aria-haspopup="dialog" title="References to cite: MONET, ASE, MDAnalysis and each analysis (Chicago or BibTeX)">ⓘ References</button>
     <button class="theme-toggle" id="history-toggle" type="button" aria-pressed="false" title="Analysis history and console (Ctrl+`)">History</button>
     <button class="theme-toggle" id="theme-toggle" type="button" aria-pressed="false">☀ Day</button>
     <div class="titlebar-author">Dr. T. Francese &nbsp;·&nbsp; Univ. of Chicago</div>
@@ -303,20 +305,22 @@
   <main class="viewer-area">
 
     <!-- Tab bar -->
-    <div class="viewer-tabbar">
+    <div class="viewer-tabbar" role="tablist" aria-label="Analysis modules">
       <button class="sidebar-toggle" id="sidebar-toggle" title="Hide or show the workflow panel" aria-pressed="false">⇤</button>
-      <button class="vtab" data-vtab="ase" id="vtab-ase" title="Analyses computed with ASE">
+      <button class="vtab" role="tab" data-vtab="ase" id="vtab-ase" title="Analyses computed with ASE">
         ASE
         <span class="ase-tab-badge" id="ase-tab-badge">✓</span>
       </button>
-      <button class="vtab" data-vtab="mda" id="vtab-mda" title="Analyses computed with MDAnalysis">MDAnalysis</button>
-      <button class="vtab" data-vtab="custom" id="vtab-custom" title="MONET's own analyses (autocorrelation, RMSD, dynamics)">Custom analyses</button>
-      <button class="vtab active" data-vtab="view3d" id="vtab-view3d" title="3D view and MONET file processing">MONET processing</button>
+      <button class="vtab" role="tab" data-vtab="mda" id="vtab-mda" title="Analyses computed with MDAnalysis">MDAnalysis</button>
+      <button class="vtab active" role="tab" data-vtab="custom" id="vtab-custom" title="MONET's own tools: 3D viewer and extraction, autocorrelation, RMSD, dynamics">MONET Custom Functionalities</button>
     </div>
 
-    <!-- ── 3D Viewer tab ── -->
+    <!-- ── 3D Viewer: first page of MONET Custom Functionalities ── -->
     <div class="vtab-content active" id="vtab-content-view3d">
-      <div class="viewer-header">
+      <!-- Filled from the "custom" sub-tabs by app-analysis.js -->
+      <div class="ase-subtabbar" id="monet-subtabbar" role="tablist" aria-label="MONET Custom Functionalities"></div>
+      <!-- Hidden until a trajectory is loaded (setViewerEmpty in app-core.js). -->
+      <div class="viewer-header hidden" id="viewer-header">
         <span id="viewer-title">3D Molecular Viewer</span>
         <label class="view-style hidden" id="view-solvent-box">Solvent <select class="field-input field-input-sm view-style-select" id="view-solvent" title="Water and ions found in the structure (display only: analyses and extraction still use every atom)">
           <option value="show">Show all atoms</option>
@@ -326,9 +330,13 @@
         <label class="view-style">Style <select class="field-input field-input-sm view-style-select" id="view-style"></select></label>
         <span class="viewer-hint">Drag to rotate · Right-drag or Shift-drag to move · Scroll to zoom · Click atom to select · Right-click for selection options</span>
       </div>
-      <canvas id="mol-canvas"></canvas>
-      <div class="viewer-overlay" id="viewer-overlay">
-        <div class="overlay-msg">Load a trajectory file to begin</div>
+      <div class="viewer-stage" id="viewer-stage">
+        <canvas id="mol-canvas"></canvas>
+        <!-- View along x, y, z (a, b, c with a cell), cell and axes on/off, expand: filled by app-analysis.js. -->
+        <div class="viewer-tools hidden" id="viewer-tools" role="toolbar" aria-label="3D view tools"></div>
+        <div class="viewer-overlay" id="viewer-overlay">
+          <div class="overlay-msg">Load a trajectory file to begin</div>
+        </div>
       </div>
     </div>
 
@@ -403,7 +411,11 @@
           </select>
           <button class="btn btn-sm" id="ase-fit-view">Fit view</button>
         </div>
-        <canvas id="ase-mol-canvas" aria-label="ASE molecular viewer: click atoms to select; drag to rotate; scroll to zoom"></canvas>
+        <div class="viewer-frame" id="ase-viewer-frame">
+        <div class="viewer-canvas-wrap">
+          <canvas id="ase-mol-canvas" aria-label="ASE molecular viewer: click atoms to select; drag to rotate; scroll to zoom"></canvas>
+          <div class="viewer-tools" id="ase-viewer-tools" role="toolbar" aria-label="ASE viewer tools"></div>
+        </div>
         <div class="player" id="ase-player" aria-label="Trajectory player">
           <div class="player-row">
             <button class="btn btn-sm" id="player-first" title="First frame">⏮</button>
@@ -426,6 +438,7 @@
             <label class="plot-view" title="Move the centroid of the atoms selected when ticked (or of all atoms) to the cell centre; later picks do not move the view. Untick and tick again to re-centre."><input type="checkbox" id="ase-center" /> centre selection</label>
           </div>
           <div class="player-live" id="ase-live" aria-live="polite"></div>
+        </div>
         </div>
         <p class="panel-desc">Click atoms in order · Right-click for selection options (molecule, neighbours, element, sphere …) · Drag to rotate · Right-drag or Shift-drag to move · Scroll to zoom · Space plays/stops, ←/→ step · Click a time-series plot to jump to that frame. With 2–4 selected atoms the distance, angle or dihedral of the shown frame is updated live.</p>
         <label class="field-label">Molecule bond cutoff × covalent radii
@@ -496,23 +509,24 @@
       </div>
       <!-- ASE sub-tabs -->
       <p class="panel-desc module-intro" id="module-intro"></p>
-      <div class="ase-subtabbar">
-        <button class="ase-stab" data-group="ase" data-stab="structure">Structure</button>
-        <button class="ase-stab" data-group="ase" data-stab="bonds">Bond Lengths</button>
-        <button class="ase-stab" data-group="ase" data-stab="angles">Bond Angles</button>
-        <button class="ase-stab" data-group="ase" data-stab="dihedrals">Dihedral Angles</button>
-        <button class="ase-stab" data-group="ase" data-stab="pdd">Pair Distances</button>
-        <button class="ase-stab" data-group="ase" data-stab="coordination">Coordination</button>
-        <button class="ase-stab" data-group="ase" data-stab="convert">Convert / Wrap</button>
-        <button class="ase-stab" data-group="mda" data-stab="topology">Topology &amp; consistency</button>
-        <button class="ase-stab" data-group="mda" data-stab="mda">Analyses</button>
-        <button class="ase-stab active" data-group="custom" data-stab="acf">Autocorrelation</button>
-        <button class="ase-stab" data-group="custom" data-stab="fluct">Fluctuations &amp; trends</button>
-        <button class="ase-stab" data-group="custom" data-stab="rmsd">RMSD (Kabsch)</button>
-        <button class="ase-stab" data-group="custom" data-stab="rmsdmatrix">RMSD Matrix</button>
-        <button class="ase-stab" data-group="custom" data-stab="rdf">RDF</button>
-        <button class="ase-stab" data-group="custom" data-stab="msd">MSD / Diffusion</button>
-        <button class="ase-stab" data-group="custom" data-stab="vdos">VDOS</button>
+      <div class="ase-subtabbar" role="tablist" aria-label="Analyses of the module">
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="structure">Structure</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="bonds">Bond Lengths</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="angles">Bond Angles</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="dihedrals">Dihedral Angles</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="pdd">Pair Distances</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="coordination">Coordination</button>
+        <button class="ase-stab" role="tab" data-group="ase" data-stab="convert">Convert / Wrap</button>
+        <button class="ase-stab" role="tab" data-group="mda" data-stab="topology">Topology &amp; consistency</button>
+        <button class="ase-stab" role="tab" data-group="mda" data-stab="mda">Analyses</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="view3d">3D viewer &amp; extraction</button>
+        <button class="ase-stab active" role="tab" data-group="custom" data-stab="acf">Autocorrelation</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="fluct">Fluctuations &amp; trends</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rmsd">RMSD (Kabsch)</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rmsdmatrix">RMSD Matrix</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="rdf">RDF</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="msd">MSD / Diffusion</button>
+        <button class="ase-stab" role="tab" data-group="custom" data-stab="vdos">VDOS</button>
       </div>
 
       <!-- ASE: structure summary -->
@@ -603,7 +617,7 @@
           <label class="field-label" for="fluct-groups" id="fluct-groups-label">Groups of MONET IDs</label>
           <input class="field-input" id="fluct-groups" placeholder="e.g. 1 2  1 3" />
         </div>
-        <p class="panel-desc" id="fluct-description">Bonds, angles and dihedrals are found from the first-frame connectivity (bond cutoff of the viewer), restricted to the atoms entered. For each item: mean, SD (circular for dihedrals), extremes, 5–95 % range, linear trend with its error and R², drift between the two halves, the dominant oscillation frequency and a trend test on five block averages. Click a row to see its time series and highlight it in the viewer.</p>
+        <p class="panel-desc" id="fluct-description">Bonds, angles and dihedrals are found from the first-frame connectivity (bond cutoff of the viewer), restricted to the atoms entered. For each item: mean, SD (circular for dihedrals), extremes, 5–95 % range, linear trend with its error and R², drift between the two halves, the dominant oscillation frequency and a trend test on five block averages. Atoms: the displacement tensor of each atom is drawn as a translucent ellipsoid (first-frame axes, chosen probability, optional magnification) on the structure. Click a row to see its time series and highlight it in the viewer.</p>
         <div class="ase-prog-row hidden" id="fluct-prog-row">
           <div class="progress-bar"><div class="progress-fill" id="fluct-prog-fill"></div></div>
           <span id="fluct-prog-label">—</span>
@@ -624,6 +638,24 @@
             <option value="magma">magma</option><option value="coolwarm">coolwarm</option>
           </select>
           <label><input type="checkbox" id="fluct-map" checked /> colour the molecule</label>
+        </div>
+        <div class="ase-ctrl-row" id="fluct-ellipsoid-row">
+          <label><input type="checkbox" id="fluct-ellipsoids" checked /> anisotropic displacement ellipsoids</label>
+          <label class="field-label" for="fluct-ellipsoid-prob">Probability</label>
+          <select class="field-input field-input-sm" id="fluct-ellipsoid-prob">
+            <option value="50" selected>50 %</option><option value="90">90 %</option><option value="99">99 %</option>
+          </select>
+          <label class="field-label" for="fluct-ellipsoid-scale">Magnify ×</label>
+          <input class="field-input field-input-sm" type="number" id="fluct-ellipsoid-scale" value="1" min="1" max="50" step="1" />
+        </div>
+        <div class="ase-ctrl-row" id="fluct-arrow-row">
+          <label title="Double-headed arrows on the structure: along the main displacement axis (atoms), the bond (bonds), perpendicular to the bond in the angle plane (angles) or to the torsion plane (dihedrals); length ± the amplitude, shared between the moving atoms by mass"><input type="checkbox" id="fluct-arrows" checked /> vibration arrows</label>
+          <label class="field-label" for="fluct-arrow-scale">Arrow length</label>
+          <select class="field-input field-input-sm" id="fluct-arrow-scale">
+            <option value="auto" selected>auto (largest 1 Å)</option>
+            <option value="1">× 1 (true amplitude)</option><option value="5">× 5</option><option value="10">× 10</option>
+            <option value="20">× 20</option><option value="50">× 50</option><option value="100">× 100</option>
+          </select>
         </div>
         <div class="ase-plot-actions">
           <button class="btn btn-sm" id="clear-fluct" disabled>Clear analysis</button>
@@ -793,14 +825,9 @@
         </div>
         <div class="ase-plot-actions dist-options hidden" id="angles-dist-options">
           <label class="plot-view">Bins <input class="field-input field-input-sm" id="angles-bins" type="number" min="2" max="500" value="60" /></label>
-          <label class="plot-view polar-only">Radius <select class="field-input field-input-sm" id="angles-radial"><option value="dots">stacked dots (counts)</option><option value="frame">frame index</option><option value="custom">custom values…</option></select></label>
+          <label class="plot-view polar-only">Radius <select class="field-input field-input-sm" id="angles-radial"><option value="dots">stacked dots (counts)</option><option value="frame">frame index</option></select></label>
           <label class="plot-view">Reference ° <input class="field-input field-input-sm" id="angles-ref" type="text" placeholder="84.3" title="One or more values separated by spaces" /></label>
           <label class="plot-view">Label <input class="field-input field-input-sm" id="angles-ref-label" type="text" placeholder="θExp" /></label>
-        </div>
-        <div class="dist-options hidden" id="angles-custom-row">
-          <label class="field-label" for="angles-custom">Radial values, one per computed frame in order, or “frame value” pairs (e.g. ΔE<sub>ST</sub> of each sampled configuration)</label>
-          <textarea class="field-input" id="angles-custom" rows="3" placeholder="0 0.152&#10;90 0.148&#10;…"></textarea>
-          <label class="plot-view">Radial label <input class="field-input field-input-sm" id="angles-custom-label" type="text" value="ΔEST (eV)" /></label>
         </div>
         <canvas class="chart-canvas" id="chart-angles"></canvas>
         <div class="chart-placeholder" id="chart-angles-ph">
@@ -843,14 +870,9 @@
         </div>
         <div class="ase-plot-actions dist-options hidden" id="dihedrals-dist-options">
           <label class="plot-view">Bins <input class="field-input field-input-sm" id="dihedrals-bins" type="number" min="2" max="500" value="60" /></label>
-          <label class="plot-view polar-only">Radius <select class="field-input field-input-sm" id="dihedrals-radial"><option value="dots">stacked dots (counts)</option><option value="frame">frame index</option><option value="custom">custom values…</option></select></label>
+          <label class="plot-view polar-only">Radius <select class="field-input field-input-sm" id="dihedrals-radial"><option value="dots">stacked dots (counts)</option><option value="frame">frame index</option></select></label>
           <label class="plot-view">Reference ° <input class="field-input field-input-sm" id="dihedrals-ref" type="text" placeholder="84.3" title="One or more values separated by spaces" /></label>
           <label class="plot-view">Label <input class="field-input field-input-sm" id="dihedrals-ref-label" type="text" placeholder="θExp" /></label>
-        </div>
-        <div class="dist-options hidden" id="dihedrals-custom-row">
-          <label class="field-label" for="dihedrals-custom">Radial values, one per computed frame in order, or “frame value” pairs (e.g. ΔE<sub>ST</sub> of each sampled configuration)</label>
-          <textarea class="field-input" id="dihedrals-custom" rows="3" placeholder="0 0.152&#10;90 0.148&#10;…"></textarea>
-          <label class="plot-view">Radial label <input class="field-input field-input-sm" id="dihedrals-custom-label" type="text" value="ΔEST (eV)" /></label>
         </div>
         <canvas class="chart-canvas" id="chart-dihedrals"></canvas>
         <div class="chart-placeholder" id="chart-dihedrals-ph">Dihedral-angle evolution over the active trajectory</div>
@@ -958,7 +980,7 @@
           <input class="field-input field-input-sm" type="number" id="msd-fit-start" min="0" step="any" placeholder="10%" />
           <label class="field-label" for="msd-fit-end">to (fs)</label>
           <input class="field-input field-input-sm" type="number" id="msd-fit-end" min="0" step="any" placeholder="50%" />
-          <label><input type="checkbox" id="msd-drift" checked /> Remove centre-of-geometry drift</label>
+          <label title="Subtracts the centre-of-mass motion of the whole system, so a single atom or molecule keeps its own diffusion"><input type="checkbox" id="msd-drift" checked /> Remove the system centre-of-mass drift</label>
           <button class="btn btn-sm btn-accent" id="btn-run-msd">Compute MSD</button>
         </div>
         <p class="panel-desc">Positions are unwrapped when a periodic cell is present; MSD is averaged over all time origins; D = slope / 6 from a linear fit in the chosen window.</p>
@@ -1155,6 +1177,8 @@
               <option value="gnm">Gaussian network model (gnm.GNMAnalysis)</option>
               <option value="diffusionmap">Diffusion map (diffusionmap.DiffusionMap)</option>
               <option value="align">Align the trajectory and download it (align.AlignTraj)</option>
+              <option value="average_structure">Average structure and RMSD from it (align.AverageStructure)</option>
+              <option value="bat">Bond–angle–torsion internal coordinates (bat.BAT)</option>
             </optgroup>
             <optgroup label="Interactions and distances">
               <option value="hbonds">Hydrogen bonds (HydrogenBondAnalysis)</option>
@@ -1164,19 +1188,36 @@
               <option value="min_distance">Minimum distance between two groups</option>
               <option value="atomic_distances">Atom-by-atom distances (atomicdistances)</option>
               <option value="dihedral_mda">Dihedral angles (dihedrals.Dihedral, −180…180°)</option>
+              <option value="interrdf_s">Site-specific RDF and coordination number (rdf.InterRDF_s)</option>
+              <option value="hbond_lifetime">Hydrogen-bond lifetime (HydrogenBondAnalysis.lifetime)</option>
+              <option value="hbond_autocorrel">Hydrogen-bond autocorrelation with triexponential fit (HydrogenBondAutoCorrel)</option>
+              <option value="water_bridges">Water bridges (WaterBridgeAnalysis)</option>
+              <option value="contact_map">Contact map (distances.contact_matrix)</option>
             </optgroup>
             <optgroup label="Densities">
               <option value="lineardensity">Linear density profile (lineardensity)</option>
               <option value="density">3D density grid, OpenDX (density.DensityAnalysis)</option>
             </optgroup>
+            <optgroup label="Membranes, polymers and dielectrics">
+              <option value="leaflets">Membrane leaflets and thickness (leaflet.LeafletFinder)</option>
+              <option value="persistence_length">Persistence length (polymer.PersistenceLength)</option>
+              <option value="dielectric">Static dielectric constant (dielectric.DielectricConstant)</option>
+            </optgroup>
             <optgroup label="Proteins">
               <option value="ramachandran">Ramachandran φ/ψ (dihedrals.Ramachandran)</option>
               <option value="dssp">Secondary structure (dssp.DSSP)</option>
+              <option value="janin">Janin χ1/χ2 side-chain angles (dihedrals.Janin)</option>
+              <option value="helanal">Helix geometry (helix_analysis.HELANAL)</option>
+            </optgroup>
+            <optgroup label="Nucleic acids">
+              <option value="nucleic_pairs">Base-pair distances (nucleicacids)</option>
+              <option value="nucleic_torsions">Backbone torsions and sugar pucker (nuclinfo)</option>
             </optgroup>
           </select>
           <label class="field-label" for="mda-step">Frame step</label>
           <input class="field-input field-input-sm" type="number" id="mda-step" value="1" min="1" />
           <button class="btn btn-sm btn-accent" id="btn-run-mda">Compute</button>
+          <button class="btn btn-sm" id="mda-cite" type="button" title="References to cite for this analysis">ⓘ Cite</button>
         </div>
         <p class="panel-desc" id="mda-description"></p>
         <div class="mda-fields" id="mda-fields"></div>
@@ -1192,6 +1233,7 @@
           <a class="btn btn-sm hidden" id="mda-download" download>Download file</a>
           <button class="btn btn-sm hidden" id="mda-activate">Analyse the aligned trajectory in MONET</button>
         </div>
+        <div class="analysis-error hidden" id="mda-error" role="alert"></div>
         <canvas class="chart-canvas" id="chart-mda"></canvas>
         <div class="chart-placeholder" id="chart-mda-ph">MDAnalysis results</div>
         <div class="hidden pca-block" id="mda-pca-block">
@@ -1411,6 +1453,26 @@
     </div>
   </div>
 </aside>
+<!-- ===== REFERENCES DIALOG (app-references.js) ===== -->
+<div class="refs-overlay hidden" id="refs-overlay">
+  <div class="refs-dialog" role="dialog" aria-modal="true" aria-labelledby="refs-title">
+    <div class="refs-head">
+      <h2 id="refs-title">References</h2>
+      <div class="refs-actions">
+        <span class="refs-format" role="group" aria-label="Format">
+          <button class="btn btn-sm refs-format-btn" type="button" data-format="chicago" aria-pressed="true">Chicago</button>
+          <button class="btn btn-sm refs-format-btn" type="button" data-format="bibtex" aria-pressed="false">BibTeX</button>
+        </span>
+        <button class="btn btn-sm" id="refs-copy" type="button" title="Copy the references shown">Copy</button>
+        <button class="btn btn-sm" id="refs-bib" type="button" title="Download the references shown as a BibTeX file">Download .bib</button>
+        <button class="btn btn-sm" id="refs-close" type="button" aria-label="Close the references">✕</button>
+      </div>
+    </div>
+    <p class="panel-desc" id="refs-intro"></p>
+    <div class="refs-body" id="refs-body"></div>
+  </div>
+</div>
+
 <script src="xyz.js"></script>
 <script src="viewer.js"></script>
 <script src="units.js"></script>
@@ -1424,8 +1486,18 @@
 <script src="plot.js"></script>
 <script src="provenance.js"></script>
 <script src="console.js"></script>
+<script src="references.js"></script>
 <script src="report.js"></script>
 <script src="replaygen.js"></script>
-<script src="renderer.js"></script>
+<script src="analysis-forms.js"></script>
+<script src="app-core.js"></script>
+<script src="app-workflow.js"></script>
+<script src="app-analysis.js"></script>
+<script src="app-geometry.js"></script>
+<script src="app-mdanalysis.js"></script>
+<script src="app-structure.js"></script>
+<script src="app-history.js"></script>
+<script src="app-references.js"></script>
+<script src="app-start.js"></script>
 </body>
 </html>

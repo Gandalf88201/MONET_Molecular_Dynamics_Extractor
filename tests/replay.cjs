@@ -28,7 +28,7 @@ const bridge = command => {
   const out = execFileSync(python, [path.join(root, 'ase_bridge.py')], { input: JSON.stringify(command), env, maxBuffer: 1 << 28 }).toString()
   return out.trim().split('\n').map(line => JSON.parse(line)).find(message => message.type === 'result' || message.type === 'error')
 }
-// Log the steps the way renderer.js does: call with MONET IDs, params without paths.
+// Log the steps the way the page does: call with MONET IDs, params without paths.
 const mapping = [1, 2, 3, 4].map((monetId, aseIndex) => ({ monetId, aseIndex }))
 const s = P.create({ monet_version: '2.1.0' })
 const S1 = s.addSource({ name: 'torsion-long.xyz', size: text.length, sha256: crypto.createHash('sha256').update(text).digest('hex'), format: 'XYZ', frames: 400, atoms: 4 })

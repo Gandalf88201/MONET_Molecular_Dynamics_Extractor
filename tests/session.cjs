@@ -132,7 +132,7 @@ async function main () {
   // Export: a ZIP with the session, the report and replay.py (methods.docx only with pandoc).
   r = await post('/api/session/export', { session, methods: '# Methods', replay: 'print(1)\n', name: 'MONET-session-water.zip' })
   assert.equal(r.body.ok, true, JSON.stringify(r.body)); checks++
-  const zip = Buffer.from(await (await fetch(`${origin}/api/download/${r.body.download_id}?token=${encodeURIComponent(token)}`)).arrayBuffer())
+  const zip = Buffer.from(await (await fetch(`${origin}/api/download/${r.body.download_id}`)).arrayBuffer())
   const zipPath = path.join(os.tmpdir(), `monet-export-${process.pid}.zip`)
   fs.writeFileSync(zipPath, zip)
   const names = execFileSync(python, ['-c', 'import sys, zipfile; print(" ".join(sorted(zipfile.ZipFile(sys.argv[1]).namelist())))', zipPath]).toString().trim().split(' ')

@@ -20,7 +20,8 @@ jobs:
           version=$(sed -n 's/^version: *//p' CITATION.cff)
           awk -v v="$version" '$0 ~ "^## " v "( |$)" {on=1; next} /^## / && on {exit} on' CHANGELOG.md > notes.md
           test -s notes.md || { echo "CHANGELOG.md has no section for $version"; exit 1; }
-          case "$GITHUB_REF_NAME" in v*) test "${GITHUB_REF_NAME#v}" = "$version" || { echo "Tag and CITATION.cff version ($version) differ"; exit 1; } ;; esac
+          # v2.3.1 and v.2.3.1 both name version 2.3.1.
+          case "$GITHUB_REF_NAME" in v*) tag=${GITHUB_REF_NAME#v}; test "${tag#.}" = "$version" || { echo "Tag $GITHUB_REF_NAME and CITATION.cff version ($version) differ"; exit 1; } ;; esac
           echo "VERSION=$version" >> "$GITHUB_ENV"
       - name: Create the release
         env:

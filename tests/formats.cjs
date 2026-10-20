@@ -124,6 +124,18 @@ assert.match(header[1], /^Lattice="10\.3528000000 0\.0000000000 0\.0000000000 -1
 const triclinic = result.output
 result = bridge({ action: 'read_info', filename: triclinic })
 assert.deepEqual(result.cellpar.map(v => Number(v.toFixed(4))), [10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371]); checks++
+// The imported cell follows the extraction: the extracted trajectory, which the ASE module analyses next, keeps
+// Lattice/pbc, and the viewer frame reports both (the Crystal cell panel shows them as the source cell).
+const extracted = path.join(temp, 'extracted')
+execFileSync(python, ['-c', 'import sys, monet_io; monet_io.extract(monet_io.XYZTrajectory(sys.argv[1], use_cache=False), sys.argv[2], [2], 1)', triclinic, extracted], { cwd: root })
+const extractedXyz = path.join(extracted, '1-FULL_TRAJECTORY_EXTRACTED', 'FULL_TRAJECTORY_EXTRACTED.xyz')
+header = fs.readFileSync(extractedXyz, 'utf8').split('\n')
+assert.match(header[1], /^frame 0 Lattice="10\.3528000000 [^"]+" pbc="T T T"$/); assert.match(header[4], /^frame 1 Lattice="10\.3528000000 /); checks++
+result = bridge({ action: 'read_info', filename: extractedXyz })
+assert.deepEqual(result.cellpar.map(v => Number(v.toFixed(4))), [10.3528, 13.029, 21.211, 96.2968, 97.439, 98.371]); assert.deepEqual(result.pbc, [true, true, true]); checks++
+result = bridge({ action: 'frame', filename: extractedXyz, index: 0 })
+assert.equal(result.lattice[0][0], 10.3528); assert.deepEqual(result.pbc, [true, true, true]); checks++
+assert.equal(bridge({ action: 'frame', filename: cp2kXyz, index: 0 }).pbc, null); checks++
 // Triclinic minimum-image distance agrees with ASE (lattice rows must not be transposed).
 const far = write('far.xyz', '2\n\nC 0.2 0.3 0.4\nO 9.9 12.5 20.5\n')
 result = importFile(far, { cell_file: cif })

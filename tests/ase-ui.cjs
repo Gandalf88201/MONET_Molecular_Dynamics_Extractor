@@ -49,7 +49,13 @@ let frameCount = 2
 const framesCommands = []
 const topologyCommands = []
 let topologyBreak = false
+// The page scripts (app-*.js, index.html order) in one eval, so that the test can reach their shared state.
+const appScript = () => [...fs.readFileSync(path.join(root, 'index.html'), 'utf8').matchAll(/<script src="(app-[^"]+)"><\/script>/g)]
+  .map(match => fs.readFileSync(path.join(root, match[1]), 'utf8')).join('\n')
+// Registered analyses as the Python side lists them (monet_registry.py: MDAnalysis and the example plugins).
+const REGISTRY = JSON.parse(require('node:child_process').execFileSync(process.env.PYTHON || 'python3', [path.join(root, 'ase_bridge.py')], { input: '{"action": "list_analyses"}', encoding: 'utf8' }).trim().split('\n').pop())
 w.monet = {
+  listAnalyses: async () => REGISTRY,
   isBrowser: true, selectFile: async () => nextFile,
   canImport: true,
   importFile: async (name, options) => { importCalls.push([name, options]); return { filePath: 'imported/' + name + '.extxyz', sourceLabel: 'VASP XDATCAR', frames: 2, warning: name.endsWith('.dcd') ? 'No topology was given: every atom is imported as element X.' : undefined } },
@@ -60,7 +66,7 @@ w.monet = {
   // periodic.xyz: an extended XYZ whose first frame carries a lattice, parsed like the real local reader (xyz.js).
   readFrame: async (name, index) => {
     if (!trajectoryTexts[name]) return { atoms }
-    for await (const frame of MonetXYZ.frames(trajectoryTexts[name].split('\n'))) if (frame.index === index) return { atoms: frame.atoms, lattice: frame.lattice }
+    for await (const frame of MonetXYZ.frames(trajectoryTexts[name].split('\n'))) if (frame.index === index) return { atoms: frame.atoms, lattice: frame.lattice, pbc: frame.pbc }
     return { error: 'Frame index is outside the trajectory.' }
   },
   onProgress () {}, onAseProgress: callback => { listeners.add(callback); return () => listeners.delete(callback) },
@@ -108,6 +114,13 @@ w.monet = {
     if (command.action === 'dihedrals') return { ok: true, frame_indices: [0, 1], series: { [command.quads[0].join('-')]: [270, 90] } }
     if (command.action === 'acf') return { ok: true, lags: [0, 10, 20, 30], acf: [1, .6, .3, .1], fit_curve: [1, .5, .25, .12], tau_fit: 43.6, tau_fit_error: 2.2, tau_int: 40, tau_int_error: 5, tau_int_window: 3, tau_int_converged: true, tau_int_method: command.tau_int_method, fit_end: 30, fit_points: 4, decorrelated: false, dt: command.dt * (command.frame_step || 1), frame_step: command.frame_step || 1, n_frames: 4, n_effective: 2, mode: command.mode, statistics: [{ mean: 90, std: 10, sem: 7 }], distribution: { x: [45, 135], density: [0.004, 0.007] }, frame_indices: [0, 1, 2, 3], blocking: { sizes: [1, 2], times: [command.dt, 2 * command.dt], sem: [0.5, 0.7], sem_error: [0.01, 0.05], plateau_index: null, plateau_sem: null, g: null } }
     if (command.action === 'equilibration') { latestCommand = command; return { ok: true, starts: [0, 1, 2], times: [0, command.dt, 2 * command.dt], g: [4, 2, 2], n_effective: [1, 1.5, 0.5], t0: equilT0, t0_time: equilT0 * command.dt, t0_frame: equilT0, group: command.groups.length - 1, per_group_t0: command.groups.map((_, k) => k + 1), n_frames: 4, frame_step: 1, dt: command.dt, g_t0: 2, n_effective_t0: 1.5, n_effective_full: 1 } }
+    if (command.action === 'run_analysis' && command.params.mass_weighted === false) return { ok: false, message: 'Traceback (most recent call last):\n  File "/x/plugins/radius_of_gyration.py", line 3, in radius_of_gyration\n    rg = monet_analysis.missing()\nAttributeError: module \'monet_analysis\' has no attribute \'missing\'\n' }
+    if (command.action === 'run_analysis' && command.analysis === 'custom.displacement_ellipsoids') {
+      const atoms = command.params.indices || [0, 1]
+      return { ok: true, analysis: command.analysis, kind: 'profile', x: atoms, atoms, bars: true, xLabel: 'Atom (MONET ID)', yLabel: 'U_eq (Å²)', series: [{ label: 'U_eq', data: atoms.map((_, k) => 0.01 * (k + 1)) }], n_frames: 3,
+        ellipsoids: atoms.map((atom, k) => ({ atom, u: [0.01 * (k + 1), 0.01 * (k + 1), 0.01 * (k + 1), 0, 0, 0] })), output: 'x-adp.pdb', downloadURL: '/api/download/adp' }
+    }
+    if (command.action === 'run_analysis') return { ok: true, analysis: command.analysis, kind: 'series', x: [0, 1], xLabel: 'Frame', yLabel: 'Radius of gyration (Å)', series: [{ label: 'Rg (mass-weighted, 2 atoms)', data: [1, 1.2] }], n_frames: 2, frame_indices: [0, 1], table: { columns: ['Quantity', 'Mean'], rows: [['Rg', 1.1]] } }
     if (command.action === 'rmsd_matrix') return { ok: true, matrix: [[0, 1], [1, 0]], frame_indices: [0, 10], aligned: true, truncated: false }
     if (command.action === 'msd') return { ok: true, times: [0, 1, 2, 3], series: { selection: [0, 1, 2, 3] }, fits: { selection: { slope: 1, intercept: 0, r2: 1, D_A2_fs: 1 / 6, D_cm2_s: 1 / 60 } }, fit_start: 1, fit_end: 2, periodic: false, frame_indices: [0, 1, 2, 3], dt: command.dt }
     if (command.action === 'vdos') return { ok: true, wavenumber: [0, 500, 1000], intensity: [0, .002, 0], nyquist_cm: 33356, resolution_cm: 8.3, n_frames: 100, dt: command.dt }
@@ -128,7 +141,8 @@ w.monet = {
     if (command.action === 'fluctuations') {
       const st = (mean, std, trend) => ({ mean, std, min: mean - 2 * std, max: mean + 2 * std, range: 4 * std, p5: mean - std, p95: mean + std, slope: trend ? 0.002 : 0, slope_error: 0.0001, r2: 0.5, drift: trend ? 0.1 : 0, block_sem: 0.01, trend, frequency: 0.03, frequency_share: 0.4, rmsf: std })
       const items = command.groups || (command.quantity === 'atoms' ? (command.indices || [0, 1, 2, 3]).map(i => [i]) : [[0, 1], [1, 2]])
-      return { ok: true, quantity: command.quantity, items, statistics: items.map((_, k) => st(1 + k, 0.02 * (k + 1), k === 1)), frame_indices: [0, 1, 2], n_frames: 3, dt: command.dt ? command.dt * command.frame_step : null, periodic: false, auto: !command.groups, series: command.groups?.length === 1 || command.quantity !== 'dihedrals' ? items.map((_, k) => [1 + k, 1.1 + k, 0.9 + k]) : null }
+      const withTensor = (entry, k) => (command.quantity === 'atoms' ? { ...entry, u: [0.01 * (k + 1), 0.004, 0.002, 0.001, 0, 0] } : entry)
+      return { ok: true, quantity: command.quantity, items, statistics: items.map((_, k) => withTensor(st(1 + k, 0.02 * (k + 1), k === 1), k)), frame_indices: [0, 1, 2], n_frames: 3, dt: command.dt ? command.dt * command.frame_step : null, periodic: false, auto: !command.groups, series: command.groups?.length === 1 || command.quantity !== 'dihedrals' ? items.map((_, k) => [1 + k, 1.1 + k, 0.9 + k]) : null }
     }
     if (command.action === 'ase_structure') return { ok: true, frame: command.frame, summary: [['Formula (Hill)', 'C3H'], ['Atoms', 4]], bonds: { columns: ['Pair', 'Bonds'], rows: [['C–C', 2]] }, coordination: { columns: ['Element', 'Atoms'], rows: [['C', 3]] }, molecules: [0, 0, 0, 0], coordination_numbers: [1, 2, 1, 0] }
     if (command.action === 'ase_coordination') return { ok: true, frame_indices: [0, 1], bond_scale: command.bond_scale, series: { 'C (mean of 2)': [1.5, 1.5], C1: [1, 1], C3: [2, 2] } }
@@ -136,12 +150,12 @@ w.monet = {
     return { ok: true, frame_indices: [0, 1], rmsd: [0, .1] }
   }
 }
-for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'report.js', 'replaygen.js', 'renderer.js']) w.eval(fs.readFileSync(path.join(root, file), 'utf8') + (file === 'renderer.js' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness };' : ''))
+for (const file of ['theme.js', 'units.js', 'qm-resolve.js', 'qm-inputs.js', 'qm-panel.js', 'viewer.js', 'ase-model.js', 'fit.js', 'pbc.js', 'plot.js', 'provenance.js', 'console.js', 'references.js', 'report.js', 'replaygen.js', 'analysis-forms.js', 'app']) w.eval((file === 'app' ? appScript() : fs.readFileSync(path.join(root, file), 'utf8')) + (file === 'app' ? '\nwindow.testMonet = { charts, runProcessing, aseViewer, viewer, state, aseState, player, qmReadiness, syncAsePicks };' : ''))
 const el = id => w.document.getElementById(id)
 const $$ = selector => [...w.document.querySelectorAll(selector)]
 const tick = () => new Promise(resolve => setImmediate(resolve))
 async function click (id) { el(id).click(); await tick(); await tick() }
-const chooseMda = name => { el('mda-analysis').value = name; el('mda-analysis').dispatchEvent(new w.Event('change')) }
+const chooseMda = name => { el('mda-analysis').value = `mdanalysis.${name}`; el('mda-analysis').dispatchEvent(new w.Event('change')) }
 async function mdaChecks () {
   // MDAnalysis module: its own tab with the generic analysis form.
   await click('vtab-mda')
@@ -285,6 +299,66 @@ async function mdaChecks () {
   assert.ok(el('ase-sub-mda').classList.contains('active')); checks++
 }
 
+async function registryChecks () {
+  // Plugin analyses of the MONET Custom module: the form comes from the declared parameters.
+  w.document.querySelector('.ase-stab[data-stab="extcustom"]').click(); await tick()
+  assert.ok(el('ase-sub-extcustom').classList.contains('active')); assert.ok(el('vtab-custom').classList.contains('active')); checks++
+  el('extcustom-analysis').value = 'custom.radius_of_gyration'; el('extcustom-analysis').dispatchEvent(new w.Event('change'))
+  assert.ok(el('extcustom-p-indices')); assert.equal(el('extcustom-p-mass_weighted').checked, true); checks++
+  assert.match(el('extcustom-description').textContent, /Plugin: plugins\/radius_of_gyration\.py/); checks++
+  const two = w.testMonet.aseState.analysisAtoms.slice(0, 2)
+  el('extcustom-p-indices').value = two.map(a => a.monetId).join(' ')
+  await click('btn-run-extcustom')
+  assert.equal(latestCommand.action, 'run_analysis'); assert.equal(latestCommand.analysis, 'custom.radius_of_gyration'); checks++
+  // MONET IDs typed in the form reach the analysis as indices of the analysed file.
+  assert.deepEqual([...latestCommand.params.indices], two.map(a => a.aseIndex)); assert.equal(latestCommand.params.mass_weighted, true); assert.ok(latestCommand.atom_ids); checks++
+  assert.match(w.testMonet.charts.extcustom.data.datasets[0].label, /^Rg .* · mean 1\.1/); assert.match(el('extcustom-table').textContent, /Rg/); checks++
+  el('extcustom-p-indices').value = '999'
+  latestCommand = null
+  await click('btn-run-extcustom')
+  assert.equal(latestCommand, null); assert.match(el('status-msg').textContent, /MONET atom 999/); checks++
+  // A plugin failure is shown in the panel: the reason, the plugin file and the folded traceback.
+  el('extcustom-p-indices').value = two.map(a => a.monetId).join(' '); el('extcustom-p-mass_weighted').checked = false
+  await click('btn-run-extcustom')
+  assert.equal(el('extcustom-error').classList.contains('hidden'), false)
+  assert.match(el('extcustom-error').textContent, /Radius of gyration failed: AttributeError: module 'monet_analysis' has no attribute 'missing'/)
+  assert.match(el('extcustom-error').textContent, /plugin plugins\/radius_of_gyration\.py/); assert.ok(el('extcustom-error').querySelector('details pre').textContent.startsWith('Traceback'))
+  assert.equal(el('status-msg').textContent, "Radius of gyration failed: AttributeError: module 'monet_analysis' has no attribute 'missing'"); checks++
+  el('extcustom-p-mass_weighted').checked = true
+  await click('btn-run-extcustom')
+  assert.equal(el('extcustom-error').classList.contains('hidden'), true); checks++
+  assert.equal(el('extcustom-ellipsoid-row').classList.contains('hidden'), true); checks++
+  // Thermal ellipsoids from the plugin are drawn on the structure in the ASE viewer, coloured by U_eq.
+  el('extcustom-analysis').value = 'custom.displacement_ellipsoids'; el('extcustom-analysis').dispatchEvent(new w.Event('change'))
+  el('extcustom-p-indices').value = two.map(a => a.monetId).join(' ')
+  await click('btn-run-extcustom')
+  let adp = w.testMonet.aseViewer.overlay
+  assert.equal(el('extcustom-ellipsoid-row').classList.contains('hidden'), false); assert.equal(adp.ellipsoids.length, 2); checks++
+  assert.equal(adp.ellipsoids[1].id, two[1].monetId); assert.equal(adp.ellipsoids[1].u[0], 0.02); assert.match(adp.ellipsoids[0].color, /^rgb\(13,8,135\)$/); checks++
+  assert.ok(Math.abs(adp.ellipsoidScale - 1.5382) < 1e-9); assert.match(adp.legend.title, /U_eq .* thermal ellipsoids 50 %/); assert.equal(adp.atomColors.get(two[0].monetId), adp.ellipsoids[0].color); checks++
+  el('extcustom-ellipsoid-prob').value = '99'; el('extcustom-ellipsoid-scale').value = '3'; el('extcustom-ellipsoid-colormap').value = 'none'
+  el('extcustom-ellipsoid-colormap').dispatchEvent(new w.Event('change'))
+  adp = w.testMonet.aseViewer.overlay
+  assert.ok(Math.abs(adp.ellipsoidScale - 3.3682 * 3) < 1e-9); assert.equal(adp.ellipsoids[0].color, null); assert.equal(adp.legend, undefined); assert.match(adp.caption, /^Thermal ellipsoids 99 % ×3/); checks++
+  w.testMonet.aseViewer.render()
+  // Other tabs take the structure; coming back shows the ellipsoids again. Unticked or cleared: none.
+  w.document.querySelector('.ase-stab[data-stab="rdf"]').click(); await tick()
+  assert.equal(w.testMonet.aseViewer.overlay, null)
+  w.document.querySelector('.ase-stab[data-stab="extcustom"]').click(); await tick()
+  assert.equal(w.testMonet.aseViewer.overlay.ellipsoids.length, 2); checks++
+  el('extcustom-ellipsoids').checked = false; el('extcustom-ellipsoids').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.aseViewer.overlay, null); checks++
+  el('extcustom-ellipsoids').checked = true; el('extcustom-ellipsoids').dispatchEvent(new w.Event('change'))
+  el('extcustom-ellipsoid-prob').value = '50'; el('extcustom-ellipsoid-scale').value = '1'; el('extcustom-ellipsoid-colormap').value = 'plasma'
+  await click('clear-extcustom')
+  assert.equal(w.testMonet.charts.extcustom.data, null); assert.equal(el('extcustom-table').textContent, ''); checks++
+  assert.equal(w.testMonet.aseViewer.overlay, null); assert.equal(el('extcustom-ellipsoid-row').classList.contains('hidden'), true); checks++
+  // The ASE module lists its own plugins; a choice parameter becomes a menu.
+  el('extase-analysis').value = 'ase.cell_volume'; el('extase-analysis').dispatchEvent(new w.Event('change'))
+  assert.deepEqual([...el('extase-p-quantity').options].map(o => o.value), ['volume', 'density', 'lengths']); checks++
+  assert.ok([...el('extase-analysis').querySelectorAll('optgroup')].some(group => group.label === 'Cell')); checks++
+}
+
 async function fluctChecks () {
   // Custom module: fluctuations and trends mapped on the molecule.
   w.document.querySelector('.ase-stab[data-stab="fluct"]').click(); await tick()
@@ -300,6 +374,10 @@ async function fluctChecks () {
   const overlay = w.testMonet.aseViewer.overlay
   assert.equal(overlay.segments.length, 2); assert.equal(overlay.dimAtoms, true); assert.equal(overlay.legend.min, 0.02); assert.equal(overlay.legend.max, 0.04); checks++
   assert.deepEqual([...overlay.segments[0].ids], [0, 1].map(i => atomsNow.find(a => a.aseIndex === i).monetId)); assert.match(overlay.segments[0].color, /^rgb\(13,8,135\)$/); checks++
+  // Vibration arrows along each bond on both atoms (equal masses: half the SD each), largest drawn as 1 Å.
+  assert.equal(JSON.stringify(overlay.arrows.map(a => [a.kind, a.amplitude])), '[["bond",0.01],["bond",0.01],["bond",0.02],["bond",0.02]]'); checks++
+  assert.equal(overlay.arrows[0].other, overlay.segments[0].ids[1]); assert.equal(overlay.arrowScale, 50); assert.match(overlay.legend.title, /arrows ± amplitude ×50/); checks++
+  w.testMonet.aseViewer.render()
   const rows = () => [...el('fluct-table').querySelectorAll('tbody tr')]
   assert.equal(rows().length, 2); assert.equal(rows()[1].lastElementChild.textContent, 'yes'); assert.match(el('fluct-summary').textContent, /1 with a significant trend/); checks++
   // Sorting by SD (descending first) and selecting a row.
@@ -317,7 +395,12 @@ async function fluctChecks () {
   w.document.querySelector('.ase-stab[data-stab="fluct"]').click(); await tick()
   assert.equal(w.testMonet.aseViewer.overlay.segments.length, 2); checks++
   el('fluct-map').checked = false; el('fluct-map').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.aseViewer.overlay.segments.length, 0); assert.ok(w.testMonet.aseViewer.overlay.arrows.every(a => a.color === null)); assert.match(w.testMonet.aseViewer.overlay.caption, /^Vibration arrows/); checks++
+  el('fluct-arrow-scale').value = '10'; el('fluct-arrow-scale').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.aseViewer.overlay.arrowScale, 10); checks++
+  el('fluct-arrows').checked = false; el('fluct-arrows').dispatchEvent(new w.Event('change'))
   assert.equal(w.testMonet.aseViewer.overlay, null); checks++
+  el('fluct-arrows').checked = true; el('fluct-arrow-scale').value = 'auto'
   // Atoms: RMSF coloured per atom; explicit groups; time axis converts units.
   el('fluct-metric').value = 'frequency'; el('fluct-map').checked = true
   el('fluct-quantity').value = 'atoms'; el('fluct-quantity').dispatchEvent(new w.Event('change'))
@@ -326,6 +409,27 @@ async function fluctChecks () {
   await click('btn-run-fluct')
   assert.deepEqual([...latestCommand.indices], [atomsNow[0].aseIndex]); assert.equal(latestCommand.align, true); assert.ok(latestCommand.dt > 0); checks++
   assert.equal(w.testMonet.aseViewer.overlay.atomColors.size, 1); assert.match(el('fluct-table').querySelector('thead').textContent, /RMSF.*Dominant ν \(cm⁻¹\)/); checks++
+  // Anisotropic displacement ellipsoids on the atoms, drawn by the viewer, independent of the colour map.
+  assert.equal(el('fluct-ellipsoid-row').classList.contains('hidden'), false)
+  let ellipsoids = w.testMonet.aseViewer.overlay.ellipsoids
+  assert.equal(ellipsoids.length, 1); assert.equal(ellipsoids[0].id, atomsNow[0].monetId); assert.deepEqual([...ellipsoids[0].u], [0.01, 0.004, 0.002, 0.001, 0, 0]); assert.match(ellipsoids[0].color, /^rgb\(/); checks++
+  near(w.testMonet.aseViewer.overlay.ellipsoidScale, 1.5382, 1e-9); assert.match(w.testMonet.aseViewer.overlay.legend.title, /ellipsoids 50 %/); checks++
+  el('fluct-ellipsoid-prob').value = '90'; el('fluct-ellipsoid-scale').value = '4'; el('fluct-ellipsoid-scale').dispatchEvent(new w.Event('change'))
+  near(w.testMonet.aseViewer.overlay.ellipsoidScale, 2.5003 * 4, 1e-9); assert.match(w.testMonet.aseViewer.overlay.legend.title, /90 % ×4/); checks++
+  w.testMonet.aseViewer.render()
+  el('fluct-map').checked = false; el('fluct-map').dispatchEvent(new w.Event('change'))
+  ellipsoids = w.testMonet.aseViewer.overlay.ellipsoids
+  assert.equal(ellipsoids[0].color, null); assert.equal(w.testMonet.aseViewer.overlay.atomColors.size, 0); assert.equal(w.testMonet.aseViewer.overlay.legend, undefined); assert.match(w.testMonet.aseViewer.overlay.caption, /Displacement ellipsoids 90 %/); checks++
+  w.testMonet.aseViewer.render()
+  el('fluct-ellipsoids').checked = false; el('fluct-ellipsoids').dispatchEvent(new w.Event('change'))
+  // Atoms: one arrow of ± RMSF along the main axis of the displacement tensor.
+  const atomArrow = w.testMonet.aseViewer.overlay.arrows[0]
+  assert.equal(w.testMonet.aseViewer.overlay.ellipsoids, undefined); assert.equal(atomArrow.kind, 'axis'); assert.equal(atomArrow.amplitude, 0.02); assert.ok(Math.abs(Math.abs(atomArrow.vector[0]) - 0.987) < 1e-3); checks++
+  el('fluct-arrows').checked = false; el('fluct-arrows').dispatchEvent(new w.Event('change'))
+  assert.equal(w.testMonet.aseViewer.overlay, null); checks++
+  el('fluct-arrows').checked = true
+  el('fluct-map').checked = true; el('fluct-ellipsoids').checked = true; el('fluct-ellipsoid-prob').value = '50'; el('fluct-ellipsoid-scale').value = '1'
+  el('fluct-map').dispatchEvent(new w.Event('change'))
   near(w.testMonet.charts.fluct.data.datasets[0].data[0], 0.03 * 1e15 / 2.99792458e10, 1e-6); checks++
   el('fluct-quantity').value = 'dihedrals'; el('fluct-quantity').dispatchEvent(new w.Event('change'))
   el('fluct-scope').value = 'groups'; el('fluct-scope').dispatchEvent(new w.Event('change'))
@@ -342,11 +446,73 @@ async function fluctChecks () {
   assert.equal(latestCommand.groups.length, 1); assert.equal(el('fluct-summary').textContent.includes('loaded when a row is clicked'), false); checks++
   await click('clear-fluct')
   assert.equal(w.testMonet.aseViewer.overlay, null); assert.equal(el('fluct-table').childElementCount, 0); assert.equal(el('fluct-table-csv').disabled, true); checks++
+  // Bonds picked as a centre and its neighbours: one group per bond, none between the neighbours.
+  el('fluct-quantity').value = 'bonds'; el('fluct-quantity').dispatchEvent(new w.Event('change'))
+  const idOf = index => atomsNow.find(a => a.aseIndex === index).monetId
+  w.testMonet.syncAsePicks([idOf(2), idOf(3), idOf(1)])
+  await click('ase-use-selection')
+  assert.equal(el('fluct-groups').value, `${idOf(2)} ${idOf(3)}  ${idOf(2)} ${idOf(1)}`); checks++
+  // An empty groups field takes the selection, grouped the same way.
+  el('fluct-groups').value = ''
+  await click('btn-run-fluct')
+  assert.equal(JSON.stringify(latestCommand.groups), '[[2,3],[2,1]]'); assert.equal(el('fluct-groups').value, `${idOf(2)} ${idOf(3)}  ${idOf(2)} ${idOf(1)}`); checks++
+  // Groups that cannot be read are reported next to the plot.
+  el('fluct-groups').value = '1 2 3'
+  await click('btn-run-fluct')
+  assert.equal(el('fluct-summary').classList.contains('hidden'), false); assert.match(el('fluct-summary').textContent, /groups of 2/); checks++
+  w.testMonet.syncAsePicks([])
   el('fluct-scope').value = 'auto'; el('fluct-scope').dispatchEvent(new w.Event('change'))
 }
 const near = (a, b, tol) => assert.ok(Math.abs(a - b) <= tol, `${a} vs ${b}`)
 
 // Step 4 › Cell section of the plane-wave cards: structure cell detection, per-card custom cells, native units.
+// References dialog (app-references.js): "ⓘ References" lists MONET, ASE and MDAnalysis with the analyses that
+// add method references; "ⓘ Cite" shows one analysis; Chicago or BibTeX, copied as shown.
+async function referencesChecks () {
+  let copied = null
+  Object.defineProperty(w.navigator, 'clipboard', { configurable: true, value: { writeText: async text => { copied = text } } })
+  const body = () => el('refs-body')
+  const open = () => !el('refs-overlay').classList.contains('hidden')
+  w.localStorage.removeItem('monet-refs-format')
+  await click('refs-toggle')
+  assert.ok(open()); assert.equal(el('refs-title').textContent, 'References'); assert.equal(el('refs-toggle').getAttribute('aria-pressed'), 'true'); checks++
+  assert.deepEqual([...body().querySelectorAll('h3')].map(h => h.textContent), ['MONET', 'ASE', 'MDAnalysis']); checks++
+  const rows = [...body().querySelectorAll('.refs-table tr')].map(tr => [...tr.cells].map(c => c.textContent))
+  assert.ok(rows.some(([label, cite]) => label === 'Secondary structure (dssp.DSSP)' && cite === 'Kabsch and Sander 1983'), rows.map(r => r.join(' | ')).join('\n'))
+  assert.ok(rows.some(([label, cite]) => label.startsWith('Hydrogen-bond autocorrelation') && cite === 'Gowers and Carbone 2015'))
+  assert.ok(rows.some(([label, cite]) => label.startsWith('RMSD after optimal superposition') && cite === 'Theobald 2005; Liu, Agrafiotis, and Theobald 2010')); checks++
+  assert.ok([...body().querySelectorAll('.refs-entry')].some(li => li.textContent.startsWith('Michaud-Agrawal, Naveen') && li.querySelector('i').textContent === 'Journal of Computational Chemistry')); checks++
+  await click('refs-copy')
+  // The MONET reference names the release in CITATION.cff.
+  const citedVersion = fs.readFileSync(path.join(root, 'CITATION.cff'), 'utf8').match(/^version: *(\S+)/m)[1].replace(/\./g, '\\.')
+  assert.match(copied, new RegExp(`^MONET\n\nFrancese, Tommaso\\. 2026\\. MONET: Molecular Dynamics Extractor\\. Version ${citedVersion}\\.`)); assert.match(copied, /Secondary structure \(dssp\.DSSP\): Kabsch and Sander 1983/); checks++
+  body().parentElement.querySelector('[data-format="bibtex"]').click(); await tick()
+  assert.equal(w.localStorage.getItem('monet-refs-format'), 'bibtex')
+  assert.ok(body().querySelector('.refs-bib').textContent.startsWith('@misc{monet,'))
+  assert.ok([...body().querySelectorAll('.refs-table td')].some(td => td.textContent === '\\cite{kabsch1983}')); checks++
+  w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }))
+  assert.ok(!open()); assert.equal(el('refs-toggle').getAttribute('aria-pressed'), 'false'); checks++
+  // One analysis: its library (always) and its method references; the description no longer repeats them.
+  chooseMda('dssp')
+  assert.doesNotMatch(el('mda-description').textContent, /Cite:/)
+  await click('mda-cite')
+  assert.ok(open()); assert.equal(el('refs-title').textContent, 'References: Secondary structure (dssp.DSSP)'); checks++
+  await click('refs-copy')
+  assert.match(copied, /^@article\{michaud2011,[\s\S]*@inproceedings\{gowers2016,[\s\S]*@article\{kabsch1983,[\s\S]*\\cite\{michaud2011,gowers2016,kabsch1983\}$/); checks++
+  el('refs-body').parentElement.querySelector('[data-format="chicago"]').click(); await tick()
+  assert.deepEqual([...body().querySelectorAll('h3')].map(h => h.textContent), ['MDAnalysis (always)', 'This analysis'])
+  assert.match(body().querySelectorAll('.refs-list')[1].textContent, /^Kabsch, Wolfgang, and Christian Sander\. 1983\./); checks++
+  await click('refs-close')
+  assert.ok(!open())
+  // An ASE analysis of "More analyses": ASE, then the X-ray form factors.
+  el('extase-analysis').value = 'ase.xrd'; el('extase-analysis').dispatchEvent(new w.Event('change'))
+  await click('extase-cite')
+  assert.equal(el('refs-title').textContent, 'References: Powder X-ray diffraction pattern (utils.xrdebye)')
+  assert.match(body().textContent, /Hjorth Larsen, Ask[\s\S]*Waasmaier, D\., and A\. Kirfel\. 1995/); checks++
+  el('refs-overlay').click(); await tick()
+  assert.ok(!open()); checks++
+}
+
 async function qmCellChecks () {
   const setCodes = wanted => {
     for (const box of $$('[data-qm-code]')) if (box.checked !== wanted.includes(box.dataset.qmCode)) box.click()
@@ -359,6 +525,11 @@ async function qmCellChecks () {
   frameCount = 2; activeAtoms = atoms; nextFile = 'periodic.xyz'
   await click('btn-browse'); await click('next-1'); await tick()
   assert.equal(w.testMonet.player.cells.get(0), undefined, 'the mock launcher gives no lattice'); checks++
+  // The Crystal cell panel shows the trajectory's own cell (also the one the importer writes from a CIF), not "No manual cell".
+  const panelCell = () => ['a', 'b', 'c', 'alpha', 'beta', 'gamma'].map(k => el(`cell-${k}`).value)
+  assert.deepEqual(panelCell(), ['10', '11', '12', '90', '90', '90']); assert.equal(el('cell-system').value, 'triclinic'); checks++
+  assert.match(el('cell-status').textContent, /^Using source cell \(trajectory lattice, frame 0\): 10, 11, 12, 90, 90, 90 \(Å, °\)\. PBC: abc\./); checks++
+  assert.equal(w.testMonet.aseState.cellParameters, null, 'the source cell is shown, not applied'); assert.deepEqual(JSON.parse(JSON.stringify(w.testMonet.aseViewer.cell)), [[10, 0, 0], [0, 11, 0], [0, 0, 12]]); checks++
   el('inp-atom-ids').value = '1 2 3 4'; await click('btn-apply-ids')
   w.testMonet.state.outputDir = 'out'
   setCodes(['qe'])
@@ -378,6 +549,8 @@ async function qmCellChecks () {
   assert.match(el('qm-qe-cell').textContent, /Cell from crystal\.cif/); checks++
   await click('cell-reset')
   assert.equal(sourceLabel('qe'), 'Lattice from the trajectory'); assert.equal(el('qm-qe-cell-a').value, '10'); checks++
+  // Use source cell: the panel shows the trajectory cell again.
+  assert.deepEqual(panelCell(), ['10', '11', '12', '90', '90', '90']); assert.match(el('cell-status').textContent, /^Using source cell/); checks++
   // Editing a field makes the cell custom for this code only.
   set('qm-qe-cell-a', '9')
   assert.equal(el('qm-qe-cellSource').value, 'custom'); assert.equal(sourceLabel('qe'), 'Custom cell for this code'); checks++
@@ -457,11 +630,34 @@ async function run () {
   // Analysis comes before extraction: loading opens the ASE module with the workflow folded away.
   assert.ok(el('panel-analysis').classList.contains('active')); assert.ok(el('nav-analysis').classList.contains('active')); checks++
   assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(w.document.querySelector('.layout').classList.contains('sidebar-collapsed')); checks++
-  // Module order: ASE, MDAnalysis, custom analyses, then MONET processing.
-  assert.deepEqual($$('.vtab').map(b => b.dataset.vtab), ['ase', 'mda', 'custom', 'view3d']); checks++
+  // Module order: ASE, MDAnalysis, then MONET Custom Functionalities (3D view, extraction and custom analyses).
+  assert.deepEqual($$('.vtab').map(b => b.dataset.vtab), ['ase', 'mda', 'custom']); checks++
+  assert.equal(el('vtab-custom').textContent.trim(), 'MONET Custom Functionalities'); checks++
   assert.ok(el('vtab-ase').classList.contains('active')); assert.ok(el('ase-sub-structure').classList.contains('active')); checks++
-  assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['structure', 'bonds', 'angles', 'dihedrals', 'pdd', 'coordination', 'convert']); checks++
+  // Tabs are announced as tabs, with the selected one marked.
+  assert.equal(el('vtab-ase').getAttribute('role'), 'tab'); assert.equal(el('vtab-ase').getAttribute('aria-selected'), 'true'); assert.equal(el('vtab-custom').getAttribute('aria-selected'), 'false'); checks++
+  assert.equal(w.document.querySelector('.ase-stab[data-stab="structure"]').getAttribute('aria-selected'), 'true'); assert.equal(w.document.querySelector('.ase-stab[data-stab="bonds"]').getAttribute('aria-selected'), 'false'); checks++
+  assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['structure', 'bonds', 'angles', 'dihedrals', 'pdd', 'coordination', 'convert', 'extase']); checks++
   assert.match(el('module-intro').textContent, /ASE modules/); checks++
+  // The MONET tab opens on the 3D view, whose sub-tab row also leads to the custom analyses.
+  await click('vtab-custom')
+  assert.ok(el('vtab-custom').classList.contains('active')); assert.ok(el('vtab-content-view3d').classList.contains('active')); checks++
+  assert.equal(w.document.querySelector('.layout').classList.contains('sidebar-collapsed'), false); checks++
+  const monetLinks = [...el('monet-subtabbar').children]
+  assert.deepEqual(monetLinks.map(b => b.textContent), ['3D viewer & extraction', 'Autocorrelation', 'Fluctuations & trends', 'RMSD (Kabsch)', 'RMSD Matrix', 'RDF', 'MSD / Diffusion', 'VDOS', 'More analyses']); checks++
+  assert.equal(monetLinks.at(-1).hidden, false); checks++
+  assert.ok(monetLinks[0].classList.contains('active')); checks++
+  monetLinks[3].click(); await tick(); await tick()
+  assert.ok(el('vtab-custom').classList.contains('active')); assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(el('ase-sub-rmsd').classList.contains('active')); checks++
+  assert.deepEqual($$('.ase-stab:not(.group-hidden)').map(b => b.dataset.stab), ['view3d', 'acf', 'fluct', 'rmsd', 'rmsdmatrix', 'rdf', 'msd', 'vdos', 'extcustom']); checks++
+  assert.match(el('module-intro').textContent, /MONET custom functionalities/); checks++
+  // Switching module and back keeps the last MONET page; the "3D viewer" sub-tab returns to the view.
+  await click('vtab-ase'); await click('vtab-custom')
+  assert.ok(el('ase-sub-rmsd').classList.contains('active')); assert.ok(el('vtab-content-ase').classList.contains('active')); checks++
+  w.document.querySelector('.ase-stab[data-stab="view3d"]').click(); await tick()
+  assert.ok(el('vtab-content-view3d').classList.contains('active')); assert.ok(el('vtab-custom').classList.contains('active')); checks++
+  await click('vtab-ase')
+  assert.ok(el('vtab-content-ase').classList.contains('active')); assert.ok(el('ase-sub-structure').classList.contains('active')); checks++
   // Atom identity is checked automatically in MONET, ASE and MDAnalysis.
   assert.equal(topologyCommands.length, 1); assert.deepEqual([...topologyCommands[0].atom_ids], [1, 2, 3, 4]); checks++
   assert.ok(el('topology-status').classList.contains('topology-ok')); assert.match(el('topology-status').textContent, /4 atoms: MONET IDs, ASE indices and MDAnalysis ids/); checks++
@@ -597,6 +793,32 @@ async function run () {
   assert.equal(el('cell-b').value, '8'); assert.equal(el('cell-gamma').value, '120'); assert.equal(el('cell-b').disabled, true); checks++
   await click('cell-apply')
   assert.equal(w.testMonet.aseViewer.cell.length, 3); checks++
+  // The 3D view of MONET Custom Functionalities draws the same cell.
+  assert.deepEqual(w.testMonet.viewer.cell, w.testMonet.aseViewer.cell); checks++
+  // Viewer tools: the cell buttons appear with a cell; the cell box and the axes can be switched off.
+  {
+    const tool = (id, text) => [...el(id).querySelectorAll('.viewer-tool')].find(b => b.textContent.includes(text))
+    const aseView = w.testMonet.aseViewer
+    assert.equal(tool('ase-viewer-tools', 'cell').classList.contains('hidden'), false); assert.equal(tool('ase-viewer-tools', 'cell').getAttribute('aria-pressed'), 'true'); checks++
+    assert.equal(el('ase-viewer-tools').querySelector('[data-axis="a"]').classList.contains('hidden'), false); checks++
+    tool('ase-viewer-tools', 'cell').click()
+    assert.equal(aseView.showCell, false); assert.equal(w.testMonet.viewer.showCell, true, 'per viewer'); assert.equal(w.localStorage.getItem('monet-ase-show-cell'), 'off'); checks++
+    tool('ase-viewer-tools', 'cell').click(); assert.equal(aseView.showCell, true); checks++
+    tool('ase-viewer-tools', 'axes').click(); assert.equal(aseView.showAxes, false); tool('ase-viewer-tools', 'axes').click(); assert.equal(aseView.showAxes, true); checks++
+    // View down c: the cell vector c points at the viewer (the rotation is restored for the picks below).
+    const rotation = [aseView.rotX, aseView.rotY]
+    el('ase-viewer-tools').querySelector('[data-axis="c"]').click()
+    assert.match(el('status-msg').textContent, /View down the c axis \(c towards you\)/); checks++
+    ;[aseView.rotX, aseView.rotY] = rotation
+    // Expand and restore with Esc.
+    tool('ase-viewer-tools', '⛶').click()
+    assert.equal(el('ase-viewer-frame').classList.contains('viewer-expanded'), true); assert.equal(w.document.body.classList.contains('viewer-is-expanded'), true); checks++
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape' }))
+    assert.equal(el('ase-viewer-frame').classList.contains('viewer-expanded'), false); assert.equal(w.document.body.classList.contains('viewer-is-expanded'), false); checks++
+    tool('viewer-tools', '⛶').click(); tool('ase-viewer-tools', '⛶').click()
+    assert.equal(el('viewer-stage').classList.contains('viewer-expanded'), false, 'one expanded viewer at a time'); assert.equal(el('ase-viewer-frame').classList.contains('viewer-expanded'), true); checks++
+    tool('ase-viewer-tools', '⛶').click()
+  }
   // Centre selection: the centred atoms are fixed when ticked; later picks must not move the structure.
   if (!el('ase-center').disabled) {
     const coordsOf = () => JSON.stringify(w.testMonet.aseViewer.atoms.map(atom => [atom.x, atom.y, atom.z]))
@@ -643,7 +865,8 @@ async function run () {
   assert.equal(latestCommand.angle_range, 'fold180'); checks++
   el('angles-range').value = '360'; el('angles-range').dispatchEvent(new w.Event('change'))
   assert.equal(el('angles-normal-row').classList.contains('hidden'), false); checks++
-  await click('cell-reset'); assert.equal(w.testMonet.aseViewer.cell, null); checks++
+  await click('cell-reset'); assert.equal(w.testMonet.aseViewer.cell, null); assert.equal(w.testMonet.viewer.cell, null); checks++
+  assert.equal(el('ase-viewer-tools').querySelector('[data-axis="a"]').classList.contains('hidden'), true, 'no cell, no a b c buttons'); checks++
   await click('ase-clear-selection')
   // Extraction ordering comes from the original file, not the order entered by the user.
   el('inp-atom-ids').value = '4 1 3'; await click('btn-apply-ids')
@@ -840,7 +1063,7 @@ async function run () {
   await click('restore-full-trajectory'); await tick()
   assert.equal(w.testMonet.state.filePath, fullPath); assert.equal(el('md-stride').value, '5'); assert.equal(el('inp-freq').value, '13'); assert.equal(el('restore-full-trajectory').classList.contains('hidden'), true); checks++
   // Cropping an already-derived trajectory (equilibration crop of the uncorrelated trajectory) must keep the
-  // derived md-stride, not fall back to the full trajectory's (renderer.js activateTrajectory regression).
+  // derived md-stride, not fall back to the full trajectory's (activateTrajectory regression).
   el('acf-plateau-eps').dispatchEvent(new w.Event('change'))
   assert.equal(el('acf-accept').disabled, false); checks++
   await click('acf-accept'); await tick(); await tick()
@@ -949,6 +1172,7 @@ async function run () {
   pick(1); pick(3)
   await click('ase-continue')
   assert.ok(el('panel-2').classList.contains('active')); assert.ok(el('vtab-content-view3d').classList.contains('active')); checks++
+  assert.ok(el('vtab-custom').classList.contains('active')); checks++
   assert.equal(w.document.querySelector('.layout').classList.contains('sidebar-collapsed'), false); checks++
   await click('next-2')
   assert.equal(el('use-ase-selection').disabled, false); checks++
@@ -1026,7 +1250,7 @@ async function run () {
   el('dihedrals-range').value = '360'; el('dihedrals-range').dispatchEvent(new w.Event('change'))
   el('dihedrals-quads').value = '1 2 3 4'; await click('btn-run-dihedrals')
   assert.match(w.testMonet.charts.dihedrals.data.datasets[0].label, /\(circular\)$/); checks++
-  // Polar and dot-histogram views: stacked dots, custom radial values, reference angles.
+  // Polar and dot-histogram views: stacked dots, frame index as radius, reference angles.
   const setView = (kind, value) => { el(`${kind}-view`).value = value; el(`${kind}-view`).dispatchEvent(new w.Event('change')) }
   const input = (id, value) => { el(id).value = value; el(id).dispatchEvent(new w.Event(el(id).tagName === 'SELECT' ? 'change' : 'input')) }
   setView('dihedrals', 'polar')
@@ -1035,16 +1259,13 @@ async function run () {
   assert.ok(Number.isFinite(polar.series[0].mean)); assert.equal(el('dihedrals-dist-options').classList.contains('hidden'), false); checks++
   input('dihedrals-ref', '84.3'); input('dihedrals-ref-label', 'θExp')
   assert.deepEqual(JSON.parse(JSON.stringify(w.testMonet.charts.dihedrals.data.references)), [{ value: 84.3, short: 'θExp', label: 'θExp = 84.3' }]); checks++
-  input('dihedrals-radial', 'custom')
-  assert.equal(el('dihedrals-custom-row').classList.contains('hidden'), false); checks++
-  const frames = [...w.testMonet.charts.dihedrals.data.frames]
-  input('dihedrals-custom', `${frames[0]} 0.15\n# comment\n${frames[frames.length - 1]} 0.30\n999999 1`)
-  polar = w.testMonet.charts.dihedrals.data
-  assert.equal(polar.radial.label, 'ΔEST (eV)'); assert.equal(polar.radial.values[0][0], 0.15); assert.equal(polar.radial.values[0][frames.length - 1], 0.3); checks++
-  assert.match(polar.notes.join(' '), /1 radial value\(s\) refer to frames that were not computed/); checks++
-  assert.match(w.testMonet.charts.dihedrals.toCSV(), /^frame,.*ΔEST \(eV\)/m); assert.deepEqual([...w.testMonet.charts.dihedrals.exportSize()], [1200, 1150]); checks++
+  // The radius is the counts or the frame index only (no pasted values such as ΔEST).
+  assert.deepEqual([...el('dihedrals-radial').options].map(o => o.value), ['dots', 'frame']); assert.equal(el('dihedrals-custom-row'), null); assert.equal(el('angles-custom-row'), null); checks++
   input('dihedrals-radial', 'frame')
-  assert.equal(w.testMonet.charts.dihedrals.data.radial.label, 'Frame'); assert.equal(el('dihedrals-custom-row').classList.contains('hidden'), true); checks++
+  polar = w.testMonet.charts.dihedrals.data
+  const frames = [...polar.frames]
+  assert.equal(polar.radial.label, 'Frame'); assert.equal(polar.radial.values[0][frames.length - 1], Number(frames[frames.length - 1])); checks++
+  assert.match(w.testMonet.charts.dihedrals.toCSV(), /^frame,.*Frame · /m); assert.deepEqual([...w.testMonet.charts.dihedrals.exportSize()], [1200, 1150]); checks++
   setView('dihedrals', 'series')
   assert.equal(el('dihedrals-dist-options').classList.contains('hidden'), true); checks++
   setView('bonds', 'dots')
@@ -1057,6 +1278,7 @@ async function run () {
   assert.equal(latestCommand.action, 'mda_select'); assert.equal(el('ase-picked-count').textContent, '2'); assert.match(el('mda-pick-status').textContent, /2 atoms in 1 residues/); checks++
   await mdaChecks()
   await fluctChecks()
+  await registryChecks()
   // Day/night toggle persists the choice and redraws canvases without errors.
   const theme = w.document.documentElement.dataset.theme
   let redraws = 0
@@ -1131,6 +1353,7 @@ async function run () {
   assert.equal(el('file-display').classList.contains('hidden'), true); assert.equal(el('next-1').disabled, true); checks++
   assert.equal(w.testMonet.state.source.original, null); assert.equal(el('stat-atoms').textContent, '—'); assert.ok(el('panel-1').classList.contains('active')); checks++
   await qmCellChecks()
+  await referencesChecks()
   console.log(`PASS: ${checks} DOM/plot checks (stable atom IDs, dihedrals, clear controls, PNG export, theme).`)
 }
 run().catch(error => { console.error(error); process.exitCode = 1 }).finally(() => w.close())
