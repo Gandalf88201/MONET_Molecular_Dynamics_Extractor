@@ -416,7 +416,7 @@ The desktop app streams the extraction in a single pass with back-pressure, so m
 | CPMD `TRAJECTORY` | `step x y z vx vy vz` in bohr; restart markers skipped; needs a reference structure |
 | LAMMPS text dump, ASE `.traj`, CIF, Gaussian output | via ASE |
 | **Any other ASE-readable format** | listed under *All ASE-readable formats* (loaded from the installed ASE) |
-| GROMACS **XTC**, **TRR** | via MDAnalysis; add the topology (GRO, PDB, TPR …) as reference structure |
+| GROMACS **XTC**, **TRR** | via MDAnalysis; add the topology (GRO, PDB, TPR …) as reference structure. For a solvated system fill *Keep only these atoms* (e.g. `not resname SOL NA CL`): only those atoms are imported, so a protein–ligand run of 87,000 atoms becomes a 3,000-atom file. The frame spacing stored in the XTC/TRR fills the time axis. |
 | CHARMM/NAMD DCD, AMBER NetCDF | via MDAnalysis with a topology (PSF, PDB, PRMTOP …); CP2K DCD files are recognised and read with ASE |
 | XTC/TRR/DCD/NetCDF **without topology** | Imported with every atom as element **X**. Coordinates and cell are kept, so distances, angles, dihedrals, RMSD, MSD and unwrapping work. Masses, element-based RDF, selections by name and bonds in the viewer are not available; a warning says so after loading. |
 | GROMACS GRO, multi-model PDB, LAMMPS dump, other MDAnalysis formats | via MDAnalysis |

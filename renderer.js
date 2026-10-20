@@ -19,7 +19,7 @@ const state = {
   firstFrame:    null,   // [{ index, element, x, y, z }]
   selectedAtoms: new Set(),
   outputDir:     null,
-  source: { original: null, format: 'auto', reference: null, cellFile: null, label: null },
+  source: { original: null, format: 'auto', reference: null, cellFile: null, label: null, selection: null },
   opts: {
     computeAverage:   true,
     generateGaussian: true
@@ -274,6 +274,7 @@ function updateFormatUI () {
   const format = $('inp-format').value
   state.source.format = format
   $('aux-reference').classList.toggle('hidden', !REFERENCE_FORMATS.has(format) && !state.source.reference)
+  $('aux-selection').classList.toggle('hidden', !format.startsWith('mda-') && !(format === 'auto' && state.source.reference))
   $('aux-cell').classList.toggle('hidden', !CELL_FORMATS.has(format) && !state.source.cellFile)
   $('btn-reference-clear').disabled = !state.source.reference
   $('btn-cell-file-clear').disabled = !state.source.cellFile
@@ -376,14 +377,23 @@ $('next-1').addEventListener('click', async () => {
     if (needsImport()) {
       if (!window.monet.importFile) throw new Error('Importing this format needs the launcher (python3 start_monet.py) or the desktop app.')
       setStatus('Importing trajectory with ASE …')
+      const selection = $('aux-selection').classList.contains('hidden') ? '' : $('inp-import-selection').value.trim()
       const imported = await window.monet.importFile(state.source.original, {
         format: state.source.format, reference: state.source.reference, cellFile: state.source.cellFile,
-        cellVectors: $('inp-cell-vectors').value
+        cellVectors: $('inp-cell-vectors').value, selection: selection || undefined
       })
       if (imported.error) throw new Error(imported.error)
       state.filePath = imported.filePath
       state.source.label = imported.sourceLabel
+      state.source.selection = selection || null
       state.source.warning = imported.warning || null
+      // The frame spacing stored in the file (GROMACS XTC/TRR: ps) fills the time axis when it is still empty.
+      if (imported.dtPs > 0 && !$('md-timestep').value.trim()) {
+        $('md-timestep-unit').value = 'ps'
+        $('md-timestep').value = imported.dtPs
+        $('md-stride').value = 1
+        for (const id of ['md-timestep', 'md-timestep-unit', 'md-stride']) $(id).dispatchEvent(new Event('input'))
+      }
     } else {
       state.source.warning = null
     }
@@ -557,10 +567,22 @@ async function loadFrameForViewer (frameIdx) {
   $('viewer-title').textContent = `Frame ${frameIdx} — ${result.atoms.length} atoms`
 }
 
+// A table row per atom is hopeless beyond a few thousand atoms (87,000 rows hold the page for minutes and
+// gigabytes of memory): tables list the first rows only; the rest is reached from the viewer, the ID list or the selection tools.
+const TABLE_ROW_LIMIT = 3000
+function limitRow (columns, total, shown) {
+  const row = document.createElement('tr')
+  row.className = 'table-limit'
+  const cell = row.insertCell()
+  cell.colSpan = columns
+  cell.textContent = `Showing the first ${shown.toLocaleString()} of ${total.toLocaleString()} atoms. Use the viewer, the atom-ID list or the selection tools for the others.`
+  return row
+}
+
 function buildAtomTable (atoms) {
   const tbody = $('atom-table-body')
   tbody.innerHTML = ''
-  for (const a of atoms) {
+  for (const a of atoms.length > TABLE_ROW_LIMIT ? atoms.slice(0, TABLE_ROW_LIMIT) : atoms) {
     const tr = document.createElement('tr')
     tr.dataset.atomId = a.index
     tr.classList.toggle('row-selected', state.selectedAtoms.has(a.index))
@@ -585,6 +607,7 @@ function buildAtomTable (atoms) {
     })
     tbody.appendChild(tr)
   }
+  if (atoms.length > TABLE_ROW_LIMIT) tbody.appendChild(limitRow(6, atoms.length, TABLE_ROW_LIMIT))
 }
 
 const atomColor = MonetViewer.atomColor
@@ -1088,6 +1111,35 @@ aseViewer.style = stored('monet-ase-view-style', 'ball-stick')
 aseViewer.showAllLabels = true
 aseViewer.showSelectionOrder = true
 let aseViewerNeedsFit = true
+
+// ── Solvent display: a solvated system is an opaque block of water, so water and ions can be hidden ──
+// Display only: every atom stays in the trajectory, the analyses and the extraction.
+function solventLabel (counts) {
+  const parts = []
+  if (counts.water) parts.push(`${counts.water.toLocaleString()} water molecules`)
+  if (counts.ions) parts.push(`${counts.ions.toLocaleString()} ions`)
+  return parts.join(' and ')
+}
+for (const [target, selectId, boxId] of [[() => viewer, 'view-solvent', 'view-solvent-box'], [() => aseViewer, 'ase-view-solvent', 'ase-view-solvent']]) {
+  const select = $(selectId)
+  const sync = () => {
+    const view = target()
+    const counts = view.solventCounts()
+    const found = counts.water > 0 || counts.ions > 0
+    $(boxId).classList.toggle('hidden', !found)
+    if (!found) return
+    select.title = `Found ${solventLabel(counts)}. Display only: analyses and extraction still use every atom.`
+    view.setSolventMode(view.suggestSolventMode())
+    select.value = view.solventMode
+  }
+  select.addEventListener('change', () => {
+    const view = target()
+    view.setSolventMode(select.value)
+    const hiddenAtoms = view.atomCount - view.visibleCount
+    setStatus(hiddenAtoms ? `${hiddenAtoms.toLocaleString()} solvent atoms hidden in the viewer (${solventLabel(view.solventCounts())}); they are still analysed and extracted.` : 'All atoms shown.')
+  })
+  target().onClassified = sync
+}
 
 function resizeAseViewer () {
   if (!$('ase-mol-canvas').clientWidth || !$('ase-mol-canvas').clientHeight) return
@@ -1678,7 +1730,7 @@ function updateAnalysisSource () {
   $('ase-atom-count').textContent = atoms.length
   const body = $('ase-atom-body')
   body.replaceChildren()
-  for (const atom of atoms) {
+  for (const atom of atoms.length > TABLE_ROW_LIMIT ? atoms.slice(0, TABLE_ROW_LIMIT) : atoms) {
     const row = document.createElement('tr')
     row.dataset.monetId = atom.monetId
     row.tabIndex = 0
@@ -1696,6 +1748,7 @@ function updateAnalysisSource () {
     }
     body.appendChild(row)
   }
+  if (atoms.length > TABLE_ROW_LIMIT) body.appendChild(limitRow(8, atoms.length, TABLE_ROW_LIMIT))
   $('ase-atom-match').textContent = atoms.length
     ? 'Atom order matches MONET. Elements and coordinates will be checked against ASE before calculation.'
     : 'No trajectory loaded.'
@@ -1940,7 +1993,7 @@ async function historyLoad (info) {
       name, size: digest?.size ?? null, sha256: digest?.sha256 ?? null, format: state.source.label || info.format,
       frames: info.configCount, atoms: info.atomCount,
       import: imported ? {
-        format: state.source.format, cell_vectors: $('inp-cell-vectors').value,
+        format: state.source.format, cell_vectors: $('inp-cell-vectors').value, selection: state.source.selection || undefined,
         reference: state.source.reference ? fileName(state.source.reference) : null, cell_file: state.source.cellFile ? fileName(state.source.cellFile) : null
       } : null
     })
@@ -3804,8 +3857,10 @@ async function checkTopology ({ quiet = false } = {}) {
       atom.residue = `${mda.resname[i]}${mda.resid[i]}`
       atom.molecule = mda.fragment[i] + 1
     }
+    // One lookup table: a find() per row is quadratic and holds the page for minutes with 10⁵ atoms.
+    const byMonetId = new Map(atoms.map(a => [String(a.monetId), a]))
     for (const row of $('ase-atom-body').rows) {
-      const atom = atoms.find(a => String(a.monetId) === row.dataset.monetId)
+      const atom = byMonetId.get(row.dataset.monetId)
       if (atom && row.cells.length >= 8) { row.cells[6].textContent = atom.residue; row.cells[7].textContent = atom.molecule }
     }
   }
@@ -3814,16 +3869,20 @@ async function checkTopology ({ quiet = false } = {}) {
     ? `✗ Atom identity mismatch: ${problems.join(' ')} Reload the trajectory (and its topology) before analysing it.`
     : `✓ ${atoms.length} atoms: MONET IDs, ASE indices${mda ? ' and MDAnalysis ids' : ''} refer to the same atoms (elements and first-frame coordinates agree)${info.n_frames ? `; ${info.n_frames} frames` : ''}.` +
       (mda ? ` MDAnalysis: ${mda.n_residues} residues, ${mda.n_fragments} molecules, ${mda.n_bonds} bonds (cutoff × ${command.bond_scale ?? 1.2}).` : ' MDAnalysis is not installed: only ASE was compared.')
-  const rows = []
-  for (let i = 0; i < info.n_atoms; i++) {
+  // Every mismatch is listed, then the first atoms up to the table limit (a row per atom of a solvated system freezes the page).
+  const listed = [...bad].sort((a, b) => a - b).slice(0, TABLE_ROW_LIMIT)
+  for (let i = 0; i < info.n_atoms && listed.length < TABLE_ROW_LIMIT; i++) if (!bad.has(i)) listed.push(i)
+  listed.sort((a, b) => a - b)
+  const rows = listed.map(i => {
     const atom = byIndex[i]
-    rows.push([atom?.monetId ?? '—', i, atom?.element ?? '—', info.symbols[i],
-      ...(mda ? [mda.id[i], mda.name[i], mda.element[i], `${mda.resname[i]}${mda.resid[i]}`, mda.fragment[i] + 1, mda.mass[i]] : [])])
-  }
+    return [atom?.monetId ?? '—', i, atom?.element ?? '—', info.symbols[i],
+      ...(mda ? [mda.id[i], mda.name[i], mda.element[i], `${mda.resname[i]}${mda.resid[i]}`, mda.fragment[i] + 1, mda.mass[i]] : [])]
+  })
   const table = $('topology-table')
   table.replaceChildren()
+  const mismatch = new Set(); listed.forEach((atomIndex, row) => { if (bad.has(atomIndex)) mismatch.add(row) })
   renderTable(table, { columns: ['MONET ID', 'ASE index', 'MONET element', 'ASE element', ...(mda ? ['MDA id', 'MDA name', 'MDA element', 'Residue', 'Molecule', 'Mass (amu)'] : [])], rows },
-    { title: 'Atom identity', mismatch: bad })
+    { title: info.n_atoms > rows.length ? `Atom identity (first ${rows.length.toLocaleString()} of ${info.n_atoms.toLocaleString()} atoms, plus every mismatch)` : 'Atom identity', mismatch })
   if (problems.length) $('ase-atom-match').textContent = 'Atom identity mismatch — see MDAnalysis › Topology & consistency.'
   if (!quiet) setStatus(problems.length ? 'Atom identity mismatch found.' : 'Atom identity verified in MONET, ASE and MDAnalysis.')
 }

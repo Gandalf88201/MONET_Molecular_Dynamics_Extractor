@@ -140,31 +140,60 @@ def _lattice(dims):
     return cellpar_to_cell(dims)
 
 
-def frames(path, fmt, topology=None):
+# Formats that store the time of every frame; for the others MDAnalysis invents dt = 1 ps.
+TIMED_FORMATS = {'mda-xtc', 'mda-trr'}
+
+
+def _time_ps(ts, fmt):
+    """Simulation time of a frame in ps (None when the format does not store it)."""
+    if fmt not in TIMED_FORMATS:
+        return None
+    try:
+        value = float(ts.time)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) else None
+
+
+def frames(path, fmt, topology=None, selection=None):
     """Yield (symbols, positions Å, lattice or None, pbc, step, extra) for import_to_extxyz.
 
     Without a topology, coordinate-only formats (XTC, TRR, DCD, NetCDF) are read atom by
     atom with element X: geometry is kept, element-dependent properties are not.
+    `extra` carries the topology labels (resname, resid, atomname) and the frame time in ps.
+    `selection` (MDAnalysis syntax) keeps only the matching atoms, in their file order, so that
+    a solvated system can be imported without its water and ions.
     """
     universe = open_universe(path, fmt, topology)
     if universe is None:
+        if selection:
+            raise ValueError('An atom selection needs a topology (GRO, PDB, TPR, PSF …): add it as the reference structure.')
         reader = _coordinate_reader(path, fmt)
         try:
             symbols = ['X'] * reader.n_atoms
             for ts in reader:
-                yield symbols, ts.positions.astype(float), _lattice(ts.dimensions), None, int(ts.frame)
+                yield symbols, ts.positions.astype(float), _lattice(ts.dimensions), None, int(ts.frame), {'time_ps': _time_ps(ts, fmt)}
         finally:
             reader.close()
         return
     symbols = _elements(universe)
     atoms = universe.atoms
+    if selection:
+        try:
+            atoms = universe.select_atoms(selection)
+        except Exception as error:
+            raise ValueError(f'Invalid atom selection "{selection}": {error}') from None
+        if not len(atoms):
+            raise ValueError(f'The selection "{selection}" matches no atoms.')
+        symbols = [symbols[i] for i in atoms.indices]
     extra = {
         'resname': [_clean(r, 'RES') for r in getattr(atoms, 'resnames', ['RES'] * len(atoms))],
         'resid': [int(r) for r in getattr(atoms, 'resids', [1] * len(atoms))],
         'atomname': [_clean(n, symbols[i]) for i, n in enumerate(getattr(atoms, 'names', symbols))],
     }
     for ts in universe.trajectory:
-        yield symbols, atoms.positions.astype(float), _lattice(ts.dimensions), None, int(ts.frame), extra
+        yield (symbols, atoms.positions.astype(float), _lattice(ts.dimensions), None, int(ts.frame),
+               {**extra, 'time_ps': _time_ps(ts, fmt)})
 
 
 # ── analyses on the active MONET trajectory ─────────────────────────────────

@@ -46,9 +46,10 @@ u.atoms.write(f'{out}/water.pdb')
 frames = [base + [0.1 * f, 0, 0] for f in range(10)]
 for ext in ('xtc', 'trr', 'dcd'):
     with mda.Writer(f'{out}/water.{ext}', n_atoms=len(u.atoms)) as w:
-        for pos in frames:
+        for k, pos in enumerate(frames):
             u.atoms.positions = pos
             u.dimensions = [12, 12, 12, 90, 90, 90]
+            u.trajectory.ts.time = 2.5 * k
             w.write(u.atoms)
 write(f'{out}/models.pdb', [Atoms('OH2', positions=base[:3] + [0, 0, 0.1 * f], cell=[12, 12, 12], pbc=True) for f in range(3)], format='proteindatabank')
 `, temp])
@@ -88,6 +89,28 @@ r = importFile(path.join(temp, 'water.gro'))
 assert.equal(r.ok, true); assert.equal(r.source_format, 'mda-gro'); assert.equal(r.frames, 1); checks++
 r = importFile(path.join(temp, 'water.xtc'), { reference: path.join(temp, 'water.pdb') })
 assert.equal(r.ok, true, JSON.stringify(r)); checks++
+
+// The time of the frames (XTC: ps) is kept and the regular spacing is reported for the time axis.
+r = importFile(path.join(temp, 'water.xtc'), { reference: path.join(temp, 'water.gro') })
+assert.equal(r.dt_ps, 2.5); assert.match(fs.readFileSync(r.output, 'utf8').split('\n')[1], / time_ps=0 /); checks++
+assert.match(fs.readFileSync(r.output, 'utf8').split('\n')[(24 + 2) + 1], / time_ps=2\.5 /); checks++
+assert.equal(importFile(path.join(temp, 'water.xtc')).dt_ps, 2.5); checks++
+r = importFile(path.join(temp, 'water.dcd'), { reference: path.join(temp, 'water.gro') })
+assert.equal(r.dt_ps, undefined); assert.doesNotMatch(fs.readFileSync(r.output, 'utf8').split('\n')[1], /time_ps/); checks++
+
+// Import only some atoms (a solvated system without its water): file order, topology labels and coordinates are kept.
+r = importFile(path.join(temp, 'water.xtc'), { reference: path.join(temp, 'water.gro'), selection: 'resid 2:3' })
+assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.natoms, 6); assert.equal(r.frames, 10); assert.equal(r.selection, 'resid 2:3'); assert.match(r.source_label, /6 selected atoms/); checks++
+const picked = fs.readFileSync(r.output, 'utf8').split('\n')
+assert.match(picked[1], /selection="resid 2:3"/); assert.match(picked[2], /^O \S+ \S+ \S+ SOL 2 OW$/); assert.match(picked[7], /^H \S+ \S+ \S+ SOL 3 HW2$/); checks++
+near(frame(r.output, 9)[0].z, 4.9, 0.011, 'selected atom keeps its coordinates'); near(frame(r.output, 9)[0].x, 2.9, 0.011, 'selected atom follows the frames'); checks++
+assert.equal(bridge({ action: 'scan', filename: r.output }).atomCount, 6); checks++
+r = importFile(path.join(temp, 'water.xtc'), { reference: path.join(temp, 'water.gro'), selection: 'resname NOPE' })
+assert.equal(r.ok, false); assert.match(r.message, /matches no atoms/); checks++
+r = importFile(path.join(temp, 'water.xtc'), { reference: path.join(temp, 'water.gro'), selection: 'resname ((' })
+assert.equal(r.ok, false); assert.match(r.message, /Invalid atom selection/); checks++
+r = importFile(path.join(temp, 'water.xtc'), { selection: 'resid 1' })
+assert.equal(r.ok, false); assert.match(r.message, /needs a topology/); checks++
 
 // Any ASE-readable format through ase:<name>; unknown names are rejected.
 r = importFile(path.join(temp, 'models.pdb'), { format: 'ase:proteindatabank' })
@@ -211,6 +234,33 @@ r = bridge({ action: 'ase_structure', filename: xtc, bond_scale: 5 })
 assert.equal(r.ok, false); checks++
 r = bridge({ action: 'ase_coordination', filename: xtc, indices: [0, 1], frame_step: 5 })
 assert.deepEqual(r.frame_indices, [0, 5]); assert.deepEqual(r.series['O (mean of 1)'], [2, 2]); assert.deepEqual(r.series.H2, [1, 1]); checks++
+
+// ASE structure of a large system: neighbour lists instead of an n x n matrix (57 GiB for 87,000 atoms) give the same answer.
+const dense = JSON.parse(execFileSync(python, ['-W', 'ignore', '-c', `
+import sys, json
+sys.path.insert(0, sys.argv[1])
+import numpy as np
+from ase import Atoms
+import ase_bridge as b
+rng = np.random.default_rng(3)
+atoms = Atoms('H40', positions=rng.uniform(0, 10, (40, 3)), cell=[10, 10, 10], pbc=True)
+atoms.positions[7] = atoms.positions[3] + [0.05, 0, 0]
+atoms.positions[20] = [0.02, 5.0, 5.0]
+atoms.positions[21] = [9.98, 5.0, 5.0]
+out = {}
+for mic in (False, True):
+    first = [b._closest_pair(atoms, mic), b._overlap_count(atoms)]
+    b.DENSE_LIMIT = 5
+    second = [b._closest_pair(atoms, mic), b._overlap_count(atoms)]
+    b.DENSE_LIMIT = 3000
+    out[str(mic)] = [first, second]
+print(json.dumps(out))
+`, root], { env: process.env }).toString().trim().split('\n').pop())
+for (const mic of ['False', 'True']) {
+  const [[d1, o1], [d2, o2]] = dense[mic]
+  near(d1[0], d2[0], 1e-9, `closest pair (mic ${mic})`); assert.deepEqual([d1[1], d1[2]].sort(), [d2[1], d2[2]].sort()); assert.equal(o1, o2); checks++
+}
+assert.equal(dense.True[0][1], 2); assert.equal(dense.True[0][0][0] < 0.05, true); checks++ // 3-7 and, through the boundary, 20-21
 
 fs.rmSync(temp, { recursive: true, force: true })
 console.log(`PASS: ${checks} MDAnalysis checks (XTC/TRR/DCD + topology, ASE formats, selections, generic analyses, atom identity, ASE structure).`)

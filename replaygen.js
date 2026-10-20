@@ -82,7 +82,7 @@
       const imported = source.import || {}
       return `${source.id} = s.load(${C.formatArgs({
         name: source.name, sha256: source.sha256 ?? undefined, atoms: source.atoms ?? undefined, atom_ids: source.atom_ids ?? undefined,
-        import_format: imported.format ?? undefined, reference: imported.reference ?? undefined, cell_file: imported.cell_file ?? undefined,
+        import_format: imported.format ?? undefined, reference: imported.reference ?? undefined, cell_file: imported.cell_file ?? undefined, selection: imported.selection ?? undefined,
         cell_vectors: source.import ? imported.cell_vectors : undefined, step: step.id
       })})`
     }

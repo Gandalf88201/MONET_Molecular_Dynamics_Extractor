@@ -351,12 +351,14 @@ def _xyz_frames(path, cell_file):
         yield positions, lattice, step
 
 
-def frames(path, fmt, name=None, reference=None, cell_file=None, cell_vectors='rows'):
+def frames(path, fmt, name=None, reference=None, cell_file=None, cell_vectors='rows', selection=None):
     """Yield (symbols, positions Å, lattice or None, pbc, step[, extra]) for each frame."""
     if fmt == 'auto':
         fmt = detect(path, name)
+    if selection and fmt not in monet_mda.FORMATS:
+        raise ValueError('An atom selection at import is available for the MDAnalysis formats (GROMACS, AMBER, CHARMM, NAMD, PDB …).')
     if fmt in monet_mda.FORMATS:
-        yield from monet_mda.frames(path, fmt, reference)
+        yield from monet_mda.frames(path, fmt, reference, selection)
         return
     if fmt.startswith('ase:'):
         import ase.io
@@ -411,16 +413,24 @@ def _flag(value):
     return 'T' if value else 'F'
 
 
+def _selection_note(selection):
+    """The selection as one quoted extended-XYZ value (quotes inside it become apostrophes)."""
+    return ' selection="' + ' '.join(str(selection).replace('"', "'").split()) + '"'
+
+
 def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_file=None,
-                     cell_vectors='rows', progress=None):
+                     cell_vectors='rows', progress=None, selection=None):
     """Write an extended XYZ file; returns a summary for the UI."""
     detected = detect(path, name) if fmt == 'auto' else fmt
+    selection = (selection or '').strip() or None
     count = 0
     natoms = None
     symbols0 = None
+    times = []
+    unknown = False
     size = max(os.path.getsize(path), 1)
     with open(output, 'w', buffering=8 << 20) as fh:
-        for symbols, positions, lattice, pbc, step, *rest in frames(path, detected, name, reference, cell_file, cell_vectors):
+        for symbols, positions, lattice, pbc, step, *rest in frames(path, detected, name, reference, cell_file, cell_vectors, selection):
             positions = np.asarray(positions, dtype=float)
             if natoms is None:
                 natoms, symbols0 = len(symbols), list(symbols)
@@ -430,7 +440,7 @@ def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_f
                 extra = rest[0] if rest else None
                 properties = 'species:S:1:pos:R:3'
                 columns = [[''] * natoms]
-                if extra:
+                if extra and all(key in extra for key, _ in EXTRA_PROPERTIES):
                     # Topology labels travel as extra extended-XYZ columns (used by MDAnalysis selections).
                     properties += ''.join(f':{key}:{kind}:1' for key, kind in EXTRA_PROPERTIES)
                     columns = [[' ' + ' '.join(str(extra[key][i]).replace('%', '%%') for key, _ in EXTRA_PROPERTIES) for i in range(natoms)]]
@@ -442,6 +452,13 @@ def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_f
             comment = f'Properties={properties} frame={count}'
             if step is not None:
                 comment += f' source_step={step}'
+            moment = (rest[0] or {}).get('time_ps') if rest else None
+            if moment is not None:
+                comment += f' time_ps={moment:.6g}'
+                if len(times) < 8:
+                    times.append(moment)
+            if selection and count == 0:
+                comment += _selection_note(selection)
             if lattice is not None:
                 lattice = np.asarray(lattice, dtype=float)
                 flags = pbc if pbc is not None else [True, True, True]
@@ -454,6 +471,12 @@ def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_f
     if not count:
         raise ValueError('No frames were found in this file.')
     summary = {'frames': count, 'natoms': natoms, 'source_format': detected, 'source_label': FORMATS.get(detected, detected)}
+    if selection:
+        summary['selection'] = selection
+        summary['source_label'] += f' · {natoms:,} selected atoms'
+    steps = np.diff(times)
+    if len(steps) and np.all(steps > 0) and np.allclose(steps, steps[0], rtol=1e-3):
+        summary['dt_ps'] = float(steps[0])
     if unknown:
         summary['source_label'] += ' · no topology, atoms shown as X'
         summary['warning'] = ('No topology was given: every atom is imported as element X (no names, masses or bonds). '

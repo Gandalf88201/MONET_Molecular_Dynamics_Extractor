@@ -257,7 +257,7 @@ def action_import(cmd):
     summary = monet_formats.import_to_extxyz(
         cmd['filename'], cmd['output'], cmd.get('format') or 'auto', name=cmd.get('source_name'),
         reference=cmd.get('reference'), cell_file=cmd.get('cell_file'),
-        cell_vectors=cmd.get('cell_vectors', 'rows'), progress=prog)
+        cell_vectors=cmd.get('cell_vectors', 'rows'), progress=prog, selection=cmd.get('selection'))
     prog(f"Imported {summary['frames']:,} frames from {summary['source_label']}", 100)
     ok(**summary)
 
@@ -396,11 +396,46 @@ def _neighbours(atoms, scale, mic):
     return neighbor_list('ijd', atoms, cutoffs)
 
 
+# Above this size an n×n distance matrix (57 GiB for 87,000 atoms) is out of the question: use neighbour lists.
+DENSE_LIMIT = 3000
+SPACEGROUP_LIMIT = 20000
+
+
+def _closest_pair(atoms, mic):
+    """(distance, i, j) of the closest atom pair, or None when no pair lies within 30 Å (large systems)."""
+    from ase.neighborlist import neighbor_list
+    if len(atoms) <= DENSE_LIMIT:
+        from ase.geometry import get_distances
+        _, distances = get_distances(atoms.positions, cell=atoms.cell if mic else None, pbc=atoms.pbc if mic else None)
+        np.fill_diagonal(distances, np.inf)
+        a, b = np.unravel_index(np.argmin(distances), distances.shape)
+        return float(distances[a, b]), int(a), int(b)
+    probe = atoms if mic else atoms.copy()
+    if not mic:
+        probe.set_pbc(False)
+    for cutoff in (1.0, 3.0, 10.0, 30.0):
+        i, j, d = neighbor_list('ijd', probe, cutoff)
+        if len(d):
+            k = int(np.argmin(d))
+            return float(d[k]), int(i[k]), int(j[k])
+    return None
+
+
+def _overlap_count(atoms):
+    """Number of atom pairs closer than 0.1 Å (periodic images when the atoms are periodic, as ASE does)."""
+    if len(atoms) <= DENSE_LIMIT:
+        from ase.geometry import get_duplicate_atoms
+        duplicates = get_duplicate_atoms(atoms.copy(), cutoff=0.1)
+        return len(duplicates) if duplicates is not None else 0
+    from ase.neighborlist import neighbor_list
+    i, j = neighbor_list('ij', atoms, 0.1)
+    return int(np.count_nonzero(i < j))
+
+
 def action_ase_structure(cmd):
     """Structural summary of one frame: formula, mass, cell, density, inertia, bonds, coordination, symmetry."""
     if not _require_ase(): return
     from collections import Counter
-    from ase.geometry import get_duplicate_atoms
     traj = _require_xyz(cmd['filename'])
     frame = cmd.get('frame', 0)
     if type(frame) is not int or not 0 <= frame < traj.nframes:
@@ -424,9 +459,13 @@ def action_ase_structure(cmd):
                  ['Volume (Å³)', round(float(volume), 4)],
                  ['Density (g cm⁻³)', round(float(masses.sum() * 1.66053906660 / volume), 5)]]
         try:
+            if len(atoms) > SPACEGROUP_LIMIT:
+                raise OverflowError(f'skipped for {len(atoms):,} atoms (disordered systems have no useful symmetry)')
             from ase.spacegroup import get_spacegroup
             group = get_spacegroup(atoms, symprec=float(cmd.get('symprec', 1e-3)))
             rows.append(['Space group (spglib)', f'{group.symbol} (No. {group.no})'])
+        except OverflowError as error:
+            rows.append(['Space group', str(error)])
         except ImportError:
             rows.append(['Space group', 'spglib is not installed (python -m pip install spglib)'])
         except Exception as error:
@@ -435,13 +474,10 @@ def action_ase_structure(cmd):
         rows.append(['Cell', 'none (molecule in vacuum)'])
     ii, jj, dd = _neighbours(atoms, scale, mic)
     if len(atoms) > 1:
-        from ase.geometry import get_distances
-        _, distances = get_distances(atoms.positions, cell=atoms.cell if mic else None, pbc=atoms.pbc if mic else None)
-        np.fill_diagonal(distances, np.inf)
-        a, b = np.unravel_index(np.argmin(distances), distances.shape)
-        rows.append(['Shortest interatomic distance (Å)', f'{distances[a, b]:.4f} (atoms {min(a, b) + 1}–{max(a, b) + 1})'])
-    duplicates = get_duplicate_atoms(atoms.copy(), cutoff=0.1)
-    rows.append(['Overlapping atoms (< 0.1 Å)', len(duplicates) if duplicates is not None else 0])
+        closest = _closest_pair(atoms, mic)
+        rows.append(['Shortest interatomic distance (Å)',
+                     f'{closest[0]:.4f} (atoms {min(closest[1:]) + 1}–{max(closest[1:]) + 1})' if closest else 'none within 30 Å'])
+    rows.append(['Overlapping atoms (< 0.1 Å)', _overlap_count(atoms)])
     from scipy.sparse import coo_matrix
     from scipy.sparse.csgraph import connected_components
     count, labels = connected_components(coo_matrix((np.ones(len(ii)), (ii, jj)), shape=(len(atoms), len(atoms))), directed=False)

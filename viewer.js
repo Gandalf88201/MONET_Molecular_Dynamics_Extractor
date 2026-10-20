@@ -83,12 +83,45 @@
     return Uint32Array.from(bonds)
   }
 
+  // Monatomic ions that sit in water; bonded to a solute atom they are part of the solute.
+  const ION_ELEMENTS = new Set(['Li', 'Na', 'K', 'Rb', 'Cs', 'Mg', 'Ca', 'Cl', 'Br', 'I'])
+  const KIND_SOLUTE = 0, KIND_WATER = 1, KIND_ION = 2
+
+  // Solvent of a bonded structure, by topology rather than residue names (any code, any force field):
+  // a water is an O with exactly two H, each H bonded to nothing else; ions are the monatomic ions
+  // whose only neighbours are water or other ions. Ion-water contacts that the covalent cut-offs call
+  // bonds (Na-O 2.4 Å) are ignored when deciding what a water is.
+  function classifySolvent (atoms, bonds) {
+    const n = atoms.length
+    const kind = new Uint8Array(n)
+    const ion = new Uint8Array(n)
+    for (let i = 0; i < n; i++) ion[i] = ION_ELEMENTS.has(atoms[i].element) ? 1 : 0
+    const adjacent = Array.from({ length: n }, () => [])
+    for (let k = 0; k < bonds.length; k += 2) { adjacent[bonds[k]].push(bonds[k + 1]); adjacent[bonds[k + 1]].push(bonds[k]) }
+    const covalent = i => adjacent[i].filter(j => !ion[j])
+    for (let i = 0; i < n; i++) {
+      if (atoms[i].element !== 'O' || ion[i] || kind[i]) continue
+      const around = covalent(i)
+      if (around.length !== 2 || around.some(h => atoms[h].element !== 'H' || kind[h])) continue
+      if (around.some(h => { const other = covalent(h); return other.length !== 1 || other[0] !== i })) continue
+      kind[i] = kind[around[0]] = kind[around[1]] = KIND_WATER
+    }
+    for (let i = 0; i < n; i++) {
+      if (ion[i] && adjacent[i].every(j => kind[j] === KIND_WATER || ion[j])) kind[i] = KIND_ION
+    }
+    return kind
+  }
+
   class MolecularViewer {
     constructor (canvas) {
       this.canvas = canvas
       this.ctx = canvas.getContext('2d')
       this.atoms = []
       this.bonds = new Uint32Array(0)
+      this.solvent = null // per atom: 0 solute, 1 water, 2 ion (loadAtoms)
+      this.solventMode = 'show' // 'show' | 'water' (hide water) | 'solvent' (hide water and ions)
+      this.hidden = null // 1 = not drawn; null when everything is shown
+      this.visibleCount = 0
       this.selected = new Set() // MONET atom IDs, in selection order
       this.rotX = 0.25
       this.rotY = -0.40
@@ -104,6 +137,7 @@
       // Right click (or Ctrl-click) without dragging: onContextClick(event, MONET ID or null).
       this.onContextClick = null
       this.onLoad = null // called after loadAtoms()
+      this.onClassified = null // called after loadAtoms() once water and ions are known (before onLoad)
       this.dragging = false
       this.panning = false
       this.moving = false
@@ -136,6 +170,10 @@
     loadAtoms (atoms) {
       this.atoms = atoms
       this.bonds = new Uint32Array(0)
+      this.solvent = null
+      this.solventMode = 'show'
+      this.hidden = null
+      this.visibleCount = atoms.length
       this._index = new Map(atoms.map((atom, i) => [atom.index, i]))
       if (!atoms.length) { this.render(); this.onLoad?.(); return }
       let cx = 0, cy = 0, cz = 0
@@ -148,8 +186,39 @@
       this.zoom = (Math.min(this.canvas.width, this.canvas.height) || 600) * 0.38 / (maxD || 5)
       this.bonds = findBonds(atoms)
       this._topology = this.bonds
+      this.solvent = classifySolvent(atoms, this.bonds)
+      this.onClassified?.()
       this.render()
       this.onLoad?.()
+    }
+
+    // Number of water molecules, ions and solute atoms found by loadAtoms.
+    solventCounts () {
+      const counts = { water: 0, ions: 0, solute: 0, atoms: this.atoms.length }
+      if (!this.solvent) { counts.solute = counts.atoms; return counts }
+      for (const kind of this.solvent) { if (kind === KIND_WATER) counts.water++; else if (kind === KIND_ION) counts.ions++; else counts.solute++ }
+      counts.water = Math.round(counts.water / 3)
+      return counts
+    }
+
+    // Large solvated systems are an opaque block of water: hide the solvent unless the user chose otherwise.
+    suggestSolventMode () {
+      const { water, ions, solute, atoms } = this.solventCounts()
+      return atoms >= 3000 && solute > 0 && 3 * water + ions >= atoms / 2 ? 'solvent' : 'show'
+    }
+
+    setSolventMode (mode, { fit = true } = {}) {
+      this.solventMode = ['water', 'solvent'].includes(mode) && this.solvent ? mode : 'show'
+      const hide = this.solventMode === 'water' ? kind => kind === KIND_WATER : kind => kind !== KIND_SOLUTE
+      this.hidden = null
+      this.visibleCount = this.atoms.length
+      if (this.solventMode !== 'show') {
+        this.hidden = new Uint8Array(this.atoms.length)
+        let shown = 0
+        for (let i = 0; i < this.atoms.length; i++) { if (hide(this.solvent[i])) this.hidden[i] = 1; else shown++ }
+        this.visibleCount = shown
+      }
+      if (fit && this.canvas.width && this.canvas.height) this.fitView(); else this.requestRender()
     }
 
     // Move atoms to new coordinates (flat [x0, y0, z0, x1, …] in atom order) keeping the view.
@@ -257,7 +326,8 @@
       const carbonBond = themeColor('--bond-carbon', '#666')
       const n = atoms.length
       // While rotating a large system, draw bonds as lines and skip sphere shading.
-      const light = this.moving && n > FAST_LIMIT
+      const hidden = this.hidden
+      const light = this.moving && this.visibleCount > FAST_LIMIT
       const styleName = light && this.style !== 'points' ? 'lines' : this.style
       const style = STYLES[styleName]
       const { x, y, z } = this._projectAll()
@@ -283,6 +353,7 @@
         const pathFor = color => { let p = paths.get(color); if (!p) { p = []; paths.set(color, p) } return p }
         for (let k = 0; k < this.bonds.length; k += 2) {
           const a = this.bonds[k], b = this.bonds[k + 1]
+          if (hidden && (hidden[a] || hidden[b])) continue
           const mx = (x[a] + x[b]) / 2, my = (y[a] + y[b]) / 2
           const ca = atomColor(atoms[a].element), cb = atomColor(atoms[b].element)
           pathFor(ca === '#404040' ? carbonBond : ca).push(x[a], y[a], mx, my)
@@ -320,7 +391,8 @@
 
       // Atoms back to front (line mode draws only the selected atoms, below).
       if (styleName !== 'lines') {
-        const order = Array.from({ length: n }, (_, i) => i)
+        const order = []
+        for (let i = 0; i < n; i++) if (!hidden || !hidden[i]) order.push(i)
         if (!style.flat) order.sort((a, b) => z[a] - z[b])
         if (style.flat) {
           const groups = new Map()
@@ -362,7 +434,7 @@
       const selectedOrder = [...this.selected]
       for (const [order, id] of selectedOrder.entries()) {
         const i = this._index?.get(id)
-        if (i === undefined) continue
+        if (i === undefined || hidden?.[i]) continue
         const r = Math.max(5, this._radius(i))
         ctx.save()
         ctx.shadowBlur = 18; ctx.shadowColor = selectColor
@@ -382,9 +454,10 @@
 
       // Labels: atom IDs for small systems (or when requested) and always for selections.
       if (!light) {
-        const labelAll = n <= LABEL_LIMIT && (this.showAllLabels || styleName === 'ball-stick' || styleName === 'spacefill')
+        const labelAll = this.visibleCount <= LABEL_LIMIT && (this.showAllLabels || styleName === 'ball-stick' || styleName === 'spacefill')
         ctx.textAlign = 'center'; ctx.textBaseline = 'middle'
         for (let i = 0; i < n; i++) {
+          if (hidden?.[i]) continue
           const isSel = this.selected.has(atoms[i].index)
           if (!isSel && !labelAll) continue
           const r = this._radius(i)
@@ -427,6 +500,7 @@
       const { x, y, z } = this._projectAll()
       let best = null, bestDepth = -Infinity
       for (let i = 0; i < this.atoms.length; i++) {
+        if (this.hidden?.[i]) continue
         const radius = Math.max(5, this._radius(i))
         const dx = x[i] - mx, dy = y[i] - my
         if (dx * dx + dy * dy <= radius * radius && z[i] >= bestDepth) { best = this.atoms[i].index; bestDepth = z[i] }
@@ -551,7 +625,7 @@
 
     // Centre the view on the given atoms (all atoms when empty) keeping the rotation and zoom.
     centerOn (ids) {
-      const list = ids?.length ? ids.map(id => this.atoms[this._index?.get(id)]).filter(Boolean) : this.atoms
+      const list = ids?.length ? ids.map(id => this.atoms[this._index?.get(id)]).filter(Boolean) : this._shown()
       if (!list.length) return
       this.center = ['x', 'y', 'z'].map(axis => list.reduce((sum, atom) => sum + atom[axis], 0) / list.length)
       this.requestRender()
@@ -561,6 +635,9 @@
       this.selected = new Set(ids.map(Number))
       this.render()
     }
+
+    // Atoms that are drawn.
+    _shown () { return this.hidden ? this.atoms.filter((_, i) => !this.hidden[i]) : this.atoms }
 
     cellVertices () {
       return Array.from({ length: 8 }, (_, mask) => [0, 1, 2].map(axis =>
@@ -574,8 +651,8 @@
         low[0] = Math.min(low[0], px); low[1] = Math.min(low[1], py); low[2] = Math.min(low[2], pz)
         high[0] = Math.max(high[0], px); high[1] = Math.max(high[1], py); high[2] = Math.max(high[2], pz)
       }
-      for (const a of this.atoms) extend(a.x, a.y, a.z)
-      if (this.cell) for (const p of this.cellVertices()) extend(...p)
+      for (const a of this._shown()) extend(a.x, a.y, a.z)
+      if (this.cell && !this.hidden) for (const p of this.cellVertices()) extend(...p)
       this.center = low.map((v, j) => (v + high[j]) / 2)
       const half = Math.hypot(high[0] - low[0], high[1] - low[1], high[2] - low[2]) / 2 || 1
       this.zoom = Math.min(this.canvas.width, this.canvas.height) * .45 / half
@@ -590,7 +667,7 @@
     }
   }
 
-  const api = { MolecularViewer, STYLES, findBonds, atomColor, covalentRadius, CPK }
+  const api = { MolecularViewer, STYLES, findBonds, classifySolvent, atomColor, covalentRadius, CPK }
   if (typeof module === 'object' && module.exports) module.exports = api
   else root.MonetViewer = api
 })(globalThis)

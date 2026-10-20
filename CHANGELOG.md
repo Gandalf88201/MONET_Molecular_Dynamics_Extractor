@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Large solvated systems (GROMACS/AMBER/CHARMM with 10⁴–10⁵ atoms), tested on an 87,403-atom protein–ligand–water system (XTC + GRO):
+  - Fix: loading froze the page for minutes and used gigabytes. The atom-identity check looked every row of the atom table up with `find()` (quadratic) and drew a topology table row per atom. Atom tables now list the first 3,000 atoms (the viewer, the ID list and the selection tools reach the others); the topology table lists the first 3,000 atoms plus every mismatch.
+  - Fix: *Analyse structure* built an n × n distance matrix (57 GiB at 87,000 atoms). The closest pair and the overlap count now use neighbour lists above 3,000 atoms, with the same results as before for smaller systems; the space group is skipped above 20,000 atoms.
+  - New *Solvent* menu in both viewers: water and ions are found from the bonds (O with two H; monatomic ions bonded only to water; names are not needed) and can be hidden. A system of at least 3,000 atoms that is at least half solvent opens with water and ions hidden; the choice is display only, analyses and extraction keep every atom.
+  - New *Keep only these atoms* field at import (MDAnalysis selection, e.g. `not resname SOL NA CL`): the protein and ligand of the 87,403-atom system make a 3,227-atom extended XYZ instead of 4.2 GB. Kept atoms keep their file order, the selection is written in the first frame and recorded in the analysis history and replay.
+  - XTC/TRR import keeps the time of every frame (`time_ps=` in the comment line) and fills the time axis (MD time step in ps, 1 step per saved frame) when it is still empty.
 - MDAnalysis PCA:
   - up to 10 principal components come back from one calculation, and the component list (variance, explained and cumulated %, mean ± std) chooses which projections are plotted; *Components plotted at first* sets how many are ticked;
   - a distribution chart shows the plotted projections on common bins;
