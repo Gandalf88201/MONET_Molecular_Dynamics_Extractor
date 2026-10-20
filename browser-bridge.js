@@ -251,14 +251,14 @@
       if (options.cellFile) extra.cell_id = await upload(options.cellFile)
       const result = await job({
         action: 'import', file_id: fileId, format: options.format || 'auto', cell_vectors: options.cellVectors || 'rows',
-        source_name: (files.get(name)?.name || name), ...extra
+        source_name: (files.get(name)?.name || name), selection: options.selection || undefined, ...extra
       }, 'ase', emitAse)
       if (!result.ok) throw new Error(result.message || result.error)
       let key = `imported/${(files.get(name)?.name || name).replace(/\.[^./]*$/, '')}.extxyz`
       for (let copy = 2; remote.has(key); copy++) key = `imported-${copy}/${key.split('/').pop()}`
       remote.set(key, Promise.resolve(result.file_id))
       digests.set(key, { sha256: result.sha256 || null, size: null })
-      return { filePath: key, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label, warning: result.warning }
+      return { filePath: key, frames: result.frames, natoms: result.natoms, sourceFormat: result.source_format, sourceLabel: result.source_label, warning: result.warning, dtPs: result.dt_ps }
     }),
     releaseFile: async name => {
       const pending = remote.get(name)

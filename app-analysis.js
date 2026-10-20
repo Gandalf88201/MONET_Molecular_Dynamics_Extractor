@@ -129,6 +129,35 @@ aseViewer.showAllLabels = true
 aseViewer.showSelectionOrder = true
 let aseViewerNeedsFit = true
 
+// ── Solvent display: a solvated system is an opaque block of water, so water and ions can be hidden ──
+// Display only: every atom stays in the trajectory, the analyses and the extraction.
+function solventLabel (counts) {
+  const parts = []
+  if (counts.water) parts.push(`${counts.water.toLocaleString()} water molecules`)
+  if (counts.ions) parts.push(`${counts.ions.toLocaleString()} ions`)
+  return parts.join(' and ')
+}
+for (const [target, selectId, boxId] of [[() => viewer, 'view-solvent', 'view-solvent-box'], [() => aseViewer, 'ase-view-solvent', 'ase-view-solvent']]) {
+  const select = $(selectId)
+  const sync = () => {
+    const view = target()
+    const counts = view.solventCounts()
+    const found = counts.water > 0 || counts.ions > 0
+    $(boxId).classList.toggle('hidden', !found)
+    if (!found) return
+    select.title = `Found ${solventLabel(counts)}. Display only: analyses and extraction still use every atom.`
+    view.setSolventMode(view.suggestSolventMode())
+    select.value = view.solventMode
+  }
+  select.addEventListener('change', () => {
+    const view = target()
+    view.setSolventMode(select.value)
+    const hiddenAtoms = view.atomCount - view.visibleCount
+    setStatus(hiddenAtoms ? `${hiddenAtoms.toLocaleString()} solvent atoms hidden in the viewer (${solventLabel(view.solventCounts())}); they are still analysed and extracted.` : 'All atoms shown.')
+  })
+  target().onClassified = sync
+}
+
 // Cell shown by both viewers: the ASE workspace and the 3D view of MONET Custom Functionalities.
 function setViewerCell (cell, { fit = false } = {}) {
   // The 3D view is refitted when a cell appears, so the whole cell is in view.
@@ -863,7 +892,7 @@ function updateAnalysisSource () {
   $('ase-atom-count').textContent = atoms.length
   const body = $('ase-atom-body')
   body.replaceChildren()
-  for (const atom of atoms) {
+  for (const atom of atoms.length > TABLE_ROW_LIMIT ? atoms.slice(0, TABLE_ROW_LIMIT) : atoms) {
     const row = document.createElement('tr')
     row.dataset.monetId = atom.monetId
     row.tabIndex = 0
@@ -881,6 +910,7 @@ function updateAnalysisSource () {
     }
     body.appendChild(row)
   }
+  if (atoms.length > TABLE_ROW_LIMIT) body.appendChild(limitRow(8, atoms.length, TABLE_ROW_LIMIT))
   $('ase-atom-match').textContent = atoms.length
     ? 'Atom order matches MONET. Elements and coordinates will be checked against ASE before calculation.'
     : 'No trajectory loaded.'
@@ -1129,7 +1159,7 @@ async function historyLoad (info) {
       name, size: digest?.size ?? null, sha256: digest?.sha256 ?? null, format: state.source.label || info.format,
       frames: info.configCount, atoms: info.atomCount,
       import: imported ? {
-        format: state.source.format, cell_vectors: $('inp-cell-vectors').value,
+        format: state.source.format, cell_vectors: $('inp-cell-vectors').value, selection: state.source.selection || undefined,
         reference: state.source.reference ? fileName(state.source.reference) : null, cell_file: state.source.cellFile ? fileName(state.source.cellFile) : null
       } : null
     })

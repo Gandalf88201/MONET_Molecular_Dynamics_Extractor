@@ -119,6 +119,21 @@
           <button class="btn btn-sm" id="btn-reference-clear" title="Remove reference">×</button>
         </div>
       </div>
+      <div class="aux-file hidden" id="aux-selection">
+        <label class="field-label" for="inp-import-selection">Keep only these atoms (optional) — MDAnalysis selection, needs the topology</label>
+        <input class="field-input" id="inp-import-selection" type="text" list="import-selection-examples" spellcheck="false" autocomplete="off"
+               placeholder="e.g. not resname SOL NA CL (all atoms when empty)" />
+        <datalist id="import-selection-examples">
+          <option value="not resname SOL NA CL"></option>
+          <option value="not (resname SOL HOH WAT TIP3 or resname NA CL K SOD CLA POT)"></option>
+          <option value="protein"></option>
+          <option value="protein or resname LIG"></option>
+          <option value="resid 1-120"></option>
+          <option value="around 8 protein"></option>
+        </datalist>
+        <p class="panel-desc">A solvated system has 10⁴–10⁵ atoms, mostly water: importing only the atoms you will analyse keeps the file small and the viewer readable.
+          Kept atoms keep their file order and are numbered from 1 in MONET. The full selection is written to the first frame.</p>
+      </div>
       <div class="aux-file" id="aux-cell">
         <label class="field-label">Cell file (optional) — CIF, POSCAR, PDB … for one fixed cell; CP2K .cell or cp.x .cel for a cell per step</label>
         <div class="dir-row">
@@ -307,6 +322,11 @@
       <!-- Hidden until a trajectory is loaded (setViewerEmpty in app-core.js). -->
       <div class="viewer-header hidden" id="viewer-header">
         <span id="viewer-title">3D Molecular Viewer</span>
+        <label class="view-style hidden" id="view-solvent-box">Solvent <select class="field-input field-input-sm view-style-select" id="view-solvent" title="Water and ions found in the structure (display only: analyses and extraction still use every atom)">
+          <option value="show">Show all atoms</option>
+          <option value="water">Hide water</option>
+          <option value="solvent">Hide water and ions</option>
+        </select></label>
         <label class="view-style">Style <select class="field-input field-input-sm view-style-select" id="view-style"></select></label>
         <span class="viewer-hint">Drag to rotate · Right-drag or Shift-drag to move · Scroll to zoom · Click atom to select · Right-click for selection options</span>
       </div>
@@ -378,6 +398,11 @@
 
         <div class="ase-molecule-toolbar">
           <strong id="ase-viewer-title">ASE molecule · first frame</strong>
+          <select class="field-input field-input-sm view-style-select hidden" id="ase-view-solvent" title="Water and ions found in the structure (display only: analyses and extraction still use every atom)">
+            <option value="show">Show all atoms</option>
+            <option value="water">Hide water</option>
+            <option value="solvent">Hide water and ions</option>
+          </select>
           <select class="field-input field-input-sm view-style-select" id="ase-view-style" title="Representation"></select>
           <select class="field-input field-input-sm view-style-select" id="ase-viewer-size" title="Viewer size">
             <option value="compact">Compact</option>

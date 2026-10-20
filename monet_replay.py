@@ -80,7 +80,7 @@ class Session:
         self.checked = self.differences = self.failures = self.unchecked = 0
 
     def load(self, name, sha256=None, atoms=None, atom_ids=None, import_format=None, reference=None,
-             cell_file=None, cell_vectors='rows', step=None):
+             cell_file=None, cell_vectors='rows', step=None, selection=None):
         path = Path(name)
         if not path.exists():
             raise SystemExit(f'{name} not found: run replay.py in the folder that holds it, or edit its path here.')
@@ -99,6 +99,8 @@ class Session:
                 command['reference'] = str(Path(reference))
             if cell_file:
                 command['cell_file'] = str(Path(cell_file))
+            if selection:
+                command['selection'] = selection
             result = self._bridge(command)
             if not result.get('ok'):
                 raise SystemExit(f'Import of {name} failed: {result.get("message") or result.get("error")}')

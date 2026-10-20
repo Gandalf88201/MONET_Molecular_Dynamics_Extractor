@@ -21,7 +21,7 @@ const state = {
   firstFrame:    null,   // [{ index, element, x, y, z }]
   selectedAtoms: new Set(),
   outputDir:     null,
-  source: { original: null, format: 'auto', reference: null, cellFile: null, label: null },
+  source: { original: null, format: 'auto', reference: null, cellFile: null, label: null, selection: null },
   opts: {
     computeAverage:   true,
     generateGaussian: true
@@ -102,6 +102,18 @@ const $  = id  => document.getElementById(id)
 const $$ = sel => document.querySelectorAll(sel)
 
 function setStatus (msg) { $('status-msg').textContent = msg }
+
+// A table row per atom is hopeless beyond a few thousand atoms (87,000 rows hold the page for minutes and
+// gigabytes of memory): tables list the first rows only; the rest is reached from the viewer, the ID list or the selection tools.
+const TABLE_ROW_LIMIT = 3000
+function limitRow (columns, total, shown) {
+  const row = document.createElement('tr')
+  row.className = 'table-limit'
+  const cell = row.insertCell()
+  cell.colSpan = columns
+  cell.textContent = `Showing the first ${shown.toLocaleString()} of ${total.toLocaleString()} atoms. Use the viewer, the atom-ID list or the selection tools for the others.`
+  return row
+}
 
 function log (msg, type = 'info') {
   const box  = $('log-box')

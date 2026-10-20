@@ -59,6 +59,7 @@ function updateFormatUI () {
   const format = $('inp-format').value
   state.source.format = format
   $('aux-reference').classList.toggle('hidden', !REFERENCE_FORMATS.has(format) && !state.source.reference)
+  $('aux-selection').classList.toggle('hidden', !format.startsWith('mda-') && !(format === 'auto' && state.source.reference))
   $('aux-cell').classList.toggle('hidden', !CELL_FORMATS.has(format) && !state.source.cellFile)
   $('btn-reference-clear').disabled = !state.source.reference
   $('btn-cell-file-clear').disabled = !state.source.cellFile
@@ -161,14 +162,23 @@ $('next-1').addEventListener('click', async () => {
     if (needsImport()) {
       if (!window.monet.importFile) throw new Error('Importing this format needs the launcher (python3 start_monet.py) or the desktop app.')
       setStatus('Importing trajectory with ASE …')
+      const selection = $('aux-selection').classList.contains('hidden') ? '' : $('inp-import-selection').value.trim()
       const imported = await window.monet.importFile(state.source.original, {
         format: state.source.format, reference: state.source.reference, cellFile: state.source.cellFile,
-        cellVectors: $('inp-cell-vectors').value
+        cellVectors: $('inp-cell-vectors').value, selection: selection || undefined
       })
       if (imported.error) throw new Error(imported.error)
       state.filePath = imported.filePath
       state.source.label = imported.sourceLabel
+      state.source.selection = selection || null
       state.source.warning = imported.warning || null
+      // The frame spacing stored in the file (GROMACS XTC/TRR: ps) fills the time axis when it is still empty.
+      if (imported.dtPs > 0 && !$('md-timestep').value.trim()) {
+        $('md-timestep-unit').value = 'ps'
+        $('md-timestep').value = imported.dtPs
+        $('md-stride').value = 1
+        for (const id of ['md-timestep', 'md-timestep-unit', 'md-stride']) $(id).dispatchEvent(new Event('input'))
+      }
     } else {
       state.source.warning = null
     }
@@ -348,7 +358,7 @@ async function loadFrameForViewer (frameIdx) {
 function buildAtomTable (atoms) {
   const tbody = $('atom-table-body')
   tbody.innerHTML = ''
-  for (const a of atoms) {
+  for (const a of atoms.length > TABLE_ROW_LIMIT ? atoms.slice(0, TABLE_ROW_LIMIT) : atoms) {
     const tr = document.createElement('tr')
     tr.dataset.atomId = a.index
     tr.classList.toggle('row-selected', state.selectedAtoms.has(a.index))
@@ -373,6 +383,7 @@ function buildAtomTable (atoms) {
     })
     tbody.appendChild(tr)
   }
+  if (atoms.length > TABLE_ROW_LIMIT) tbody.appendChild(limitRow(6, atoms.length, TABLE_ROW_LIMIT))
 }
 
 const atomColor = MonetViewer.atomColor

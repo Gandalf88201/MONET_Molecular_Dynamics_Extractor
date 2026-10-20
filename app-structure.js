@@ -126,8 +126,10 @@ async function checkTopology ({ quiet = false } = {}) {
       atom.residue = `${mda.resname[i]}${mda.resid[i]}`
       atom.molecule = mda.fragment[i] + 1
     }
+    // One lookup table: a find() per row is quadratic and holds the page for minutes with 10⁵ atoms.
+    const byMonetId = new Map(atoms.map(a => [String(a.monetId), a]))
     for (const row of $('ase-atom-body').rows) {
-      const atom = atoms.find(a => String(a.monetId) === row.dataset.monetId)
+      const atom = byMonetId.get(row.dataset.monetId)
       if (atom && row.cells.length >= 8) { row.cells[6].textContent = atom.residue; row.cells[7].textContent = atom.molecule }
     }
   }
@@ -136,16 +138,20 @@ async function checkTopology ({ quiet = false } = {}) {
     ? `✗ Atom identity mismatch: ${problems.join(' ')} Reload the trajectory (and its topology) before analysing it.`
     : `✓ ${atoms.length} atoms: MONET IDs, ASE indices${mda ? ' and MDAnalysis ids' : ''} refer to the same atoms (elements and first-frame coordinates agree)${info.n_frames ? `; ${info.n_frames} frames` : ''}.` +
       (mda ? ` MDAnalysis: ${mda.n_residues} residues, ${mda.n_fragments} molecules, ${mda.n_bonds} bonds (cutoff × ${command.bond_scale ?? 1.2}).` : ' MDAnalysis is not installed: only ASE was compared.')
-  const rows = []
-  for (let i = 0; i < info.n_atoms; i++) {
+  // Every mismatch is listed, then the first atoms up to the table limit (a row per atom of a solvated system freezes the page).
+  const listed = [...bad].sort((a, b) => a - b).slice(0, TABLE_ROW_LIMIT)
+  for (let i = 0; i < info.n_atoms && listed.length < TABLE_ROW_LIMIT; i++) if (!bad.has(i)) listed.push(i)
+  listed.sort((a, b) => a - b)
+  const rows = listed.map(i => {
     const atom = byIndex[i]
-    rows.push([atom?.monetId ?? '—', i, atom?.element ?? '—', info.symbols[i],
-      ...(mda ? [mda.id[i], mda.name[i], mda.element[i], `${mda.resname[i]}${mda.resid[i]}`, mda.fragment[i] + 1, mda.mass[i]] : [])])
-  }
+    return [atom?.monetId ?? '—', i, atom?.element ?? '—', info.symbols[i],
+      ...(mda ? [mda.id[i], mda.name[i], mda.element[i], `${mda.resname[i]}${mda.resid[i]}`, mda.fragment[i] + 1, mda.mass[i]] : [])]
+  })
   const table = $('topology-table')
   table.replaceChildren()
+  const mismatch = new Set(); listed.forEach((atomIndex, row) => { if (bad.has(atomIndex)) mismatch.add(row) })
   renderTable(table, { columns: ['MONET ID', 'ASE index', 'MONET element', 'ASE element', ...(mda ? ['MDA id', 'MDA name', 'MDA element', 'Residue', 'Molecule', 'Mass (amu)'] : [])], rows },
-    { title: 'Atom identity', mismatch: bad })
+    { title: info.n_atoms > rows.length ? `Atom identity (first ${rows.length.toLocaleString()} of ${info.n_atoms.toLocaleString()} atoms, plus every mismatch)` : 'Atom identity', mismatch })
   if (problems.length) $('ase-atom-match').textContent = 'Atom identity mismatch — see MDAnalysis › Topology & consistency.'
   if (!quiet) setStatus(problems.length ? 'Atom identity mismatch found.' : 'Atom identity verified in MONET, ASE and MDAnalysis.')
 }

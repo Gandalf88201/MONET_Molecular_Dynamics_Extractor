@@ -198,10 +198,11 @@ ipcMain.handle('ase-import', async (event, name, options = {}) => {
     const output = path.join(folder, path.basename(name).replace(/\.[^.]*$/, '') + '.extxyz')
     const result = await bridge.run({
       action: 'import', filename: name, output, format: options.format || 'auto', source_name: path.basename(name),
-      reference: options.reference || undefined, cell_file: options.cellFile || undefined, cell_vectors: options.cellVectors || 'rows'
+      reference: options.reference || undefined, cell_file: options.cellFile || undefined, cell_vectors: options.cellVectors || 'rows',
+      selection: options.selection || undefined
     }, msg => event.sender.send('ase-progress', msg))
     if (!result.ok) return { error: result.message || result.error }
-    return { filePath: output, frames: result.frames, sourceFormat: result.source_format, sourceLabel: result.source_label, warning: result.warning }
+    return { filePath: output, frames: result.frames, natoms: result.natoms, sourceFormat: result.source_format, sourceLabel: result.source_label, warning: result.warning, dtPs: result.dt_ps }
   } catch (e) {
     return { error: e.message }
   }
