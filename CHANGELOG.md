@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.7.2 (2026-10-20)
 
 A built-in user manual, in English and Italian, with pictures taken from the program.
 
