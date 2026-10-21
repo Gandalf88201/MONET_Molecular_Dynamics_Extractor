@@ -42,7 +42,7 @@
         this.phase = 'comment'
       } else if (this.phase === 'comment') {
         this.comment = line // A blank comment is a valid, required header line.
-        if (/STEP\s*[=:]/i.test(line)) this.format = 'CPMD'
+        if (/(?<!source_)STEP\s*[=:]/i.test(line)) this.format = 'CPMD'
         else if (/\bi\s*=/.test(line)) this.format = 'CP2K'
         this.columns = { element: 0, position: 1, required: 4 }
         this.lattice = null

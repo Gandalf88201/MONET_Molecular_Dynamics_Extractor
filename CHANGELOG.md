@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Fixed: a GROMACS GRO + XTC pair loaded the other way round (GRO as the file to import, XTC as the reference or in the cell-file field) imported only the single GRO frame and silently dropped the XTC. The pair is now swapped, so every XTC frame is imported with the GRO as its topology. This also works for TRR, DCD and NetCDF with a GRO or PDB.
+- With *Input format: auto*, selecting an XTC, TRR, DCD or NetCDF file now shows the topology field (and hides the cell-file field, since these files carry their own box). The hint names the detected format.
+- A cell file given with a GROMACS/MDAnalysis trajectory is reported as an error instead of being ignored. A GRO imported alone warns that it holds one structure and says how to load the trajectory.
+- Fixed: *Atom-by-atom distances* returned no data with MDAnalysis 2.11, which moved the `AtomicDistances` array to `results.distances`. Both layouts are read.
+- Fixed: an imported trajectory was labelled CPMD in the file information, because its `source_step=` tag matched the CPMD `STEP=` test (`xyz.js`, `monet_io.py`).
+
 ## 2.7.2 (2026-10-20)
 
 A built-in user manual, in English and Italian, with pictures taken from the program.

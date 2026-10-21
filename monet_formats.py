@@ -418,10 +418,44 @@ def _selection_note(selection):
     return ' selection="' + ' '.join(str(selection).replace('"', "'").split()) + '"'
 
 
+# Structure files that also serve as the topology of a GROMACS/MDAnalysis trajectory.
+STRUCTURE_FORMATS = {'mda-gro', 'mda-pdb'}
+
+
+def _trajectory_kind(path):
+    """MDAnalysis format key of a coordinate-only trajectory (XTC, TRR, DCD, NetCDF), else None."""
+    if not path:
+        return None
+    try:
+        kind = detect(path)
+    except (OSError, ValueError):
+        return None
+    return kind if kind in monet_mda.FORMATS and monet_mda.FORMATS[kind][2] else None
+
+
+def _pair_topology(path, fmt, name, reference, cell_file):
+    """A structure (GRO, PDB) given as the file to import with its trajectory in the reference or cell slot.
+
+    The pair is swapped, so the trajectory is imported with the structure as its topology instead of
+    importing the single frame of the structure and dropping the trajectory.
+    """
+    if fmt not in STRUCTURE_FORMATS:
+        return path, fmt, name, reference, cell_file
+    for other in (reference, cell_file):
+        kind = _trajectory_kind(other)
+        if kind:
+            return other, kind, os.path.basename(other), path, None if other == cell_file else cell_file
+    return path, fmt, name, reference, cell_file
+
+
 def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_file=None,
                      cell_vectors='rows', progress=None, selection=None):
     """Write an extended XYZ file; returns a summary for the UI."""
     detected = detect(path, name) if fmt == 'auto' else fmt
+    path, detected, name, reference, cell_file = _pair_topology(path, detected, name, reference, cell_file)
+    if cell_file and detected in monet_mda.FORMATS:
+        raise ValueError('A cell file is not used with GROMACS/MDAnalysis files: the box is read from the trajectory. '
+                         'Add the topology (GRO, PDB, TPR …) as the reference structure instead.')
     selection = (selection or '').strip() or None
     count = 0
     natoms = None
@@ -478,6 +512,11 @@ def import_to_extxyz(path, output, fmt='auto', name=None, reference=None, cell_f
     steps = np.diff(times)
     if len(steps) and np.all(steps > 0) and np.allclose(steps, steps[0], rtol=1e-3):
         summary['dt_ps'] = float(steps[0])
+    if detected in monet_mda.FORMATS and reference and monet_mda.FORMATS[detected][2]:
+        summary['source_label'] += f' · topology {os.path.basename(reference)}'
+    if detected == 'mda-gro' and count == 1:
+        summary['warning'] = ('This GRO file holds one structure. To view the trajectory, select the XTC/TRR file '
+                              'and add this GRO as its topology (reference structure).')
     if unknown:
         summary['source_label'] += ' · no topology, atoms shown as X'
         summary['warning'] = ('No topology was given: every atom is imported as element X (no names, masses or bonds). '

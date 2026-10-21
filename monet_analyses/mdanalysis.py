@@ -417,7 +417,9 @@ def atomic_distances(ctx, p):
     if len(a) != len(b):
         raise ValueError(f'Both groups need the same number of atoms (they have {len(a)} and {len(b)}); atom k of the first is paired with atom k of the second.')
     box = universe.trajectory.ts.dimensions
-    data = atomicdistances.AtomicDistances(a, b, pbc=box is not None and bool(np.all(box[:3] > 0))).run().results
+    results = atomicdistances.AtomicDistances(a, b, pbc=box is not None and bool(np.all(box[:3] > 0))).run().results
+    # MDAnalysis ≥ 2.11 keeps the array in results.distances; earlier versions return it as results.
+    data = np.asarray(getattr(results, 'distances', results))
     return {'kind': 'series', **_frames(frames), 'yLabel': 'Distance (Å)',
             'series': [{'label': f'{int(a[k].id)}–{int(b[k].id)}', 'data': data[:, k].tolist()} for k in range(min(12, len(a)))],
             'notes': [f'{len(a)} atom pairs' + (' (first 12 shown)' if len(a) > 12 else '')]}

@@ -81,12 +81,23 @@ assert.match(header[1], /^Lattice="12\.0000000000 .*Properties=species:S:1:pos:R
 assert.match(header[2], /^O \S+ \S+ \S+ SOL 1 OW$/); checks++
 near(frame(xtc, 9)[0].x, 2.9, 0.011, 'XTC precision'); assert.equal(frame(xtc, 9)[1].element, 'H'); checks++
 assert.equal(bridge({ action: 'scan', filename: xtc }).configCount, 10); checks++
+assert.equal(bridge({ action: 'scan', filename: xtc }).format, 'XYZ', 'source_step= is not a CPMD STEP tag'); checks++
 for (const [ext, format] of [['trr', 'mda-trr'], ['dcd', 'mda-dcd']]) {
   r = importFile(path.join(temp, `water.${ext}`), { reference: path.join(temp, 'water.gro') })
   assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.source_format, format); near(frame(r.output, 9)[0].x, 2.9, 1e-4, ext); checks++
 }
 r = importFile(path.join(temp, 'water.gro'))
-assert.equal(r.ok, true); assert.equal(r.source_format, 'mda-gro'); assert.equal(r.frames, 1); checks++
+assert.equal(r.ok, true); assert.equal(r.source_format, 'mda-gro'); assert.equal(r.frames, 1); assert.match(r.warning, /select the XTC\/TRR file/); checks++
+// GRO picked as the file to import with the XTC in the reference or cell-file slot: the pair is swapped,
+// so the 10 XTC frames are imported with the GRO topology instead of the single GRO frame.
+for (const slot of ['reference', 'cell_file']) {
+  r = importFile(path.join(temp, 'water.gro'), { [slot]: path.join(temp, 'water.xtc') })
+  assert.equal(r.ok, true, JSON.stringify(r)); assert.equal(r.source_format, 'mda-xtc', slot); assert.equal(r.frames, 10, slot)
+  assert.equal(r.warning, undefined, slot); assert.match(r.source_label, /topology water\.gro/); checks++
+  assert.match(fs.readFileSync(r.output, 'utf8').split('\n')[2], /^O \S+ \S+ \S+ SOL 1 OW$/); checks++
+}
+r = importFile(path.join(temp, 'water.xtc'), { reference: path.join(temp, 'water.gro'), cell_file: path.join(temp, 'water.pdb') })
+assert.equal(r.ok, false); assert.match(r.message, /cell file is not used/); checks++
 r = importFile(path.join(temp, 'water.xtc'), { reference: path.join(temp, 'water.pdb') })
 assert.equal(r.ok, true, JSON.stringify(r)); checks++
 
