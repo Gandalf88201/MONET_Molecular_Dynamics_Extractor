@@ -54,18 +54,27 @@ Object.assign(FORMAT_HINTS, {
   'mda-auto': 'MDAnalysis chooses the reader from the file extension; add a topology when the format has no atom names.'
 })
 const CELL_FORMATS = new Set(['auto', 'xyz', 'qe-cp-pos', 'cpmd-trajectory'])
+// Coordinate-only trajectories recognised by name: with "auto" they still need a topology, and their box
+// comes from the file, so the topology field replaces the cell-file field.
+const TRAJECTORY_EXTENSIONS = { xtc: 'mda-xtc', trr: 'mda-trr', dcd: 'mda-dcd', nc: 'mda-netcdf', ncdf: 'mda-netcdf' }
+
+function detectedTrajectory () {
+  const extension = /\.([^./\\]+)$/.exec(state.source.original || '')?.[1].toLowerCase()
+  return TRAJECTORY_EXTENSIONS[extension] || null
+}
 
 function updateFormatUI () {
   const format = $('inp-format').value
   state.source.format = format
-  $('aux-reference').classList.toggle('hidden', !REFERENCE_FORMATS.has(format) && !state.source.reference)
+  const trajectory = format === 'auto' ? detectedTrajectory() : null
+  $('aux-reference').classList.toggle('hidden', !REFERENCE_FORMATS.has(format) && !trajectory && !state.source.reference)
   $('aux-selection').classList.toggle('hidden', !format.startsWith('mda-') && !(format === 'auto' && state.source.reference))
-  $('aux-cell').classList.toggle('hidden', !CELL_FORMATS.has(format) && !state.source.cellFile)
+  $('aux-cell').classList.toggle('hidden', (!CELL_FORMATS.has(format) || Boolean(trajectory)) && !state.source.cellFile)
   $('btn-reference-clear').disabled = !state.source.reference
   $('btn-cell-file-clear').disabled = !state.source.cellFile
   $('inp-cell-vectors').classList.toggle('hidden', format !== 'qe-cp-pos')
   const canImport = Boolean(window.monet.canImport)
-  $('format-hint').textContent = (FORMAT_HINTS[format] || (format.startsWith('mda-') ? 'Read with MDAnalysis and imported into extended XYZ.' : 'Imported with ASE into extended XYZ.')) +
+  $('format-hint').textContent = (FORMAT_HINTS[trajectory || format] ||(format.startsWith('mda-') ? 'Read with MDAnalysis and imported into extended XYZ.' : 'Imported with ASE into extended XYZ.')) +
     (canImport ? '' : ' Only XYZ is available in this mode: run python3 start_monet.py to import other formats.')
 }
 $('inp-format').addEventListener('change', updateFormatUI)
@@ -115,6 +124,7 @@ $('btn-browse').addEventListener('click', async () => {
     $('file-path-text').textContent = fp
     $('file-display').classList.remove('hidden')
     $('next-1').disabled = false
+    updateFormatUI()
     setStatus('File selected: ' + fp.split(/[\\/]/).pop())
   } catch (error) {
     setStatus('Could not open file: ' + error.message)
@@ -130,6 +140,7 @@ $('btn-file-clear').addEventListener('click', () => {
   $('file-path-text').textContent = ''
   $('file-display').classList.add('hidden')
   $('next-1').disabled = true
+  updateFormatUI()
   goTo(1)
   showViewerTab('view3d')
   setStatus('Trajectory removed. Select another file.')

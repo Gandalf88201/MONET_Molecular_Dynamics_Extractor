@@ -150,7 +150,7 @@ class XYZTrajectory:
                 raise TrajectoryError('Incomplete XYZ frame 1; check the atom count and comment line.')
             comment = comment.decode('utf-8', 'replace').rstrip('\r\n')
             self.comment0 = comment
-            if re.search(r'STEP\s*[=:]', comment, re.I):
+            if re.search(r'(?<!source_)STEP\s*[=:]', comment, re.I):
                 self.format = 'CPMD'
             elif re.search(r'\bi\s*=', comment):
                 self.format = 'CP2K'
